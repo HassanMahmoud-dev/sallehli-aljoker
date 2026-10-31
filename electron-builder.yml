@@ -1,0 +1,38 @@
+appId: com.sallehli.aljoker
+productName: صلحلي v1.0.0 - إدارة مركز الصيانة
+directories:
+  buildResources: build
+  output: dist
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+asarUnpack:
+  - '**/*.node'
+win:
+  executableName: Sallehli
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  artifactName: ${name}-v${version}-Setup-x64.${ext}
+  shortcutName: صلحلي v${version}
+  uninstallDisplayName: صلحلي v${version} - إدارة مركز الصيانة
+  createDesktopShortcut: always
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build/installerIcon.ico
+  uninstallerIcon: build/uninstallerIcon.ico
+  installerHeader: build/installerHeader.bmp
+  installerSidebar: build/installerSidebar.bmp
+  uninstallerSidebar: build/uninstallerSidebar.bmp
+  include: build/installer.nsh
+  installerLanguages:
+    - ar_SA
+    - en_US
+  language: "1025"
+npmRebuild: false
