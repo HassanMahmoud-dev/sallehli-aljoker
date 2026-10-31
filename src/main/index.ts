@@ -34,6 +34,11 @@ import {
   restoreBackupFromFile,
   getDatabasePath
 } from './db'
+import {
+  checkForOnlineUpdate,
+  downloadAndInstallOnlineUpdate,
+  installUpdateFromLocalFile
+} from './updater'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -49,7 +54,7 @@ function createWindow(): void {
     minHeight: 700,
     show: false,
     icon: iconFile,
-    title: 'صلحلي v1.0.0 - نظام إدارة مركز صيانة الأجهزة الكهربائية',
+    title: `صلحلي v${app.getVersion()} - نظام إدارة مركز صيانة الأجهزة الكهربائية`,
     autoHideMenuBar: true,
     webPreferences: {
       preload: existsSync(join(__dirname, '../preload/index.mjs'))
@@ -151,6 +156,17 @@ function registerIpcHandlers(): void {
   // External Links (e.g. WhatsApp)
   ipcMain.handle('shell:openExternal', async (_e, url: string) => {
     await shell.openExternal(url)
+  })
+
+  // Application Updates (Online & Offline)
+  ipcMain.handle('update:check', async (_e, customUrl?: string) => {
+    return await checkForOnlineUpdate(customUrl)
+  })
+  ipcMain.handle('update:downloadAndInstall', async (_e, downloadUrl: string) => {
+    return await downloadAndInstallOnlineUpdate(downloadUrl, mainWindow)
+  })
+  ipcMain.handle('update:installLocal', async () => {
+    return await installUpdateFromLocalFile(mainWindow)
   })
 }
 

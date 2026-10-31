@@ -11,7 +11,9 @@ import type {
   TicketPartItem,
   TreasuryTransaction,
   CenterSettings,
-  DashboardStats
+  DashboardStats,
+  UpdateCheckResult,
+  UpdateProgressPayload
 } from '../shared/types'
 
 export interface IElectronAPI {
@@ -74,6 +76,18 @@ export interface IElectronAPI {
   createBackup: () => Promise<{ success: boolean; filePath?: string }>
   restoreBackup: () => Promise<{ success: boolean; filePath?: string }>
   openExternal: (url: string) => Promise<void>
+
+  checkForUpdates: (customUrl?: string) => Promise<UpdateCheckResult>
+  downloadAndInstallUpdate: (
+    downloadUrl: string
+  ) => Promise<{ success: boolean; message?: string; backupPath?: string }>
+  installLocalUpdate: () => Promise<{
+    success: boolean
+    canceled?: boolean
+    message?: string
+    backupPath?: string
+  }>
+  onUpdateProgress: (callback: (payload: UpdateProgressPayload) => void) => () => void
 }
 
 declare global {

@@ -1,5 +1,5 @@
 appId: com.sallehli.aljoker
-productName: صلحلي v1.0.0 - إدارة مركز الصيانة
+productName: صلحلي - إدارة مركز الصيانة
 directories:
   buildResources: build
   output: dist
@@ -20,7 +20,7 @@ win:
         - x64
 nsis:
   artifactName: ${name}-v${version}-Setup-x64.${ext}
-  shortcutName: صلحلي v${version}
+  shortcutName: صلحلي
   uninstallDisplayName: صلحلي v${version} - إدارة مركز الصيانة
   createDesktopShortcut: always
   oneClick: false

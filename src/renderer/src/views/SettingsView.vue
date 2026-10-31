@@ -10,7 +10,9 @@ import {
   Upload,
   Printer,
   CheckCircle2,
-  Image as ImageIcon
+  Image as ImageIcon,
+  RefreshCw,
+  FolderOpen
 } from 'lucide-vue-next'
 
 const appStore = useAppStore()
@@ -62,6 +64,14 @@ async function handleRestoreBackup(): Promise<void> {
   if (res.success) {
     await loadSettingsData()
     statusMessage.value = 'تم استعادة قاعدة البيانات بنجاح!'
+  }
+}
+
+async function handleDirectLocalUpdate(): Promise<void> {
+  const res = await window.api.installLocalUpdate()
+  if (res.success) {
+    statusMessage.value =
+      res.message || 'تم حفظ نسخة احتياطية وجاري تشغيل ملف التحديث المحلي الآن...'
   }
 }
 
@@ -293,12 +303,15 @@ onMounted(loadSettingsData)
           </button>
         </div>
 
-        <!-- Program Version & Developer Info Box -->
+        <!-- Program Version, Updates & Developer Info Box -->
         <div
           class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-3"
         >
           <div class="flex items-center justify-between">
-            <span class="font-black text-sm text-slate-900 dark:text-white">معلومات النظام والشركة المطورة</span>
+            <span class="font-black text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
+              <RefreshCw class="w-4 h-4 text-blue-600" />
+              تحديث البرنامج والإصدار
+            </span>
             <span
               class="px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 font-mono font-bold text-xs"
             >
@@ -306,11 +319,33 @@ onMounted(loadSettingsData)
             </span>
           </div>
 
-          <div class="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/70 dark:border-slate-700/70">
+          <p class="text-[11px] text-slate-500 leading-relaxed">
+            يمكنك فحص التحديثات المباشرة عبر الإنترنت (GitHub Releases) أو التحديث من ملف محلي (.exe) مع أخذ نسخة احتياطية تلقائية لبياناتك.
+          </p>
+
+          <button
+            type="button"
+            @click="appStore.openUpdateModal"
+            class="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+          >
+            <RefreshCw class="w-4 h-4" />
+            فحص التحديثات عبر الإنترنت / إدارة التحديث
+          </button>
+
+          <button
+            type="button"
+            @click="handleDirectLocalUpdate"
+            class="w-full py-2 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <FolderOpen class="w-4 h-4 text-amber-500" />
+            تحديث سريع من ملف محلي (.exe)
+          </button>
+
+          <div class="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/70">
             <img
               :src="jokerTechLogo"
               alt="شركة الجوكر تك"
-              class="w-12 h-12 object-contain bg-white rounded-xl p-1.5 border border-slate-200 shrink-0"
+              class="w-11 h-11 object-contain bg-white rounded-xl p-1.5 border border-slate-200 shrink-0"
             />
             <div>
               <div class="font-black text-xs text-slate-900 dark:text-white">

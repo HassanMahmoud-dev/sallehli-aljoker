@@ -20,7 +20,8 @@ export const useAppStore = defineStore('app', () => {
     default_inspection_fee: 150,
     default_warranty_months: 6,
     warranty_terms: '',
-    receipt_footer: ''
+    receipt_footer: '',
+    update_url: 'HassanMahmoud-dev/sallehli-aljoker'
   })
 
   // Print Modal State
@@ -28,6 +29,9 @@ export const useAppStore = defineStore('app', () => {
   const ticketToPrint = ref<MaintenanceTicket | null>(null)
   const activePrintFormat = ref<'a4' | 'thermal80'>('a4')
   const activePrintDocType = ref<'invoice_warranty' | 'reception_receipt'>('invoice_warranty')
+
+  // Update Modal State
+  const updateModalOpen = ref(false)
 
   const isAuthenticated = computed(() => !!currentUser.value)
   const isSuperAdmin = computed(() => currentUser.value?.role === 'super_admin')
@@ -89,6 +93,14 @@ export const useAppStore = defineStore('app', () => {
     ticketToPrint.value = null
   }
 
+  function openUpdateModal(): void {
+    updateModalOpen.value = true
+  }
+
+  function closeUpdateModal(): void {
+    updateModalOpen.value = false
+  }
+
   function sendWhatsAppToCustomer(ticket: MaintenanceTicket): void {
     let rawPhone = (ticket.customer_phone || '').replace(/\D/g, '')
     if (rawPhone.startsWith('01') && rawPhone.length === 11) {
@@ -121,6 +133,7 @@ export const useAppStore = defineStore('app', () => {
     ticketToPrint,
     activePrintFormat,
     activePrintDocType,
+    updateModalOpen,
     isAuthenticated,
     isSuperAdmin,
     isOwner,
@@ -132,6 +145,8 @@ export const useAppStore = defineStore('app', () => {
     logout,
     openPrintModal,
     closePrintModal,
+    openUpdateModal,
+    closeUpdateModal,
     sendWhatsAppToCustomer
   }
 })

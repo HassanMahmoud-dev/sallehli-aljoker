@@ -1370,7 +1370,7 @@ export function getSettings(): CenterSettings {
     default_warranty_months: Number(map.default_warranty_months ?? 6),
     warranty_terms: map.warranty_terms || '',
     receipt_footer: map.receipt_footer || '',
-    update_url: map.update_url || ''
+    update_url: map.update_url || 'HassanMahmoud-dev/sallehli-aljoker'
   }
 }
 

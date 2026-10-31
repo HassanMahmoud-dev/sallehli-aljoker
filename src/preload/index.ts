@@ -9,7 +9,8 @@ import type {
   MaintenanceTicket,
   TicketPartItem,
   TreasuryTransaction,
-  CenterSettings
+  CenterSettings,
+  UpdateProgressPayload
 } from '../shared/types'
 
 const api = {
@@ -78,7 +79,20 @@ const api = {
   getDatabasePath: () => ipcRenderer.invoke('db:path'),
   createBackup: () => ipcRenderer.invoke('backup:create'),
   restoreBackup: () => ipcRenderer.invoke('backup:restore'),
-  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url)
+  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+
+  // Application Updates (Online & Offline)
+  checkForUpdates: (customUrl?: string) => ipcRenderer.invoke('update:check', customUrl),
+  downloadAndInstallUpdate: (downloadUrl: string) =>
+    ipcRenderer.invoke('update:downloadAndInstall', downloadUrl),
+  installLocalUpdate: () => ipcRenderer.invoke('update:installLocal'),
+  onUpdateProgress: (callback: (payload: UpdateProgressPayload) => void) => {
+    const listener = (_event: unknown, payload: UpdateProgressPayload): void => callback(payload)
+    ipcRenderer.on('update:progress', listener)
+    return () => {
+      ipcRenderer.removeListener('update:progress', listener)
+    }
+  }
 }
 
 if (process.contextIsolated) {

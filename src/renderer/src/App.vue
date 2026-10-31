@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
 import { USER_ROLE_LABELS } from '@renderer/constants/appliances'
 import PrintModal from '@renderer/components/PrintModal.vue'
+import UpdateModal from '@renderer/components/UpdateModal.vue'
 import jokerTechLogo from '@renderer/assets/joker-tech-logo.png'
 import {
   LayoutDashboard,
@@ -16,7 +17,8 @@ import {
   ShieldCheck,
   Sun,
   Moon,
-  LogOut
+  LogOut,
+  RefreshCw
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -141,6 +143,21 @@ onMounted(() => {
             </div>
           </div>
 
+          <!-- Quick Update Button -->
+          <button
+            type="button"
+            @click="appStore.openUpdateModal"
+            class="w-full flex items-center justify-between py-2 px-3 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:hover:bg-blue-900/70 dark:text-blue-300 border border-blue-200/70 dark:border-blue-800/70 text-xs font-bold transition cursor-pointer"
+          >
+            <span class="flex items-center gap-1.5">
+              <RefreshCw class="w-3.5 h-3.5" />
+              <span>تحديث البرنامج</span>
+            </span>
+            <span class="font-mono text-[10px] px-1.5 py-0.5 rounded-md bg-white dark:bg-slate-900">
+              {{ appStore.appVersion }}
+            </span>
+          </button>
+
           <div class="flex items-center gap-2">
             <button
               type="button"
@@ -181,5 +198,8 @@ onMounted(() => {
 
     <!-- Global Dual Print Engine Modal (A4 / 80mm Thermal) -->
     <PrintModal />
+
+    <!-- Global Program Update Modal (Online & Offline) -->
+    <UpdateModal />
   </div>
 </template>
