@@ -69,29 +69,36 @@ async function handleSaveTechnician(): Promise<void> {
     alert('يرجى إدخال اسم الفني ورقم الهاتف')
     return
   }
-  await window.api.saveTechnician(plain(form.value))
-  modalOpen.value = false
-  await loadTechnicians()
+  const isEdit = Boolean(form.value.id)
+  await appStore.withLoading(async () => {
+    await window.api.saveTechnician(plain(form.value))
+    modalOpen.value = false
+    await loadTechnicians()
+  }, isEdit ? 'جاري حفظ تعديلات الفني...' : 'جاري إضافة الفني الجديد...')
 }
 
 async function handleConfirmPayout(): Promise<void> {
   if (!selectedTech.value || payoutAmount.value <= 0) return
-  await window.api.addTreasuryTransaction({
-    transaction_type: 'tech_commission',
-    category: 'عمولات ويوميات فنيين',
-    amount: payoutAmount.value,
-    technician_id: selectedTech.value.id,
-    payment_method: 'cash',
-    description: payoutNotes.value || `صرف مستحقات الفني ${selectedTech.value.name}`
-  })
-  payoutModalOpen.value = false
-  await loadTechnicians()
+  await appStore.withLoading(async () => {
+    await window.api.addTreasuryTransaction({
+      transaction_type: 'tech_commission',
+      category: 'عمولات ويوميات فنيين',
+      amount: payoutAmount.value,
+      technician_id: selectedTech.value!.id,
+      payment_method: 'cash',
+      description: payoutNotes.value || `صرف مستحقات الفني ${selectedTech.value!.name}`
+    })
+    payoutModalOpen.value = false
+    await loadTechnicians()
+  }, 'جاري صرف العمولة وتسجيلها بالخزينة...')
 }
 
 async function handleDeleteTechnician(t: Technician): Promise<void> {
   if (!confirm(`هل أنت متأكد من حذف الفني "${t.name}"؟`)) return
-  await window.api.deleteTechnician(t.id)
-  await loadTechnicians()
+  await appStore.withLoading(async () => {
+    await window.api.deleteTechnician(t.id)
+    await loadTechnicians()
+  }, 'جاري حذف الفني...')
 }
 
 onMounted(loadTechnicians)

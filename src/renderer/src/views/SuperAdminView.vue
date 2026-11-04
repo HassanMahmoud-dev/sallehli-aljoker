@@ -106,14 +106,16 @@ async function extendTenantSubscription(user: User, months: number): Promise<voi
   baseDate.setMonth(baseDate.getMonth() + months)
   const newEnd = baseDate.toISOString().slice(0, 10)
 
-  await window.api.saveUser({
-    ...user,
-    is_active: 1,
-    subscription_start: user.subscription_start || new Date().toISOString().slice(0, 10),
-    subscription_end: newEnd
-  })
-  successMsg.value = `تم تجديد اشتراك المستأجر (${user.full_name}) لمدة ${months} شهر حتى تاريخ ${newEnd}`
-  await loadUsers()
+  await appStore.withLoading(async () => {
+    await window.api.saveUser({
+      ...user,
+      is_active: 1,
+      subscription_start: user.subscription_start || new Date().toISOString().slice(0, 10),
+      subscription_end: newEnd
+    })
+    successMsg.value = `تم تجديد اشتراك المستأجر (${user.full_name}) لمدة ${months} شهر حتى تاريخ ${newEnd}`
+    await loadUsers()
+  }, 'جاري تجديد فترة الاشتراك...')
 }
 
 async function handleSaveUser(): Promise<void> {
@@ -132,14 +134,17 @@ async function handleSaveUser(): Promise<void> {
   }
 
   try {
-    await window.api.saveUser({
-      ...form.value,
-      subscription_start: form.value.role === 'tenant' ? form.value.subscription_start : null,
-      subscription_end: form.value.role === 'tenant' ? form.value.subscription_end : null
-    })
-    modalOpen.value = false
-    successMsg.value = 'تم حفظ بيانات المستخدم والصلاحية بنجاح'
-    await loadUsers()
+    const isEdit = Boolean(form.value.id)
+    await appStore.withLoading(async () => {
+      await window.api.saveUser({
+        ...form.value,
+        subscription_start: form.value.role === 'tenant' ? form.value.subscription_start : null,
+        subscription_end: form.value.role === 'tenant' ? form.value.subscription_end : null
+      })
+      modalOpen.value = false
+      successMsg.value = 'تم حفظ بيانات المستخدم والصلاحية بنجاح'
+      await loadUsers()
+    }, isEdit ? 'جاري حفظ تعديلات المستخدم...' : 'جاري إنشاء المستخدم والترخيص...')
   } catch (err: unknown) {
     errorMsg.value = err instanceof Error ? err.message : 'تعذر حفظ المستخدم (ربما اسم المستخدم مكرر)'
   }
@@ -149,8 +154,10 @@ async function handleDeleteUser(user: User): Promise<void> {
   if (user.username === 'admin') return
   if (!confirm(`هل أنت متأكد من حذف المستخدم "${user.full_name}"؟`)) return
   try {
-    await window.api.deleteUser(user.id)
-    await loadUsers()
+    await appStore.withLoading(async () => {
+      await window.api.deleteUser(user.id)
+      await loadUsers()
+    }, 'جاري حذف حساب المستخدم...')
   } catch (err: unknown) {
     alert(err instanceof Error ? err.message : 'فشل الحذف')
   }

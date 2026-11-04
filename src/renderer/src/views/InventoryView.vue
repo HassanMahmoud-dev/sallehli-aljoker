@@ -121,16 +121,21 @@ async function handleSavePart(): Promise<void> {
     alert('يرجى إدخال اسم قطعة الغيار')
     return
   }
-  await window.api.saveSparePart(plain(partForm.value))
-  partModalOpen.value = false
-  await loadData()
+  const isEdit = Boolean(partForm.value.id)
+  await appStore.withLoading(async () => {
+    await window.api.saveSparePart(plain(partForm.value))
+    partModalOpen.value = false
+    await loadData()
+  }, isEdit ? 'جاري حفظ تعديلات الصنف...' : 'جاري إضافة قطعة الغيار للمخزن...')
 }
 
 async function handleRecordMovement(): Promise<void> {
   try {
-    await window.api.recordInventoryMovement(plain(moveForm.value))
-    moveModalOpen.value = false
-    await loadData()
+    await appStore.withLoading(async () => {
+      await window.api.recordInventoryMovement(plain(moveForm.value))
+      moveModalOpen.value = false
+      await loadData()
+    }, 'جاري تسجيل حركة المخزن...')
   } catch (err: unknown) {
     alert(err instanceof Error ? err.message : 'تعذر تسجيل حركة المخزن')
   }
@@ -139,8 +144,10 @@ async function handleRecordMovement(): Promise<void> {
 async function handleDeletePart(p: SparePart): Promise<void> {
   if (!confirm(`هل أنت متأكد من حذف الصنف "${p.name}"؟`)) return
   try {
-    await window.api.deleteSparePart(p.id)
-    await loadData()
+    await appStore.withLoading(async () => {
+      await window.api.deleteSparePart(p.id)
+      await loadData()
+    }, 'جاري حذف قطعة الغيار...')
   } catch {
     alert('لا يمكن حذف قطعة غيار مستخدمة في طلبات صيانة سابقة')
   }

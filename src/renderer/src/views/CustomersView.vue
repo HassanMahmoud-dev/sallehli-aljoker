@@ -139,15 +139,20 @@ function removeApplianceFaultImage(idx: number): void {
 }
 
 async function handleSaveAppliance(): Promise<void> {
-  await window.api.saveCustomerAppliance(plain(applianceForm.value))
-  applianceModalOpen.value = false
-  await refreshCustomerHistory()
+  const isEdit = Boolean(applianceForm.value.id)
+  await appStore.withLoading(async () => {
+    await window.api.saveCustomerAppliance(plain(applianceForm.value))
+    applianceModalOpen.value = false
+    await refreshCustomerHistory()
+  }, isEdit ? 'جاري حفظ تعديلات الجهاز...' : 'جاري إضافة الجهاز لسجل العميل...')
 }
 
 async function handleDeleteAppliance(app: CustomerAppliance): Promise<void> {
   if (!confirm(`هل أنت متأكد من حذف الجهاز "${app.appliance_type}" من سجل العميل؟`)) return
-  await window.api.deleteCustomerAppliance(app.id)
-  await refreshCustomerHistory()
+  await appStore.withLoading(async () => {
+    await window.api.deleteCustomerAppliance(app.id)
+    await refreshCustomerHistory()
+  }, 'جاري حذف الجهاز من سجل العميل...')
 }
 
 // Direct upload of warranty image or fault images on a Ticket inside Customer History
@@ -155,52 +160,60 @@ async function handleTicketWarrantyUpload(t: MaintenanceTicket, e: Event): Promi
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
-  const img = await compressImageFile(file, 1100, 1100, 0.84)
-  await window.api.updateTicketImages({
-    ticketId: t.id,
-    warranty_image: img,
-    fault_images: Array.isArray(t.fault_images) ? t.fault_images : []
-  })
-  input.value = ''
-  await refreshCustomerHistory()
+  await appStore.withLoading(async () => {
+    const img = await compressImageFile(file, 1100, 1100, 0.84)
+    await window.api.updateTicketImages({
+      ticketId: t.id,
+      warranty_image: img,
+      fault_images: Array.isArray(t.fault_images) ? t.fault_images : []
+    })
+    input.value = ''
+    await refreshCustomerHistory()
+  }, 'جاري حفظ صورة شهادة الضمان...')
 }
 
 async function handleRemoveTicketWarrantyImage(t: MaintenanceTicket): Promise<void> {
-  await window.api.updateTicketImages({
-    ticketId: t.id,
-    warranty_image: '',
-    fault_images: Array.isArray(t.fault_images) ? t.fault_images : []
-  })
-  await refreshCustomerHistory()
+  await appStore.withLoading(async () => {
+    await window.api.updateTicketImages({
+      ticketId: t.id,
+      warranty_image: '',
+      fault_images: Array.isArray(t.fault_images) ? t.fault_images : []
+    })
+    await refreshCustomerHistory()
+  }, 'جاري حذف صورة شهادة الضمان...')
 }
 
 async function handleTicketFaultUpload(t: MaintenanceTicket, e: Event): Promise<void> {
   const input = e.target as HTMLInputElement
   const files = input.files
   if (!files || files.length === 0) return
-  const list = Array.isArray(t.fault_images) ? [...t.fault_images] : []
-  for (const file of Array.from(files)) {
-    const compressed = await compressImageFile(file, 1000, 1000, 0.82)
-    list.push(compressed)
-  }
-  await window.api.updateTicketImages({
-    ticketId: t.id,
-    warranty_image: t.warranty_image || '',
-    fault_images: list
-  })
-  input.value = ''
-  await refreshCustomerHistory()
+  await appStore.withLoading(async () => {
+    const list = Array.isArray(t.fault_images) ? [...t.fault_images] : []
+    for (const file of Array.from(files)) {
+      const compressed = await compressImageFile(file, 1000, 1000, 0.82)
+      list.push(compressed)
+    }
+    await window.api.updateTicketImages({
+      ticketId: t.id,
+      warranty_image: t.warranty_image || '',
+      fault_images: list
+    })
+    input.value = ''
+    await refreshCustomerHistory()
+  }, 'جاري حفظ صور العطل...')
 }
 
 async function handleRemoveTicketFaultImage(t: MaintenanceTicket, idx: number): Promise<void> {
-  const list = Array.isArray(t.fault_images) ? [...t.fault_images] : []
-  list.splice(idx, 1)
-  await window.api.updateTicketImages({
-    ticketId: t.id,
-    warranty_image: t.warranty_image || '',
-    fault_images: list
-  })
-  await refreshCustomerHistory()
+  await appStore.withLoading(async () => {
+    const list = Array.isArray(t.fault_images) ? [...t.fault_images] : []
+    list.splice(idx, 1)
+    await window.api.updateTicketImages({
+      ticketId: t.id,
+      warranty_image: t.warranty_image || '',
+      fault_images: list
+    })
+    await refreshCustomerHistory()
+  }, 'جاري حذف صورة العطل...')
 }
 
 async function handleSaveCustomer(): Promise<void> {
@@ -208,16 +221,21 @@ async function handleSaveCustomer(): Promise<void> {
     alert('يرجى إدخال اسم العميل ورقم الهاتف')
     return
   }
-  await window.api.saveCustomer(plain(form.value))
-  modalOpen.value = false
-  await loadCustomers()
+  const isEdit = Boolean(form.value.id)
+  await appStore.withLoading(async () => {
+    await window.api.saveCustomer(plain(form.value))
+    modalOpen.value = false
+    await loadCustomers()
+  }, isEdit ? 'جاري حفظ تعديلات العميل...' : 'جاري إضافة العميل الجديد...')
 }
 
 async function handleDeleteCustomer(c: Customer): Promise<void> {
   if (!confirm(`هل أنت متأكد من حذف ملف العميل "${c.name}"؟`)) return
   try {
-    await window.api.deleteCustomer(c.id)
-    await loadCustomers()
+    await appStore.withLoading(async () => {
+      await window.api.deleteCustomer(c.id)
+      await loadCustomers()
+    }, 'جاري حذف ملف العميل...')
   } catch {
     alert('لا يمكن حذف عميل مرتبط بطلبات صيانة سابقة حفاظاً على السجل المالي.')
   }

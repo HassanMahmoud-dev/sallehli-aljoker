@@ -1,5 +1,9 @@
 appId: com.sallehli.aljoker
 productName: صلحلي - إدارة مركز الصيانة
+compression: maximum
+electronLanguages:
+  - ar
+  - en-US
 directories:
   buildResources: build
   output: dist
@@ -8,7 +12,14 @@ files:
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
-  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json,*.tsbuildinfo}'
+  - '!out/*.tsbuildinfo'
+  - '!node_modules/better-sqlite3/deps/**'
+  - '!node_modules/better-sqlite3/src/**'
+  - '!node_modules/better-sqlite3/prebuilds/darwin-*'
+  - '!node_modules/better-sqlite3/prebuilds/linux*'
+  - '!node_modules/better-sqlite3/prebuilds/win32-arm64*'
+  - '!node_modules/node-addon-api/**'
 asarUnpack:
   - '**/*.node'
 win:

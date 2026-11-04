@@ -15,6 +15,7 @@ import type {
   Technician,
   SparePart,
   TicketPartItem,
+  Customer,
   CustomerAppliance
 } from '@shared/types'
 import {
@@ -31,6 +32,8 @@ import {
   PackagePlus,
   Camera,
   ShieldCheck,
+  Users,
+  CheckCircle2,
   X
 } from 'lucide-vue-next'
 
@@ -40,6 +43,10 @@ const appStore = useAppStore()
 const tickets = ref<MaintenanceTicket[]>([])
 const technicians = ref<Technician[]>([])
 const spareParts = ref<SparePart[]>([])
+const allCustomers = ref<Customer[]>([])
+const customerSearchInput = ref('')
+const showCustomerSuggestions = ref(false)
+const activeCustomerField = ref<'search' | 'phone' | 'name' | null>(null)
 
 const searchQuery = ref('')
 const statusFilter = ref('all')
@@ -144,18 +151,67 @@ const computedRemainingAmount = computed(() =>
 )
 
 async function loadData(): Promise<void> {
-  const [ticketRows, techRows, partRows] = await Promise.all([
+  const [ticketRows, techRows, partRows, custRows] = await Promise.all([
     window.api.listTickets({
       search: searchQuery.value,
       status: statusFilter.value,
       service_type: serviceTypeFilter.value
     }),
     window.api.listTechnicians(),
-    window.api.listSpareParts()
+    window.api.listSpareParts(),
+    window.api.listCustomers('')
   ])
   tickets.value = ticketRows
   technicians.value = techRows
   spareParts.value = partRows
+  allCustomers.value = custRows
+}
+
+const filteredCustomersForSelection = computed(() => {
+  let q = ''
+  if (activeCustomerField.value === 'search') {
+    q = customerSearchInput.value.trim().toLowerCase()
+  } else if (activeCustomerField.value === 'phone') {
+    q = form.value.customer_phone.trim().toLowerCase()
+  } else if (activeCustomerField.value === 'name') {
+    q = form.value.customer_name.trim().toLowerCase()
+  } else {
+    q = customerSearchInput.value.trim().toLowerCase()
+  }
+
+  if (!q) {
+    return allCustomers.value.slice(0, 10)
+  }
+
+  return allCustomers.value
+    .filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        c.phone.toLowerCase().includes(q) ||
+        (c.phone2 && c.phone2.toLowerCase().includes(q)) ||
+        (c.area && c.area.toLowerCase().includes(q))
+    )
+    .slice(0, 12)
+})
+
+async function selectCustomerFromSuggestion(c: Customer): Promise<void> {
+  form.value.customer_id = c.id
+  form.value.customer_name = c.name
+  form.value.customer_phone = c.phone
+  form.value.customer_phone2 = c.phone2 || ''
+  form.value.customer_area = c.area || ''
+  form.value.customer_address = c.address || ''
+  customerSearchInput.value = `${c.name} — ${c.phone}`
+  showCustomerSuggestions.value = false
+  activeCustomerField.value = null
+  await handlePhoneLookup()
+}
+
+function hideCustomerSuggestionsDelayed(): void {
+  setTimeout(() => {
+    showCustomerSuggestions.value = false
+    activeCustomerField.value = null
+  }, 180)
 }
 
 watch([searchQuery, statusFilter, serviceTypeFilter], () => {
@@ -281,6 +337,8 @@ function openCreateModal(): void {
   existingAppliances.value = []
   previousTickets.value = []
   activeWarrantyAlert.value = null
+  customerSearchInput.value = ''
+  showCustomerSuggestions.value = false
   form.value = {
     customer_name: '',
     customer_phone: '',
@@ -319,6 +377,8 @@ function openEditModal(t: MaintenanceTicket): void {
   existingAppliances.value = []
   previousTickets.value = []
   activeWarrantyAlert.value = null
+  customerSearchInput.value = `${t.customer_name} — ${t.customer_phone}`
+  showCustomerSuggestions.value = false
   form.value = {
     id: t.id,
     ticket_number: t.ticket_number,
@@ -367,9 +427,16 @@ async function handleSaveTicket(andPrint = false): Promise<void> {
   }
 
   try {
-    const saved = await window.api.saveTicket(plain({ ...form.value }))
-    modalOpen.value = false
-    await loadData()
+    const isEdit = Boolean(form.value.id)
+    const saved = await appStore.withLoading(
+      async () => {
+        const res = await window.api.saveTicket(plain({ ...form.value }))
+        modalOpen.value = false
+        await loadData()
+        return res
+      },
+      isEdit ? 'جاري حفظ تعديلات طلب الصيانة...' : 'جاري تسجيل وحفظ بلاغ الصيانة...'
+    )
     if (andPrint) {
       appStore.openPrintModal(
         saved,
@@ -386,8 +453,10 @@ async function handleSaveTicket(andPrint = false): Promise<void> {
 async function handleDeleteTicket(t: MaintenanceTicket): Promise<void> {
   if (!confirm(`هل أنت متأكد من حذف الطلب رقم ${t.ticket_number}؟ سيتم إرجاع أي قطع غيار للمخزن.`))
     return
-  await window.api.deleteTicket(t.id)
-  await loadData()
+  await appStore.withLoading(async () => {
+    await window.api.deleteTicket(t.id)
+    await loadData()
+  }, 'جاري حذف طلب الصيانة...')
 }
 
 onMounted(async () => {
@@ -701,15 +770,111 @@ onMounted(async () => {
           <div
             class="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 space-y-3"
           >
-            <h4 class="font-black text-slate-900 dark:text-white text-sm">
-              1. بيانات العميل (اكتب رقم الموبايل للبحث التلقائي عن العميل وأجهزته)
-            </h4>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h4 class="font-black text-slate-900 dark:text-white text-sm flex items-center gap-1.5">
+                <Users class="w-4 h-4 text-blue-600" />
+                1. بيانات العميل (اختر عميلاً مسجلاً بالاسم أو رقم الهاتف، أو أدخل عميلاً جديداً)
+              </h4>
+              <span
+                v-if="form.customer_id"
+                class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 font-bold text-[11px]"
+              >
+                <CheckCircle2 class="w-3.5 h-3.5" />
+                عميل مسجل (#{{ form.customer_id }})
+              </span>
+            </div>
+
+            <!-- Quick Customer Search & Select By Name or Phone -->
+            <div class="relative">
+              <label class="block font-bold text-blue-700 dark:text-blue-400 mb-1">
+                🔍 اختيار سريع لعميل مسجل (ابحث بالاسم أو رقم الهاتف أو المنطقة):
+              </label>
+              <div class="relative">
+                <Search
+                  class="w-4 h-4 text-blue-500 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                />
+                <input
+                  v-model="customerSearchInput"
+                  @focus="
+                    showCustomerSuggestions = true;
+                    activeCustomerField = 'search'
+                  "
+                  @input="
+                    showCustomerSuggestions = true;
+                    activeCustomerField = 'search'
+                  "
+                  @blur="hideCustomerSuggestionsDelayed"
+                  type="text"
+                  placeholder="اكتب اسم العميل أو رقم الموبايل لاختياره تلقائياً مع عنوانه وأجهزته..."
+                  class="w-full pr-10 pl-8 py-2 rounded-xl bg-blue-50/70 dark:bg-slate-900 border-2 border-blue-200 dark:border-blue-800 focus:border-blue-500 focus:outline-none font-bold"
+                />
+                <button
+                  v-if="customerSearchInput"
+                  type="button"
+                  @click="
+                    customerSearchInput = '';
+                    showCustomerSuggestions = true;
+                    activeCustomerField = 'search'
+                  "
+                  class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  <X class="w-4 h-4" />
+                </button>
+              </div>
+
+              <!-- Customer Suggestions Dropdown -->
+              <div
+                v-if="showCustomerSuggestions && filteredCustomersForSelection.length > 0"
+                class="absolute z-50 mt-1 w-full max-h-56 overflow-y-auto rounded-xl bg-white dark:bg-slate-900 border border-blue-200 dark:border-slate-700 shadow-xl divide-y divide-slate-100 dark:divide-slate-800"
+              >
+                <button
+                  v-for="cust in filteredCustomersForSelection"
+                  :key="cust.id"
+                  type="button"
+                  @mousedown.prevent="selectCustomerFromSuggestion(cust)"
+                  class="w-full px-4 py-2.5 text-right hover:bg-blue-50 dark:hover:bg-slate-800 flex items-center justify-between gap-3 transition cursor-pointer"
+                >
+                  <div>
+                    <div class="font-black text-slate-900 dark:text-white">
+                      {{ cust.name }}
+                      <span
+                        v-if="cust.area"
+                        class="text-[11px] font-normal text-slate-500 mr-1.5"
+                      >
+                        (📍 {{ cust.area }})
+                      </span>
+                    </div>
+                    <div v-if="cust.address" class="text-[11px] text-slate-500 truncate max-w-md">
+                      {{ cust.address }}
+                    </div>
+                  </div>
+                  <div class="text-left shrink-0">
+                    <div class="font-mono font-bold text-blue-600 dark:text-blue-400">
+                      {{ cust.phone }}
+                    </div>
+                    <div v-if="cust.phone2" class="font-mono text-[10px] text-slate-400">
+                      {{ cust.phone2 }}
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
             <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
               <div>
                 <label class="block font-bold mb-1">رقم الموبايل الأساسي *</label>
                 <input
                   v-model="form.customer_phone"
-                  @input="handlePhoneLookup"
+                  @focus="
+                    showCustomerSuggestions = true;
+                    activeCustomerField = 'phone'
+                  "
+                  @input="
+                    showCustomerSuggestions = true;
+                    activeCustomerField = 'phone';
+                    handlePhoneLookup()
+                  "
+                  @blur="hideCustomerSuggestionsDelayed"
                   type="text"
                   placeholder="010xxxxxxxx"
                   class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold"
@@ -719,6 +884,15 @@ onMounted(async () => {
                 <label class="block font-bold mb-1">اسم العميل *</label>
                 <input
                   v-model="form.customer_name"
+                  @focus="
+                    showCustomerSuggestions = true;
+                    activeCustomerField = 'name'
+                  "
+                  @input="
+                    showCustomerSuggestions = true;
+                    activeCustomerField = 'name'
+                  "
+                  @blur="hideCustomerSuggestionsDelayed"
                   type="text"
                   placeholder="اسم العميل ثلاثي"
                   class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"

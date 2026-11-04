@@ -20,6 +20,7 @@ import {
   Moon,
   LogOut,
   RefreshCw,
+  Loader2,
   X
 } from 'lucide-vue-next'
 
@@ -267,6 +268,30 @@ onMounted(() => {
             :alt="appStore.imagePreviewTitle"
             class="max-h-[72vh] w-auto object-contain rounded-xl shadow-md"
           />
+        </div>
+      </div>
+    </div>
+
+    <!-- Global Action Loading Overlay (Add / Save / Edit / Delete / Login) -->
+    <div
+      v-if="appStore.actionLoading"
+      class="no-print fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 backdrop-blur-xs"
+    >
+      <div
+        class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl px-7 py-5 flex items-center gap-4 min-w-[260px]"
+      >
+        <div
+          class="w-11 h-11 rounded-2xl bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0"
+        >
+          <Loader2 class="w-6 h-6 animate-spin" />
+        </div>
+        <div>
+          <div class="font-black text-sm text-slate-900 dark:text-white">
+            {{ appStore.actionLoadingText }}
+          </div>
+          <div class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+            يرجى الانتظار لحظات...
+          </div>
         </div>
       </div>
     </div>

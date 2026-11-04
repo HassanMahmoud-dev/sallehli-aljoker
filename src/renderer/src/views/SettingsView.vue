@@ -39,9 +39,11 @@ function handleLogoUpload(e: Event): void {
 }
 
 async function handleSaveSettings(): Promise<void> {
-  await window.api.saveSettings(plain(form.value))
-  await appStore.loadSettings()
-  statusMessage.value = 'تم حفظ إعدادات المركز وقوالب الطباعة بنجاح!'
+  await appStore.withLoading(async () => {
+    await window.api.saveSettings(plain(form.value))
+    await appStore.loadSettings()
+    statusMessage.value = 'تم حفظ إعدادات المركز وقوالب الطباعة بنجاح!'
+  }, 'جاري حفظ إعدادات المركز...')
   setTimeout(() => {
     statusMessage.value = ''
   }, 4000)

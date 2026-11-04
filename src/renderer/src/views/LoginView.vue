@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
 import jokerTechLogo from '@renderer/assets/joker-tech-logo.png'
-import { Wrench, Lock, User as UserIcon, Sun, Moon, ShieldAlert, CheckCircle2 } from 'lucide-vue-next'
+import { Wrench, Lock, User as UserIcon, Sun, Moon, ShieldAlert, CheckCircle2, Loader2 } from 'lucide-vue-next'
 
 const router = useRouter()
 const appStore = useAppStore()
@@ -22,19 +22,21 @@ async function handleLogin(): Promise<void> {
 
   loading.value = true
   try {
-    const res = await window.api.login({
-      username: username.value.trim(),
-      password: password.value.trim()
-    })
+    await appStore.withLoading(async () => {
+      const res = await window.api.login({
+        username: username.value.trim(),
+        password: password.value.trim()
+      })
 
-    if (!res.success || !res.user) {
-      errorMessage.value = res.message || 'فشل تسجيل الدخول'
-      return
-    }
+      if (!res.success || !res.user) {
+        errorMessage.value = res.message || 'فشل تسجيل الدخول'
+        return
+      }
 
-    appStore.setSession(res.user, res.subscriptionStatus?.daysRemaining ?? null)
-    await appStore.loadSettings()
-    router.push('/dashboard')
+      appStore.setSession(res.user, res.subscriptionStatus?.daysRemaining ?? null)
+      await appStore.loadSettings()
+      router.push('/dashboard')
+    }, 'جاري تسجيل الدخول والتحقق من الصلاحية...')
   } catch (err: unknown) {
     errorMessage.value = err instanceof Error ? err.message : 'حدث خطأ أثناء تسجيل الدخول'
   } finally {
@@ -140,8 +142,9 @@ async function handleLogin(): Promise<void> {
           :disabled="loading"
           class="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-sm shadow-lg shadow-blue-600/25 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
         >
-          <CheckCircle2 class="w-4 h-4" />
-          <span>{{ loading ? 'جاري التحقق من الصلاحية...' : 'دخول إلى لوحة الإدارة' }}</span>
+          <Loader2 v-if="loading" class="w-4 h-4 animate-spin" />
+          <CheckCircle2 v-else class="w-4 h-4" />
+          <span>{{ loading ? 'جاري تسجيل الدخول...' : 'دخول إلى لوحة الإدارة' }}</span>
         </button>
 
         <!-- Role Info Footer -->

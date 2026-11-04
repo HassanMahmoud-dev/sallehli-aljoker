@@ -78,14 +78,16 @@ function openCollectModal(ticket: MaintenanceTicket): void {
 async function handleConfirmCollect(): Promise<void> {
   if (!ticketToCollect.value || collectAmount.value <= 0) return
   try {
-    await window.api.collectTicketReceivable({
-      ticketId: ticketToCollect.value.id,
-      amount: collectAmount.value,
-      paymentMethod: collectMethod.value,
-      notes: collectNotes.value
-    })
-    collectModalOpen.value = false
-    await loadReport()
+    await appStore.withLoading(async () => {
+      await window.api.collectTicketReceivable({
+        ticketId: ticketToCollect.value!.id,
+        amount: collectAmount.value,
+        paymentMethod: collectMethod.value,
+        notes: collectNotes.value
+      })
+      collectModalOpen.value = false
+      await loadReport()
+    }, 'جاري تسجيل التحصيل وإضافته للخزينة...')
   } catch (err: unknown) {
     alert(err instanceof Error ? err.message : 'تعذر تسجيل التحصيل')
   }

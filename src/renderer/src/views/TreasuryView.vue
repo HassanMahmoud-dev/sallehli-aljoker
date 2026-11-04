@@ -102,9 +102,11 @@ async function handleSaveTransaction(): Promise<void> {
     alert('يرجى إدخال المبلغ والبيان')
     return
   }
-  await window.api.addTreasuryTransaction(plain(form.value))
-  modalOpen.value = false
-  await loadData()
+  await appStore.withLoading(async () => {
+    await window.api.addTreasuryTransaction(plain(form.value))
+    modalOpen.value = false
+    await loadData()
+  }, 'جاري حفظ الحركة المالية بالخزينة...')
 }
 
 async function handleTransferFunds(): Promise<void> {
@@ -117,9 +119,11 @@ async function handleTransferFunds(): Promise<void> {
     return
   }
   try {
-    await window.api.transferTreasuryFunds(plain({ ...transferForm.value }))
-    transferModalOpen.value = false
-    await loadData()
+    await appStore.withLoading(async () => {
+      await window.api.transferTreasuryFunds(plain({ ...transferForm.value }))
+      transferModalOpen.value = false
+      await loadData()
+    }, 'جاري تحويل الرصيد بين الخزائن...')
   } catch (err: unknown) {
     alert(err instanceof Error ? err.message : 'فشل التحويل بين الخزائن')
   }
@@ -127,8 +131,10 @@ async function handleTransferFunds(): Promise<void> {
 
 async function handleDeleteTransaction(id: number): Promise<void> {
   if (!confirm('هل أنت متأكد من حذف هذه الحركة المالية؟')) return
-  await window.api.deleteTreasuryTransaction(id)
-  await loadData()
+  await appStore.withLoading(async () => {
+    await window.api.deleteTreasuryTransaction(id)
+    await loadData()
+  }, 'جاري حذف الحركة المالية...')
 }
 
 onMounted(loadData)

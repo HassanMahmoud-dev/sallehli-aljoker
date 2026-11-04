@@ -6,7 +6,31 @@ export const useAppStore = defineStore('app', () => {
   const currentUser = ref<User | null>(null)
   const subscriptionDaysRemaining = ref<number | null>(null)
   const isDark = ref<boolean>(localStorage.getItem('sallehli_theme') === 'dark')
-  const appVersion = ref<string>('v1.0.5')
+  const appVersion = ref<string>('v1.1.0')
+
+  // Global Action Loading State (Save / Edit / Delete / Login)
+  const actionLoading = ref<boolean>(false)
+  const actionLoadingText = ref<string>('جاري تنفيذ العملية...')
+
+  function startLoading(text = 'جاري تنفيذ العملية...'): void {
+    actionLoadingText.value = text
+    actionLoading.value = true
+  }
+
+  function stopLoading(): void {
+    actionLoading.value = false
+  }
+
+  async function withLoading<T>(fn: () => Promise<T>, text = 'جاري حفظ البيانات...'): Promise<T> {
+    startLoading(text)
+    const minWait = new Promise((resolve) => setTimeout(resolve, 260))
+    try {
+      const [res] = await Promise.all([fn(), minWait])
+      return res
+    } finally {
+      stopLoading()
+    }
+  }
 
   const settings = ref<CenterSettings>({
     center_name: 'مركز صلحلي للصيانة المعتمدة',
@@ -182,6 +206,8 @@ export const useAppStore = defineStore('app', () => {
     subscriptionDaysRemaining,
     isDark,
     appVersion,
+    actionLoading,
+    actionLoadingText,
     settings,
     printModalOpen,
     ticketToPrint,
@@ -201,6 +227,9 @@ export const useAppStore = defineStore('app', () => {
     canViewInventory,
     canViewPurchasePrices,
     canDeleteRecords,
+    startLoading,
+    stopLoading,
+    withLoading,
     applyTheme,
     toggleTheme,
     fetchVersion,
