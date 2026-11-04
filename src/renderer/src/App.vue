@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, computed } from 'vue'
+import { onMounted, onUnmounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
 import { USER_ROLE_LABELS } from '@renderer/constants/appliances'
@@ -16,6 +16,9 @@ import {
   PieChart,
   Settings,
   ShieldCheck,
+  Server,
+  Globe,
+  Sparkles,
   Sun,
   Moon,
   LogOut,
@@ -27,6 +30,8 @@ import {
 const router = useRouter()
 const route = useRoute()
 const appStore = useAppStore()
+
+let unsubscribeUpdateAvailable: (() => void) | null = null
 
 const navItems = computed(() => {
   const role = appStore.currentUser?.role || 'tenant'
@@ -88,17 +93,71 @@ const navItems = computed(() => {
       icon: ShieldCheck
     })
   }
+
+  if (appStore.isSuperAdmin) {
+    items.push({
+      name: 'system-control',
+      path: '/system-control',
+      label: 'إعدادات الشبكة والنظام (سوبر أدمن)',
+      icon: Server
+    })
+  }
+
   return items
 })
+
+const primaryBrowserUrl = computed(() => {
+  const st = appStore.systemStatus
+  if (!st || !st.lanEnabled || !st.lanRunning) return ''
+  return st.urls[0] || st.localUrl
+})
+
+function openInBrowser(): void {
+  if (!primaryBrowserUrl.value) return
+  window.api.openExternal(primaryBrowserUrl.value)
+}
 
 function handleLogout(): void {
   appStore.logout()
   router.push('/login')
 }
 
-onMounted(() => {
+onMounted(async () => {
   appStore.applyTheme()
   appStore.fetchVersion()
+  appStore.fetchSystemStatus()
+
+  if (appStore.isAuthenticated) {
+    const valid = await appStore.verifyRememberedSession()
+    if (!valid && route.name !== 'login') {
+      router.push('/login')
+    }
+  }
+
+  if (window.api?.onUpdateAvailable) {
+    unsubscribeUpdateAvailable = window.api.onUpdateAvailable((res) => {
+      if (res?.updateAvailable) {
+        appStore.setAvailableUpdate(res)
+      }
+    })
+  }
+
+  if (window.api?.getAutoUpdateResult) {
+    try {
+      const autoRes = await window.api.getAutoUpdateResult()
+      if (autoRes?.updateAvailable) {
+        appStore.setAvailableUpdate(autoRes)
+      }
+    } catch {
+      // Ignore
+    }
+  }
+})
+
+onUnmounted(() => {
+  if (unsubscribeUpdateAvailable) {
+    unsubscribeUpdateAvailable()
+  }
 })
 </script>
 
@@ -121,7 +180,7 @@ onMounted(() => {
             <div
               class="w-11 h-11 rounded-2xl bg-white dark:bg-slate-100 border border-blue-200 dark:border-slate-700 flex items-center justify-center shadow-md shadow-blue-600/20 shrink-0 p-1.5"
             >
-              <img :src="jokerTechLogo" alt="الجوكر تك" class="w-full h-full object-contain" />
+              <img :src="jokerTechLogo" alt="صلحلي" class="w-full h-full object-contain" />
             </div>
             <div class="overflow-hidden">
               <div class="flex items-center gap-1.5">
@@ -149,7 +208,7 @@ onMounted(() => {
               :class="[
                 'flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-bold transition',
                 route.path.startsWith(item.path)
-                  ? item.name === 'super-admin'
+                  ? ['super-admin', 'system-control'].includes(item.name)
                     ? 'bg-purple-600 text-white shadow-md shadow-purple-600/25'
                     : 'bg-blue-600 text-white shadow-md shadow-blue-600/25'
                   : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -162,7 +221,7 @@ onMounted(() => {
         </div>
 
         <!-- Bottom User Profile & Logout -->
-        <div class="p-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
+        <div class="p-4 border-t border-slate-200 dark:border-slate-800 space-y-2.5">
           <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 space-y-1">
             <div class="font-black text-xs text-slate-900 dark:text-white truncate">
               {{ appStore.currentUser?.full_name }}
@@ -182,17 +241,55 @@ onMounted(() => {
             </div>
           </div>
 
+          <!-- Quick Open in Browser / LAN Link (when LAN is enabled) -->
+          <button
+            v-if="primaryBrowserUrl"
+            type="button"
+            @click="openInBrowser"
+            class="w-full flex items-center justify-between py-2 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/70 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-800/70 text-xs font-bold transition cursor-pointer"
+            :title="`فتح على المتصفح: ${primaryBrowserUrl}`"
+          >
+            <span class="flex items-center gap-1.5">
+              <Globe class="w-3.5 h-3.5" />
+              <span>فتح على المتصفح</span>
+            </span>
+            <span
+              dir="ltr"
+              class="font-mono text-[10px] px-1.5 py-0.5 rounded-md bg-white dark:bg-slate-900 truncate max-w-[115px]"
+            >
+              {{ primaryBrowserUrl.replace('http://', '') }}
+            </span>
+          </button>
+
           <!-- Quick Update Button -->
           <button
             type="button"
             @click="appStore.openUpdateModal"
-            class="w-full flex items-center justify-between py-2 px-3 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:hover:bg-blue-900/70 dark:text-blue-300 border border-blue-200/70 dark:border-blue-800/70 text-xs font-bold transition cursor-pointer"
+            :class="[
+              'w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-bold transition cursor-pointer border',
+              appStore.availableUpdate?.updateAvailable
+                ? 'bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-500 shadow-md shadow-indigo-600/20'
+                : 'bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:hover:bg-blue-900/70 dark:text-blue-300 border-blue-200/70 dark:border-blue-800/70'
+            ]"
           >
             <span class="flex items-center gap-1.5">
               <RefreshCw class="w-3.5 h-3.5" />
-              <span>تحديث البرنامج</span>
+              <span>
+                {{
+                  appStore.availableUpdate?.updateAvailable
+                    ? `تحديث متاح (v${appStore.availableUpdate.latestVersion})`
+                    : 'تحديث البرنامج'
+                }}
+              </span>
             </span>
-            <span class="font-mono text-[10px] px-1.5 py-0.5 rounded-md bg-white dark:bg-slate-900">
+            <span
+              :class="[
+                'font-mono text-[10px] px-1.5 py-0.5 rounded-md',
+                appStore.availableUpdate?.updateAvailable
+                  ? 'bg-white/20 text-white'
+                  : 'bg-white dark:bg-slate-900'
+              ]"
+            >
               {{ appStore.appVersion }}
             </span>
           </button>
@@ -218,19 +315,49 @@ onMounted(() => {
               <span>خروج</span>
             </button>
           </div>
-
-          <div class="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400 dark:text-slate-500">
-            <div class="flex items-center gap-1.5">
-              <img :src="jokerTechLogo" alt="الجوكر تك" class="w-4 h-4 object-contain bg-white rounded-xs p-0.5" />
-              <span class="font-bold text-slate-600 dark:text-slate-400">تطوير: الجوكر تك</span>
-            </div>
-            <span class="font-mono font-bold">{{ appStore.appVersion }}</span>
-          </div>
         </div>
       </aside>
 
       <!-- Main Viewport -->
-      <main class="flex-1 overflow-y-auto p-6">
+      <main class="flex-1 overflow-y-auto p-6 space-y-4">
+        <!-- 24-Hour Auto-Update Available Banner -->
+        <div
+          v-if="appStore.availableUpdate?.updateAvailable && !appStore.updateBannerDismissed"
+          class="no-print p-3.5 rounded-2xl bg-gradient-to-l from-indigo-600 via-blue-600 to-indigo-700 text-white shadow-lg flex flex-wrap items-center justify-between gap-3 text-xs"
+        >
+          <div class="flex items-center gap-2.5">
+            <div class="p-2 rounded-xl bg-white/15">
+              <Sparkles class="w-4 h-4 text-amber-300" />
+            </div>
+            <div>
+              <span class="font-black">
+                يتوفر إصدار جديد من برنامج صلحلي (v{{ appStore.availableUpdate.latestVersion }})!
+              </span>
+              <span class="text-blue-100 mr-2">
+                تم اكتشاف التحديث تلقائياً — يمكنك التحميل والتثبيت الآن مع حفظ نسخة احتياطية كاملة لبياناتك.
+              </span>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              @click="appStore.openUpdateModal"
+              class="px-3.5 py-1.5 rounded-xl bg-white text-indigo-900 hover:bg-blue-50 font-black transition cursor-pointer"
+            >
+              عرض وتثبيت التحديث الآن
+            </button>
+            <button
+              type="button"
+              @click="appStore.dismissUpdateBanner"
+              class="p-1.5 rounded-lg hover:bg-white/15 text-white/80 hover:text-white cursor-pointer"
+              title="إخفاء التنبيه"
+            >
+              <X class="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
         <router-view />
       </main>
     </div>

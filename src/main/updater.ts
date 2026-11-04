@@ -224,6 +224,12 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
 
     const isNewer = compareVersions(latestVersion, currentVersion) > 0
 
+    try {
+      saveSettings({ last_update_check_at: String(Date.now()) })
+    } catch {
+      // Ignore settings write error
+    }
+
     if (!isNewer) {
       return {
         success: true,
@@ -448,3 +454,50 @@ export async function installUpdateFromLocalFile(
     }
   }
 }
+
+const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
+let lastAutoUpdateResult: UpdateCheckResult | null = null
+let autoUpdateTimer: NodeJS.Timeout | null = null
+
+export function getLastAutoUpdateResult(): UpdateCheckResult | null {
+  return lastAutoUpdateResult
+}
+
+export function startAutoUpdateScheduler(
+  onUpdateAvailable: (result: UpdateCheckResult) => void
+): void {
+  const runAutoCheck = async (force = false): Promise<void> => {
+    try {
+      const settings = getSettings()
+      const lastCheckMs = Number(settings.last_update_check_at || 0)
+      const now = Date.now()
+
+      if (!force && lastCheckMs > 0 && now - lastCheckMs < TWENTY_FOUR_HOURS_MS) {
+        return
+      }
+
+      const res = await checkForOnlineUpdate()
+      if (res.updateAvailable) {
+        lastAutoUpdateResult = res
+        onUpdateAvailable(res)
+      }
+    } catch {
+      // Silent background check
+    }
+  }
+
+  // Initial check shortly after startup (checks if 24h passed or never checked; also checks for available update)
+  setTimeout(() => {
+    runAutoCheck(true)
+  }, 6000)
+
+  if (autoUpdateTimer) {
+    clearInterval(autoUpdateTimer)
+  }
+
+  // Check every hour whether 24 hours have elapsed since last check
+  autoUpdateTimer = setInterval(() => {
+    runAutoCheck(false)
+  }, 60 * 60 * 1000)
+}
+

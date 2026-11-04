@@ -216,14 +216,24 @@ onMounted(loadUsers)
         </div>
       </div>
 
-      <button
-        type="button"
-        @click="openCreateModal"
-        class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white text-indigo-950 hover:bg-purple-50 font-black text-xs shadow-md transition cursor-pointer"
-      >
-        <UserPlus class="w-4 h-4" />
-        إضافة مستخدم / ترخيص جديد
-      </button>
+      <div class="flex flex-wrap items-center gap-2.5">
+        <router-link
+          v-if="appStore.isSuperAdmin"
+          to="/system-control"
+          class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600/40 hover:bg-purple-600/60 border border-purple-400/40 text-white font-black text-xs transition"
+        >
+          <span>إعدادات الشبكة والمتصفح والويندوز</span>
+        </router-link>
+
+        <button
+          type="button"
+          @click="openCreateModal"
+          class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white text-indigo-950 hover:bg-purple-50 font-black text-xs shadow-md transition cursor-pointer"
+        >
+          <UserPlus class="w-4 h-4" />
+          إضافة مستخدم / ترخيص جديد
+        </button>
+      </div>
     </div>
 
     <!-- Role Explanation Cards -->

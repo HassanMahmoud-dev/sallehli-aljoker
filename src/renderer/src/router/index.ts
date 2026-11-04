@@ -10,6 +10,7 @@ import TreasuryView from '@renderer/views/TreasuryView.vue'
 import ReportsView from '@renderer/views/ReportsView.vue'
 import SettingsView from '@renderer/views/SettingsView.vue'
 import SuperAdminView from '@renderer/views/SuperAdminView.vue'
+import SystemControlView from '@renderer/views/SystemControlView.vue'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -76,6 +77,12 @@ const router = createRouter({
       name: 'super-admin',
       component: SuperAdminView,
       meta: { requiresAuth: true, requiresManageUsers: true }
+    },
+    {
+      path: '/system-control',
+      name: 'system-control',
+      component: SystemControlView,
+      meta: { requiresAuth: true, requiresSuperAdmin: true }
     }
   ]
 })
@@ -86,6 +93,9 @@ router.beforeEach((to) => {
     return { name: 'login' }
   }
   if (to.name === 'login' && appStore.isAuthenticated) {
+    return { name: 'dashboard' }
+  }
+  if (to.meta.requiresSuperAdmin && !appStore.isSuperAdmin) {
     return { name: 'dashboard' }
   }
   if (to.meta.requiresFinancials && !appStore.canViewFinancials) {

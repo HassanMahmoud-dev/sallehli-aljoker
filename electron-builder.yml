@@ -46,4 +46,8 @@ nsis:
     - ar_SA
     - en_US
   language: "1025"
+  # التطبيق لا يستخدم التحديث التلقائي (electron-updater)، لذلك نعطّل الحزمة التفاضلية.
+  # وضعها الافتراضي يفرض ضغطاً "normal" غير مُصمت بقاموس 1MB ويتجاهل compression: maximum.
+  # بتعطيلها يُضغط المثبت فعلياً بأقصى ضغط LZMA2 مُصمت (Solid) => حجم أصغر بكثير بدون أي تأثير على التطبيق.
+  differentialPackage: false
 npmRebuild: false

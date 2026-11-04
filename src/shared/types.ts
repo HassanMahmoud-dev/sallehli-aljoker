@@ -217,6 +217,20 @@ export interface CenterSettings {
   auto_backup_enabled?: number
   auto_backup_dir?: string
   auto_backup_keep_count?: number
+  lan_enabled?: number
+  lan_port?: number
+  auto_start_windows?: number
+  last_update_check_at?: string
+}
+
+export interface SystemControlStatus {
+  lanEnabled: boolean
+  lanRunning: boolean
+  lanPort: number
+  ips: string[]
+  urls: string[]
+  localUrl: string
+  autoStartWindows: boolean
 }
 
 export interface UpdateCheckResult {

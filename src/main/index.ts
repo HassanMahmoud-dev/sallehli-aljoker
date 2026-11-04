@@ -5,6 +5,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import {
   initDatabase,
   loginUser,
+  verifySession,
   listUsers,
   saveUser,
   deleteUser,
@@ -44,8 +45,16 @@ import {
 import {
   checkForOnlineUpdate,
   downloadAndInstallOnlineUpdate,
-  installUpdateFromLocalFile
+  installUpdateFromLocalFile,
+  startAutoUpdateScheduler,
+  getLastAutoUpdateResult
 } from './updater'
+import {
+  registerRpcHandlers,
+  startLanServer,
+  stopLanServer,
+  getSystemControlStatus
+} from './lanServer'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -90,116 +99,141 @@ function createWindow(): void {
 }
 
 function registerIpcHandlers(): void {
-  // Auth & Users
-  ipcMain.handle('auth:login', (_e, payload) => loginUser(payload))
-  ipcMain.handle('users:list', () => listUsers())
-  ipcMain.handle('users:save', (_e, data) => saveUser(data))
-  ipcMain.handle('users:delete', (_e, id: number) => deleteUser(id))
+  const handlers: Record<string, (...args: any[]) => any> = {
+    // Auth & Users
+    'auth:login': (payload) => loginUser(payload),
+    'auth:verifySession': (userId: number) => verifySession(userId),
+    'users:list': () => listUsers(),
+    'users:save': (data) => saveUser(data),
+    'users:delete': (id: number) => deleteUser(id),
 
-  // Customers & Appliances
-  ipcMain.handle('customers:list', (_e, search?: string) => listCustomers(search))
-  ipcMain.handle('customers:findByPhone', (_e, phone: string) => findCustomerByPhone(phone))
-  ipcMain.handle('customers:save', (_e, data) => saveCustomer(data))
-  ipcMain.handle('customers:delete', (_e, id: number) => deleteCustomer(id))
-  ipcMain.handle('customers:appliances', (_e, customerId: number) =>
-    getCustomerAppliances(customerId)
-  )
-  ipcMain.handle('customers:saveAppliance', (_e, data) => saveCustomerAppliance(data))
-  ipcMain.handle('customers:deleteAppliance', (_e, id: number) => deleteCustomerAppliance(id))
+    // Customers & Appliances
+    'customers:list': (search?: string) => listCustomers(search),
+    'customers:findByPhone': (phone: string) => findCustomerByPhone(phone),
+    'customers:save': (data) => saveCustomer(data),
+    'customers:delete': (id: number) => deleteCustomer(id),
+    'customers:appliances': (customerId: number) => getCustomerAppliances(customerId),
+    'customers:saveAppliance': (data) => saveCustomerAppliance(data),
+    'customers:deleteAppliance': (id: number) => deleteCustomerAppliance(id),
 
-  // Technicians
-  ipcMain.handle('technicians:list', () => listTechnicians())
-  ipcMain.handle('technicians:save', (_e, data) => saveTechnician(data))
-  ipcMain.handle('technicians:delete', (_e, id: number) => deleteTechnician(id))
+    // Technicians
+    'technicians:list': () => listTechnicians(),
+    'technicians:save': (data) => saveTechnician(data),
+    'technicians:delete': (id: number) => deleteTechnician(id),
 
-  // Spare Parts & Inventory
-  ipcMain.handle('parts:list', (_e, search?: string) => listSpareParts(search))
-  ipcMain.handle('parts:save', (_e, data) => saveSparePart(data))
-  ipcMain.handle('parts:delete', (_e, id: number) => deleteSparePart(id))
-  ipcMain.handle('inventory:movement', (_e, payload) => recordInventoryMovement(payload))
-  ipcMain.handle('inventory:list', () => listInventoryMovements())
+    // Spare Parts & Inventory
+    'parts:list': (search?: string) => listSpareParts(search),
+    'parts:save': (data) => saveSparePart(data),
+    'parts:delete': (id: number) => deleteSparePart(id),
+    'inventory:movement': (payload) => recordInventoryMovement(payload),
+    'inventory:list': () => listInventoryMovements(),
 
-  // Maintenance Tickets
-  ipcMain.handle('tickets:list', (_e, filters) => listTickets(filters))
-  ipcMain.handle('tickets:save', (_e, data) => saveTicket(data))
-  ipcMain.handle('tickets:updateImages', (_e, payload) => updateTicketImages(payload))
-  ipcMain.handle('tickets:delete', (_e, id: number) => deleteTicket(id))
+    // Maintenance Tickets
+    'tickets:list': (filters) => listTickets(filters),
+    'tickets:save': (data) => saveTicket(data),
+    'tickets:updateImages': (payload) => updateTicketImages(payload),
+    'tickets:delete': (id: number) => deleteTicket(id),
 
-  // Treasury & Reports
-  ipcMain.handle('treasury:list', () => listTreasuryTransactions())
-  ipcMain.handle('treasury:add', (_e, data) => addTreasuryTransaction(data))
-  ipcMain.handle('treasury:transfer', (_e, payload) => transferTreasuryFunds(payload))
-  ipcMain.handle('treasury:collectReceivable', (_e, payload) => collectTicketReceivable(payload))
-  ipcMain.handle('treasury:delete', (_e, id: number) => deleteTreasuryTransaction(id))
-  ipcMain.handle('reports:financial', (_e, payload?: { dateFrom?: string; dateTo?: string }) =>
-    getFinancialReport(payload?.dateFrom, payload?.dateTo)
-  )
+    // Treasury & Reports
+    'treasury:list': () => listTreasuryTransactions(),
+    'treasury:add': (data) => addTreasuryTransaction(data),
+    'treasury:transfer': (payload) => transferTreasuryFunds(payload),
+    'treasury:collectReceivable': (payload) => collectTicketReceivable(payload),
+    'treasury:delete': (id: number) => deleteTreasuryTransaction(id),
+    'reports:financial': (payload?: { dateFrom?: string; dateTo?: string }) =>
+      getFinancialReport(payload?.dateFrom, payload?.dateTo),
 
-  // Dashboard & Settings
-  ipcMain.handle('app:version', () => app.getVersion())
-  ipcMain.handle('dashboard:stats', () => getDashboardStats())
-  ipcMain.handle('settings:get', () => getSettings())
-  ipcMain.handle('settings:save', (_e, settings) => saveSettings(settings))
-  ipcMain.handle('db:path', () => getDatabasePath())
+    // Dashboard & Settings
+    'app:version': () => app.getVersion(),
+    'dashboard:stats': () => getDashboardStats(),
+    'settings:get': () => getSettings(),
+    'settings:save': (settings) => saveSettings(settings),
+    'db:path': () => getDatabasePath(),
 
-  // Backup & Restore & Auto-Backup
-  ipcMain.handle('backup:create', async () => {
-    if (!mainWindow) return { success: false }
-    const dateStr = new Date().toISOString().slice(0, 10)
-    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
-      title: 'حفظ نسخة احتياطية من قاعدة البيانات',
-      defaultPath: `Sallehli-Backup-${dateStr}.sqlite`,
-      filters: [{ name: 'SQLite Database', extensions: ['sqlite', 'db'] }]
-    })
-    if (canceled || !filePath) return { success: false }
-    createBackupToFile(filePath)
-    return { success: true, filePath }
-  })
+    // Backup & Restore & Auto-Backup
+    'backup:create': async () => {
+      if (!mainWindow) return { success: false }
+      const dateStr = new Date().toISOString().slice(0, 10)
+      const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+        title: 'حفظ نسخة احتياطية من قاعدة البيانات',
+        defaultPath: `Sallehli-Backup-${dateStr}.sqlite`,
+        filters: [{ name: 'SQLite Database', extensions: ['sqlite', 'db'] }]
+      })
+      if (canceled || !filePath) return { success: false }
+      createBackupToFile(filePath)
+      return { success: true, filePath }
+    },
+    'backup:restore': async () => {
+      if (!mainWindow) return { success: false }
+      const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+        title: 'استعادة نسخة احتياطية لقاعدة البيانات',
+        properties: ['openFile'],
+        filters: [{ name: 'SQLite Database', extensions: ['sqlite', 'db'] }]
+      })
+      if (canceled || filePaths.length === 0) return { success: false }
+      restoreBackupFromFile(filePaths[0])
+      return { success: true, filePath: filePaths[0] }
+    },
+    'backup:chooseDir': async () => {
+      if (!mainWindow) return { success: false }
+      const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+        title: 'اختر مجلد حفظ النسخ الاحتياطية التلقائية',
+        properties: ['openDirectory', 'createDirectory']
+      })
+      if (canceled || filePaths.length === 0) return { success: false }
+      return { success: true, dirPath: filePaths[0] }
+    },
+    'backup:autoNow': () => runAutoBackup(),
 
-  ipcMain.handle('backup:restore', async () => {
-    if (!mainWindow) return { success: false }
-    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      title: 'استعادة نسخة احتياطية لقاعدة البيانات',
-      properties: ['openFile'],
-      filters: [{ name: 'SQLite Database', extensions: ['sqlite', 'db'] }]
-    })
-    if (canceled || filePaths.length === 0) return { success: false }
-    restoreBackupFromFile(filePaths[0])
-    return { success: true, filePath: filePaths[0] }
-  })
+    // External Links (e.g. WhatsApp / Browser)
+    'shell:openExternal': async (url: string) => {
+      await shell.openExternal(url)
+    },
 
-  ipcMain.handle('backup:chooseDir', async () => {
-    if (!mainWindow) return { success: false }
-    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      title: 'اختر مجلد حفظ النسخ الاحتياطية التلقائية',
-      properties: ['openDirectory', 'createDirectory']
-    })
-    if (canceled || filePaths.length === 0) return { success: false }
-    return { success: true, dirPath: filePaths[0] }
-  })
+    // Application Updates (Online & Offline & 24h Auto Check)
+    'update:check': async (customUrl?: string) => checkForOnlineUpdate(customUrl),
+    'update:downloadAndInstall': async (downloadUrl: string) =>
+      downloadAndInstallOnlineUpdate(downloadUrl, mainWindow),
+    'update:installLocal': async () => installUpdateFromLocalFile(mainWindow),
+    'update:getAutoResult': () => getLastAutoUpdateResult(),
 
-  ipcMain.handle('backup:autoNow', () => {
-    return runAutoBackup()
-  })
+    // Super Admin System Control (LAN & Browser Server + Windows Startup)
+    'system:status': () => getSystemControlStatus(),
+    'system:setLanConfig': async (payload: { enabled: boolean; port?: number }) => {
+      const cleanPort = Math.max(1024, Math.min(65535, Number(payload.port || 4545)))
+      saveSettings({
+        lan_enabled: payload.enabled ? 1 : 0,
+        lan_port: cleanPort
+      })
+      if (payload.enabled) {
+        await startLanServer(cleanPort)
+      } else {
+        await stopLanServer()
+      }
+      return getSystemControlStatus()
+    },
+    'system:setAutoStart': (enabled: boolean) => {
+      saveSettings({ auto_start_windows: enabled ? 1 : 0 })
+      try {
+        app.setLoginItemSettings({
+          openAtLogin: Boolean(enabled),
+          path: process.execPath
+        })
+      } catch {
+        // Ignore in dev environment if unsupported
+      }
+      return getSystemControlStatus()
+    }
+  }
 
-  // External Links (e.g. WhatsApp)
-  ipcMain.handle('shell:openExternal', async (_e, url: string) => {
-    await shell.openExternal(url)
-  })
+  for (const [channel, fn] of Object.entries(handlers)) {
+    ipcMain.handle(channel, (_e, ...args) => fn(...args))
+  }
 
-  // Application Updates (Online & Offline)
-  ipcMain.handle('update:check', async (_e, customUrl?: string) => {
-    return await checkForOnlineUpdate(customUrl)
-  })
-  ipcMain.handle('update:downloadAndInstall', async (_e, downloadUrl: string) => {
-    return await downloadAndInstallOnlineUpdate(downloadUrl, mainWindow)
-  })
-  ipcMain.handle('update:installLocal', async () => {
-    return await installUpdateFromLocalFile(mainWindow)
-  })
+  registerRpcHandlers(handlers)
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.sallehli.aljoker')
 
   app.on('browser-window-created', (_, window) => {
@@ -208,7 +242,30 @@ app.whenReady().then(() => {
 
   initDatabase()
   registerIpcHandlers()
+
+  const settings = getSettings()
+  if (Boolean(settings.lan_enabled ?? 1)) {
+    await startLanServer(settings.lan_port || 4545)
+  }
+
+  if (app.isPackaged && settings.auto_start_windows !== undefined) {
+    try {
+      app.setLoginItemSettings({
+        openAtLogin: Boolean(settings.auto_start_windows),
+        path: process.execPath
+      })
+    } catch {
+      // Ignore
+    }
+  }
+
   createWindow()
+
+  startAutoUpdateScheduler((result) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update:available', result)
+    }
+  })
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -216,6 +273,7 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  stopLanServer()
   runAutoBackup()
 })
 

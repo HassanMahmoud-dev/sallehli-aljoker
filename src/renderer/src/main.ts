@@ -1,8 +1,11 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import { ensureWebApiBridge } from './utils/webApiBridge'
 import App from './App.vue'
 import router from './router'
 import './assets/main.css'
+
+ensureWebApiBridge()
 
 const app = createApp(App)
 app.use(createPinia())

@@ -11,6 +11,7 @@ import type {
   TicketPartItem,
   TreasuryTransaction,
   CenterSettings,
+  UpdateCheckResult,
   UpdateProgressPayload
 } from '../shared/types'
 
@@ -28,6 +29,7 @@ function invoke(channel: string, ...args: unknown[]): Promise<any> {
 const api = {
   // Auth & Users
   login: (payload: LoginPayload) => invoke('auth:login', payload),
+  verifySession: (userId: number) => invoke('auth:verifySession', userId),
   listUsers: () => invoke('users:list'),
   saveUser: (data: Partial<User> & { password?: string }) =>
     invoke('users:save', data),
@@ -122,13 +124,27 @@ const api = {
   downloadAndInstallUpdate: (downloadUrl: string) =>
     invoke('update:downloadAndInstall', downloadUrl),
   installLocalUpdate: () => invoke('update:installLocal'),
+  getAutoUpdateResult: () => invoke('update:getAutoResult'),
   onUpdateProgress: (callback: (payload: UpdateProgressPayload) => void) => {
     const listener = (_event: unknown, payload: UpdateProgressPayload): void => callback(payload)
     ipcRenderer.on('update:progress', listener)
     return () => {
       ipcRenderer.removeListener('update:progress', listener)
     }
-  }
+  },
+  onUpdateAvailable: (callback: (payload: UpdateCheckResult) => void) => {
+    const listener = (_event: unknown, payload: UpdateCheckResult): void => callback(payload)
+    ipcRenderer.on('update:available', listener)
+    return () => {
+      ipcRenderer.removeListener('update:available', listener)
+    }
+  },
+
+  // Super Admin System Control (LAN & Browser Server + Windows Auto-Start)
+  getSystemStatus: () => invoke('system:status'),
+  setLanConfig: (payload: { enabled: boolean; port?: number }) =>
+    invoke('system:setLanConfig', payload),
+  setAutoStartWindows: (enabled: boolean) => invoke('system:setAutoStart', enabled)
 }
 
 if (process.contextIsolated) {

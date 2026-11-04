@@ -14,11 +14,13 @@ import type {
   DashboardStats,
   FinancialReportData,
   UpdateCheckResult,
-  UpdateProgressPayload
+  UpdateProgressPayload,
+  SystemControlStatus
 } from '../shared/types'
 
 export interface IElectronAPI {
   login: (payload: LoginPayload) => Promise<AuthResponse>
+  verifySession: (userId: number) => Promise<AuthResponse>
   listUsers: () => Promise<User[]>
   saveUser: (data: Partial<User> & { password?: string }) => Promise<User>
   deleteUser: (id: number) => Promise<void>
@@ -113,7 +115,13 @@ export interface IElectronAPI {
     message?: string
     backupPath?: string
   }>
+  getAutoUpdateResult: () => Promise<UpdateCheckResult | null>
   onUpdateProgress: (callback: (payload: UpdateProgressPayload) => void) => () => void
+  onUpdateAvailable: (callback: (payload: UpdateCheckResult) => void) => () => void
+
+  getSystemStatus: () => Promise<SystemControlStatus>
+  setLanConfig: (payload: { enabled: boolean; port?: number }) => Promise<SystemControlStatus>
+  setAutoStartWindows: (enabled: boolean) => Promise<SystemControlStatus>
 }
 
 declare global {

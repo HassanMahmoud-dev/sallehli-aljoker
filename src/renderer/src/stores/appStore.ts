@@ -1,12 +1,41 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { User, CenterSettings, MaintenanceTicket } from '@shared/types'
+import type {
+  User,
+  CenterSettings,
+  MaintenanceTicket,
+  UpdateCheckResult,
+  SystemControlStatus
+} from '@shared/types'
+
+const REMEMBERED_SESSION_KEY = 'sallehli_remembered_session'
+
+function loadInitialRememberedSession(): {
+  user: User | null
+  daysRemaining: number | null
+} {
+  try {
+    const raw = localStorage.getItem(REMEMBERED_SESSION_KEY)
+    if (!raw) return { user: null, daysRemaining: null }
+    const parsed = JSON.parse(raw)
+    if (parsed && parsed.user && parsed.user.id && parsed.user.username) {
+      return {
+        user: parsed.user as User,
+        daysRemaining: parsed.daysRemaining ?? null
+      }
+    }
+  } catch {
+    // Ignore corrupted storage
+  }
+  return { user: null, daysRemaining: null }
+}
 
 export const useAppStore = defineStore('app', () => {
-  const currentUser = ref<User | null>(null)
-  const subscriptionDaysRemaining = ref<number | null>(null)
+  const initialSession = loadInitialRememberedSession()
+  const currentUser = ref<User | null>(initialSession.user)
+  const subscriptionDaysRemaining = ref<number | null>(initialSession.daysRemaining)
   const isDark = ref<boolean>(localStorage.getItem('sallehli_theme') === 'dark')
-  const appVersion = ref<string>('v1.1.0')
+  const appVersion = ref<string>('v1.1.5')
 
   // Global Action Loading State (Save / Edit / Delete / Login)
   const actionLoading = ref<boolean>(false)
@@ -48,7 +77,10 @@ export const useAppStore = defineStore('app', () => {
     update_url: 'HassanMahmoud-dev/sallehli-aljoker',
     auto_backup_enabled: 1,
     auto_backup_dir: '',
-    auto_backup_keep_count: 10
+    auto_backup_keep_count: 10,
+    lan_enabled: 1,
+    lan_port: 4545,
+    auto_start_windows: 0
   })
 
   // Print Modal State
@@ -57,8 +89,13 @@ export const useAppStore = defineStore('app', () => {
   const activePrintFormat = ref<'a4' | 'thermal80'>('a4')
   const activePrintDocType = ref<'invoice_warranty' | 'reception_receipt'>('invoice_warranty')
 
-  // Update Modal State
+  // Update Modal & Auto-Update State
   const updateModalOpen = ref(false)
+  const availableUpdate = ref<UpdateCheckResult | null>(null)
+  const updateBannerDismissed = ref(false)
+
+  // System / LAN Status
+  const systemStatus = ref<SystemControlStatus | null>(null)
 
   // Global Image Lightbox Preview State
   const imagePreviewOpen = ref(false)
@@ -121,25 +158,63 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  async function fetchSystemStatus(): Promise<void> {
+    try {
+      if (window.api?.getSystemStatus) {
+        systemStatus.value = await window.api.getSystemStatus()
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
   async function loadSettings(): Promise<void> {
     try {
       const data = await window.api.getSettings()
       settings.value = data
       activePrintFormat.value = data.default_print_format || 'a4'
       await fetchVersion()
+      await fetchSystemStatus()
     } catch (e) {
       console.error('Failed to load settings', e)
     }
   }
 
-  function setSession(user: User, daysRemaining: number | null): void {
+  function setSession(user: User, daysRemaining: number | null, rememberMe = false): void {
     currentUser.value = user
     subscriptionDaysRemaining.value = daysRemaining
+
+    if (rememberMe) {
+      localStorage.setItem(
+        REMEMBERED_SESSION_KEY,
+        JSON.stringify({ user, daysRemaining })
+      )
+    } else {
+      localStorage.removeItem(REMEMBERED_SESSION_KEY)
+    }
+  }
+
+  async function verifyRememberedSession(): Promise<boolean> {
+    if (!currentUser.value?.id) return false
+    try {
+      const res = await window.api.verifySession(currentUser.value.id)
+      if (!res.success || !res.user) {
+        logout()
+        return false
+      }
+      const isRemembered = Boolean(localStorage.getItem(REMEMBERED_SESSION_KEY))
+      setSession(res.user, res.subscriptionStatus?.daysRemaining ?? null, isRemembered)
+      await loadSettings()
+      return true
+    } catch {
+      return true
+    }
   }
 
   function logout(): void {
     currentUser.value = null
     subscriptionDaysRemaining.value = null
+    localStorage.removeItem(REMEMBERED_SESSION_KEY)
   }
 
   function openPrintModal(
@@ -164,6 +239,17 @@ export const useAppStore = defineStore('app', () => {
 
   function closeUpdateModal(): void {
     updateModalOpen.value = false
+  }
+
+  function setAvailableUpdate(res: UpdateCheckResult | null): void {
+    availableUpdate.value = res
+    if (res?.updateAvailable) {
+      updateBannerDismissed.value = false
+    }
+  }
+
+  function dismissUpdateBanner(): void {
+    updateBannerDismissed.value = true
   }
 
   function openImagePreview(src: string, title = 'معاينة الصورة'): void {
@@ -214,6 +300,9 @@ export const useAppStore = defineStore('app', () => {
     activePrintFormat,
     activePrintDocType,
     updateModalOpen,
+    availableUpdate,
+    updateBannerDismissed,
+    systemStatus,
     imagePreviewOpen,
     imagePreviewSrc,
     imagePreviewTitle,
@@ -233,13 +322,17 @@ export const useAppStore = defineStore('app', () => {
     applyTheme,
     toggleTheme,
     fetchVersion,
+    fetchSystemStatus,
     loadSettings,
     setSession,
+    verifyRememberedSession,
     logout,
     openPrintModal,
     closePrintModal,
     openUpdateModal,
     closeUpdateModal,
+    setAvailableUpdate,
+    dismissUpdateBanner,
     openImagePreview,
     closeImagePreview,
     sendWhatsAppToCustomer

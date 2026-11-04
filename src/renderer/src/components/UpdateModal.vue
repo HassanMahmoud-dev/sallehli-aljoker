@@ -38,6 +38,9 @@ watch(
         appStore.settings.update_url || 'HassanMahmoud-dev/sallehli-aljoker'
       actionMessage.value = ''
       actionError.value = ''
+      if (appStore.availableUpdate && !checkResult.value) {
+        checkResult.value = appStore.availableUpdate
+      }
     }
   }
 )
@@ -56,6 +59,7 @@ async function handleCheckForUpdates(): Promise<void> {
   try {
     const res = await window.api.checkForUpdates(updateSourceUrl.value)
     checkResult.value = res
+    appStore.setAvailableUpdate(res.updateAvailable ? res : null)
     if (updateSourceUrl.value.trim() !== appStore.settings.update_url) {
       await appStore.loadSettings()
     }

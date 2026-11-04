@@ -605,6 +605,72 @@ export function loginUser(payload: LoginPayload): AuthResponse {
   }
 }
 
+export function verifySession(userId: number): AuthResponse {
+  if (!userId) {
+    return { success: false, message: 'جلسة غير صالحة' }
+  }
+
+  const userRow = db
+    .prepare(
+      `SELECT id, username, password_hash, full_name, phone, role, is_active,
+              subscription_start, subscription_end, subscription_sig, notes, created_at
+       FROM users WHERE id = ?`
+    )
+    .get(Number(userId)) as
+    | (User & { password_hash: string; subscription_sig?: string })
+    | undefined
+
+  if (!userRow || !userRow.is_active) {
+    return {
+      success: false,
+      message: 'هذا الحساب غير موجود أو موقوف حالياً.'
+    }
+  }
+
+  const expectedSig = signSubscription(userRow.username, userRow.role, userRow.subscription_end)
+  if (userRow.subscription_sig && userRow.subscription_sig !== expectedSig) {
+    return {
+      success: false,
+      message: 'تم اكتشاف تلاعب غير مصرح به في بيانات الترخيص أو صلاحية الحساب.'
+    }
+  }
+
+  let isExpired = false
+  let daysRemaining: number | null = null
+
+  if (userRow.role === 'tenant') {
+    if (!userRow.subscription_end) {
+      return {
+        success: false,
+        message: 'لم يتم تحديد فترة اشتراك لهذا الحساب المستأجر.'
+      }
+    }
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const endDate = new Date(userRow.subscription_end)
+    endDate.setHours(23, 59, 59, 999)
+
+    const diffMs = endDate.getTime() - today.getTime()
+    daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
+
+    if (diffMs < 0) {
+      isExpired = true
+      return {
+        success: false,
+        message: `انتهت فترة إيجار البرنامج بتاريخ (${userRow.subscription_end}).`,
+        subscriptionStatus: { isExpired: true, daysRemaining: 0 }
+      }
+    }
+  }
+
+  const { password_hash: _, subscription_sig: __, ...safeUser } = userRow
+  return {
+    success: true,
+    user: safeUser,
+    subscriptionStatus: { isExpired, daysRemaining }
+  }
+}
+
 export function listUsers(): User[] {
   return db
     .prepare(
@@ -2005,7 +2071,11 @@ export function getSettings(): CenterSettings {
     update_url: map.update_url || 'HassanMahmoud-dev/sallehli-aljoker',
     auto_backup_enabled: Number(map.auto_backup_enabled ?? 1),
     auto_backup_dir: map.auto_backup_dir || getDefaultAutoBackupDir(),
-    auto_backup_keep_count: Number(map.auto_backup_keep_count ?? 10)
+    auto_backup_keep_count: Number(map.auto_backup_keep_count ?? 10),
+    lan_enabled: Number(map.lan_enabled ?? 1),
+    lan_port: Number(map.lan_port || 4545),
+    auto_start_windows: Number(map.auto_start_windows ?? 0),
+    last_update_check_at: map.last_update_check_at || ''
   }
 }
 
