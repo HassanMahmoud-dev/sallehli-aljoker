@@ -248,7 +248,9 @@ export interface UpdateProgressPayload {
   percent: number
   transferredBytes: number
   totalBytes: number
-  status: 'downloading' | 'completed' | 'error'
+  speedBytesPerSec?: number
+  remainingSeconds?: number | null
+  status: 'downloading' | 'completed' | 'cancelled' | 'error'
   message?: string
 }
 

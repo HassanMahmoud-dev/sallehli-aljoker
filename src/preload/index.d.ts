@@ -108,7 +108,8 @@ export interface IElectronAPI {
   checkForUpdates: (customUrl?: string) => Promise<UpdateCheckResult>
   downloadAndInstallUpdate: (
     downloadUrl: string
-  ) => Promise<{ success: boolean; message?: string; backupPath?: string }>
+  ) => Promise<{ success: boolean; canceled?: boolean; message?: string; backupPath?: string }>
+  cancelUpdateDownload: () => Promise<{ success: boolean; message: string }>
   installLocalUpdate: () => Promise<{
     success: boolean
     canceled?: boolean

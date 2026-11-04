@@ -123,6 +123,7 @@ const api = {
   checkForUpdates: (customUrl?: string) => invoke('update:check', customUrl),
   downloadAndInstallUpdate: (downloadUrl: string) =>
     invoke('update:downloadAndInstall', downloadUrl),
+  cancelUpdateDownload: () => invoke('update:cancelDownload'),
   installLocalUpdate: () => invoke('update:installLocal'),
   getAutoUpdateResult: () => invoke('update:getAutoResult'),
   onUpdateProgress: (callback: (payload: UpdateProgressPayload) => void) => {

@@ -50,6 +50,23 @@ function formatMegabytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function formatSpeed(bytesPerSec?: number): string {
+  if (!bytesPerSec || bytesPerSec <= 0) return 'جاري الحساب...'
+  if (bytesPerSec >= 1024 * 1024) {
+    return `${(bytesPerSec / (1024 * 1024)).toFixed(2)} MB/s`
+  }
+  return `${Math.max(1, Math.round(bytesPerSec / 1024))} KB/s`
+}
+
+function formatRemainingTime(seconds?: number | null): string {
+  if (seconds === undefined || seconds === null || seconds < 0) return 'جاري التقدير...'
+  if (seconds <= 1) return 'أقل من ثانية'
+  if (seconds < 60) return `${seconds} ثانية`
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return secs > 0 ? `${mins} دقيقة و ${secs} ثانية` : `${mins} دقيقة`
+}
+
 async function handleCheckForUpdates(): Promise<void> {
   isChecking.value = true
   checkResult.value = null
@@ -80,11 +97,19 @@ async function handleDownloadAndInstall(): Promise<void> {
     percent: 0,
     transferredBytes: 0,
     totalBytes: 0,
+    speedBytesPerSec: 0,
+    remainingSeconds: null,
     status: 'downloading'
   }
 
   try {
     const res = await window.api.downloadAndInstallUpdate(checkResult.value.downloadUrl)
+    if (res.canceled) {
+      isDownloading.value = false
+      progress.value = null
+      actionMessage.value = res.message || 'تم إلغاء تحميل التحديث.'
+      return
+    }
     if (res.success) {
       actionMessage.value =
         res.message ||
@@ -96,6 +121,19 @@ async function handleDownloadAndInstall(): Promise<void> {
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : 'حدث خطأ أثناء تحميل التحديث.'
     isDownloading.value = false
+  }
+}
+
+async function handleCancelDownload(): Promise<void> {
+  try {
+    const res = await window.api.cancelUpdateDownload()
+    isDownloading.value = false
+    progress.value = null
+    actionError.value = ''
+    actionMessage.value = res.message || 'تم إلغاء تحميل التحديث بنجاح.'
+  } catch {
+    isDownloading.value = false
+    progress.value = null
   }
 }
 
@@ -127,6 +165,13 @@ async function handleInstallFromLocalFile(): Promise<void> {
 onMounted(() => {
   if (window.api.onUpdateProgress) {
     unsubscribeProgress = window.api.onUpdateProgress((payload) => {
+      if (payload.status === 'cancelled') {
+        isDownloading.value = false
+        progress.value = null
+        actionError.value = ''
+        actionMessage.value = payload.message || 'تم إلغاء تحميل التحديث.'
+        return
+      }
       progress.value = payload
       if (payload.status === 'error' && payload.message) {
         actionError.value = payload.message
@@ -314,11 +359,14 @@ onUnmounted(() => {
               {{ checkResult.releaseNotes }}
             </div>
 
-            <!-- Download Progress Bar -->
-            <div v-if="isDownloading && progress" class="space-y-1.5 pt-1">
+            <!-- Download Progress Bar, Speed, ETA & Cancel Button -->
+            <div
+              v-if="isDownloading && progress"
+              class="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-indigo-200/80 dark:border-indigo-800/80 space-y-2.5"
+            >
               <div class="flex items-center justify-between font-bold text-[11px]">
-                <span>جاري تحميل التحديث...</span>
-                <span class="font-mono">
+                <span class="text-indigo-700 dark:text-indigo-300">جاري تحميل التحديث...</span>
+                <span class="font-mono text-slate-800 dark:text-slate-200">
                   {{ progress.percent }}% ({{ formatMegabytes(progress.transferredBytes) }}
                   <template v-if="progress.totalBytes > 0">
                     / {{ formatMegabytes(progress.totalBytes) }}
@@ -326,28 +374,52 @@ onUnmounted(() => {
                   )
                 </span>
               </div>
+
               <div class="w-full h-3 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
                 <div
                   class="h-full bg-gradient-to-l from-blue-600 to-indigo-600 transition-all duration-200 rounded-full"
                   :style="{ width: `${progress.percent}%` }"
                 ></div>
               </div>
+
+              <div
+                class="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] text-slate-600 dark:text-slate-300"
+              >
+                <div class="flex flex-wrap items-center gap-4">
+                  <span>
+                    🚀 سرعة التحميل:
+                    <strong dir="ltr" class="font-mono text-blue-600 dark:text-blue-400">
+                      {{ formatSpeed(progress.speedBytesPerSec) }}
+                    </strong>
+                  </span>
+                  <span>
+                    ⏳ الوقت المتبقي:
+                    <strong class="text-indigo-600 dark:text-indigo-400">
+                      {{ formatRemainingTime(progress.remainingSeconds) }}
+                    </strong>
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  @click="handleCancelDownload"
+                  class="px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/70 dark:hover:bg-rose-900/80 text-rose-700 dark:text-rose-300 font-black flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <X class="w-3.5 h-3.5" />
+                  <span>إلغاء التحميل</span>
+                </button>
+              </div>
             </div>
 
             <!-- Download & Install Button -->
             <button
-              v-if="checkResult.updateAvailable && checkResult.downloadUrl"
+              v-if="checkResult.updateAvailable && checkResult.downloadUrl && !isDownloading"
               type="button"
               @click="handleDownloadAndInstall"
-              :disabled="isDownloading"
-              class="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-black flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 transition cursor-pointer"
+              class="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 transition cursor-pointer"
             >
               <Download class="w-4 h-4" />
-              <span>{{
-                isDownloading
-                  ? 'جاري تحميل التحديث وتجهيز النسخة الاحتياطية...'
-                  : `تحميل وتثبيت الإصدار الجديد (v${checkResult.latestVersion}) الآن`
-              }}</span>
+              <span>تحميل وتثبيت الإصدار الجديد (v{{ checkResult.latestVersion }}) الآن</span>
             </button>
           </div>
         </div>

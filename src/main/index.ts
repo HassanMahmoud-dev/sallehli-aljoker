@@ -45,6 +45,7 @@ import {
 import {
   checkForOnlineUpdate,
   downloadAndInstallOnlineUpdate,
+  cancelOnlineUpdateDownload,
   installUpdateFromLocalFile,
   startAutoUpdateScheduler,
   getLastAutoUpdateResult
@@ -194,6 +195,7 @@ function registerIpcHandlers(): void {
     'update:check': async (customUrl?: string) => checkForOnlineUpdate(customUrl),
     'update:downloadAndInstall': async (downloadUrl: string) =>
       downloadAndInstallOnlineUpdate(downloadUrl, mainWindow),
+    'update:cancelDownload': () => cancelOnlineUpdateDownload(mainWindow),
     'update:installLocal': async () => installUpdateFromLocalFile(mainWindow),
     'update:getAutoResult': () => getLastAutoUpdateResult(),
 

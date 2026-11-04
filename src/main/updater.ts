@@ -274,6 +274,32 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
   }
 }
 
+let activeDownloadCancel: (() => void) | null = null
+
+export function cancelOnlineUpdateDownload(
+  mainWindow: BrowserWindow | null
+): { success: boolean; message: string } {
+  if (activeDownloadCancel) {
+    activeDownloadCancel()
+    activeDownloadCancel = null
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update:progress', {
+      percent: 0,
+      transferredBytes: 0,
+      totalBytes: 0,
+      speedBytesPerSec: 0,
+      remainingSeconds: null,
+      status: 'cancelled',
+      message: 'تم إلغاء تحميل التحديث.'
+    } satisfies UpdateProgressPayload)
+  }
+  return {
+    success: true,
+    message: 'تم إلغاء تحميل التحديث بنجاح.'
+  }
+}
+
 function downloadFileWithProgress(
   url: string,
   destPath: string,
@@ -281,6 +307,7 @@ function downloadFileWithProgress(
   maxRedirects = 5
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    let isCancelled = false
     const client = url.startsWith('https') ? https : http
     const req = client.get(
       url,
@@ -315,29 +342,86 @@ function downloadFileWithProgress(
 
         const totalBytes = parseInt(res.headers['content-length'] || '0', 10)
         let transferredBytes = 0
+        const startTimeMs = Date.now()
+        let lastEmitMs = 0
+        let lastSampleMs = startTimeMs
+        let lastSampleBytes = 0
+        let smoothedSpeed = 0
 
         const fileStream = createWriteStream(destPath)
 
+        activeDownloadCancel = () => {
+          isCancelled = true
+          try {
+            res.destroy()
+            req.destroy()
+          } catch {
+            // Ignore
+          }
+          try {
+            fileStream.close(() => {
+              try {
+                if (existsSync(destPath)) unlinkSync(destPath)
+              } catch {
+                // Ignore
+              }
+            })
+          } catch {
+            // Ignore
+          }
+          reject(new Error('CANCELLED_BY_USER'))
+        }
+
         res.on('data', (chunk: Buffer) => {
+          if (isCancelled) return
           transferredBytes += chunk.length
-          const percent =
-            totalBytes > 0 ? Math.min(100, Math.round((transferredBytes / totalBytes) * 100)) : 0
-          onProgress({
-            percent,
-            transferredBytes,
-            totalBytes,
-            status: 'downloading'
-          })
+          const nowMs = Date.now()
+          const sampleDtSec = (nowMs - lastSampleMs) / 1000
+
+          if (sampleDtSec >= 0.25) {
+            const instantSpeed = (transferredBytes - lastSampleBytes) / sampleDtSec
+            smoothedSpeed =
+              smoothedSpeed > 0 ? smoothedSpeed * 0.65 + instantSpeed * 0.35 : instantSpeed
+            lastSampleMs = nowMs
+            lastSampleBytes = transferredBytes
+          } else if (smoothedSpeed === 0) {
+            const totalElapsedSec = Math.max(0.1, (nowMs - startTimeMs) / 1000)
+            smoothedSpeed = transferredBytes / totalElapsedSec
+          }
+
+          if (nowMs - lastEmitMs >= 120 || transferredBytes === totalBytes) {
+            lastEmitMs = nowMs
+            const percent =
+              totalBytes > 0 ? Math.min(100, Math.round((transferredBytes / totalBytes) * 100)) : 0
+            const remainingBytes = Math.max(0, totalBytes - transferredBytes)
+            const remainingSeconds =
+              smoothedSpeed > 0 && totalBytes > 0
+                ? Math.max(0, Math.ceil(remainingBytes / smoothedSpeed))
+                : null
+
+            onProgress({
+              percent,
+              transferredBytes,
+              totalBytes,
+              speedBytesPerSec: Math.round(smoothedSpeed),
+              remainingSeconds,
+              status: 'downloading'
+            })
+          }
         })
 
         res.pipe(fileStream)
 
         fileStream.on('finish', () => {
+          if (isCancelled) return
+          activeDownloadCancel = null
           fileStream.close(() => {
             onProgress({
               percent: 100,
               transferredBytes,
               totalBytes: totalBytes || transferredBytes,
+              speedBytesPerSec: 0,
+              remainingSeconds: 0,
               status: 'completed'
             })
             resolve()
@@ -345,23 +429,48 @@ function downloadFileWithProgress(
         })
 
         fileStream.on('error', (err) => {
+          activeDownloadCancel = null
           try {
             if (existsSync(destPath)) unlinkSync(destPath)
           } catch {
             // Ignore cleanup error
           }
-          reject(err)
+          if (isCancelled) {
+            reject(new Error('CANCELLED_BY_USER'))
+          } else {
+            reject(err)
+          }
         })
       }
     )
 
+    activeDownloadCancel = () => {
+      isCancelled = true
+      try {
+        req.destroy()
+      } catch {
+        // Ignore
+      }
+      try {
+        if (existsSync(destPath)) unlinkSync(destPath)
+      } catch {
+        // Ignore
+      }
+      reject(new Error('CANCELLED_BY_USER'))
+    }
+
     req.on('error', (err) => {
+      activeDownloadCancel = null
       try {
         if (existsSync(destPath)) unlinkSync(destPath)
       } catch {
         // Ignore cleanup error
       }
-      reject(err)
+      if (isCancelled) {
+        reject(new Error('CANCELLED_BY_USER'))
+      } else {
+        reject(err)
+      }
     })
   })
 }
@@ -381,7 +490,7 @@ function launchInstallerAndQuit(installerPath: string): void {
 export async function downloadAndInstallOnlineUpdate(
   downloadUrl: string,
   mainWindow: BrowserWindow | null
-): Promise<{ success: boolean; message?: string; backupPath?: string }> {
+): Promise<{ success: boolean; canceled?: boolean; message?: string; backupPath?: string }> {
   try {
     const tempFilePath = join(app.getPath('temp'), `Sallehli-Update-${Date.now()}.exe`)
 
@@ -400,6 +509,13 @@ export async function downloadAndInstallOnlineUpdate(
       message: 'تم تحميل التحديث وحفظ نسخة احتياطية من قاعدة البيانات، جاري تشغيل معالج التحديث...'
     }
   } catch (err) {
+    if (err instanceof Error && err.message === 'CANCELLED_BY_USER') {
+      return {
+        success: false,
+        canceled: true,
+        message: 'تم إلغاء تحميل التحديث.'
+      }
+    }
     const message = err instanceof Error ? err.message : 'فشل تحميل وتثبيت التحديث.'
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('update:progress', {
