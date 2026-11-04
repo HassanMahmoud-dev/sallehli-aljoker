@@ -201,13 +201,24 @@ function registerIpcHandlers(): void {
 
     // Super Admin System Control (LAN & Browser Server + Windows Startup)
     'system:status': () => getSystemControlStatus(),
+    'system:setBrowserConfig': async (enabled: boolean) => {
+      const updated = saveSettings({ browser_enabled: enabled ? 1 : 0 })
+      const shouldRun = Boolean(updated.browser_enabled ?? 1) || Boolean(updated.lan_enabled ?? 1)
+      if (shouldRun) {
+        await startLanServer(updated.lan_port || 4545)
+      } else {
+        await stopLanServer()
+      }
+      return getSystemControlStatus()
+    },
     'system:setLanConfig': async (payload: { enabled: boolean; port?: number }) => {
       const cleanPort = Math.max(1024, Math.min(65535, Number(payload.port || 4545)))
-      saveSettings({
+      const updated = saveSettings({
         lan_enabled: payload.enabled ? 1 : 0,
         lan_port: cleanPort
       })
-      if (payload.enabled) {
+      const shouldRun = Boolean(updated.browser_enabled ?? 1) || Boolean(updated.lan_enabled ?? 1)
+      if (shouldRun) {
         await startLanServer(cleanPort)
       } else {
         await stopLanServer()
@@ -246,7 +257,7 @@ app.whenReady().then(async () => {
   registerIpcHandlers()
 
   const settings = getSettings()
-  if (Boolean(settings.lan_enabled ?? 1)) {
+  if (Boolean(settings.browser_enabled ?? 1) || Boolean(settings.lan_enabled ?? 1)) {
     await startLanServer(settings.lan_port || 4545)
   }
 

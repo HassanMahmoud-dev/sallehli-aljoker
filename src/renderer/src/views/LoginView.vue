@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
+import { swalSuccess, swalError } from '@renderer/utils/swal'
 import jokerTechLogo from '@renderer/assets/joker-tech-logo.png'
 import {
   Wrench,
@@ -76,6 +77,7 @@ async function handleLogin(): Promise<void> {
 
       if (!res.success || !res.user) {
         errorMessage.value = res.message || 'فشل تسجيل الدخول'
+        swalError('فشل تسجيل الدخول', errorMessage.value)
         return
       }
 
@@ -85,6 +87,7 @@ async function handleLogin(): Promise<void> {
         rememberMe.value
       )
       await appStore.loadSettings()
+      swalSuccess(`مرحباً بك، ${res.user.full_name}`)
       router.push('/dashboard')
     }, 'جاري تسجيل الدخول والتحقق من الصلاحية...')
   } catch (err: unknown) {

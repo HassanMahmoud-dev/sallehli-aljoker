@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { plain } from '@renderer/utils/plain'
+import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { ref, onMounted } from 'vue'
 import type { Technician } from '@shared/types'
 import { useAppStore } from '@renderer/stores/appStore'
@@ -66,39 +67,58 @@ function openPayoutModal(t: Technician): void {
 
 async function handleSaveTechnician(): Promise<void> {
   if (!form.value.name?.trim() || !form.value.phone?.trim()) {
-    alert('يرجى إدخال اسم الفني ورقم الهاتف')
+    swalError('بيانات غير مكتملة', 'يرجى إدخال اسم الفني ورقم الهاتف')
     return
   }
   const isEdit = Boolean(form.value.id)
-  await appStore.withLoading(async () => {
-    await window.api.saveTechnician(plain(form.value))
-    modalOpen.value = false
-    await loadTechnicians()
-  }, isEdit ? 'جاري حفظ تعديلات الفني...' : 'جاري إضافة الفني الجديد...')
+  try {
+    await appStore.withLoading(async () => {
+      await window.api.saveTechnician(plain(form.value))
+      modalOpen.value = false
+      await loadTechnicians()
+    }, isEdit ? 'جاري حفظ تعديلات الفني...' : 'جاري إضافة الفني الجديد...')
+    swalSuccess(isEdit ? 'تم حفظ تعديلات بيانات الفني بنجاح' : 'تمت إضافة الفني الجديد بنجاح')
+  } catch (err: unknown) {
+    swalError('تعذر حفظ الفني', err instanceof Error ? err.message : '')
+  }
 }
 
 async function handleConfirmPayout(): Promise<void> {
   if (!selectedTech.value || payoutAmount.value <= 0) return
-  await appStore.withLoading(async () => {
-    await window.api.addTreasuryTransaction({
-      transaction_type: 'tech_commission',
-      category: 'عمولات ويوميات فنيين',
-      amount: payoutAmount.value,
-      technician_id: selectedTech.value!.id,
-      payment_method: 'cash',
-      description: payoutNotes.value || `صرف مستحقات الفني ${selectedTech.value!.name}`
-    })
-    payoutModalOpen.value = false
-    await loadTechnicians()
-  }, 'جاري صرف العمولة وتسجيلها بالخزينة...')
+  try {
+    await appStore.withLoading(async () => {
+      await window.api.addTreasuryTransaction({
+        transaction_type: 'tech_commission',
+        category: 'عمولات ويوميات فنيين',
+        amount: payoutAmount.value,
+        technician_id: selectedTech.value!.id,
+        payment_method: 'cash',
+        description: payoutNotes.value || `صرف مستحقات الفني ${selectedTech.value!.name}`
+      })
+      payoutModalOpen.value = false
+      await loadTechnicians()
+    }, 'جاري صرف العمولة وتسجيلها بالخزينة...')
+    swalSuccess('تم صرف العمولة وتسجيلها بالخزينة بنجاح')
+  } catch (err: unknown) {
+    swalError('تعذر صرف العمولة', err instanceof Error ? err.message : '')
+  }
 }
 
 async function handleDeleteTechnician(t: Technician): Promise<void> {
-  if (!confirm(`هل أنت متأكد من حذف الفني "${t.name}"؟`)) return
-  await appStore.withLoading(async () => {
-    await window.api.deleteTechnician(t.id)
-    await loadTechnicians()
-  }, 'جاري حذف الفني...')
+  const confirmed = await swalConfirm(
+    `حذف الفني (${t.name})؟`,
+    'هل أنت متأكد من حذف بيانات هذا الفني؟'
+  )
+  if (!confirmed) return
+  try {
+    await appStore.withLoading(async () => {
+      await window.api.deleteTechnician(t.id)
+      await loadTechnicians()
+    }, 'جاري حذف الفني...')
+    swalSuccess('تم حذف الفني بنجاح')
+  } catch (err: unknown) {
+    swalError('تعذر حذف الفني', err instanceof Error ? err.message : '')
+  }
 }
 
 onMounted(loadTechnicians)

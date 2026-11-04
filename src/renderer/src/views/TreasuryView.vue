@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { plain } from '@renderer/utils/plain'
+import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { ref, computed, onMounted } from 'vue'
 import type { TreasuryTransaction, DashboardStats } from '@shared/types'
 import { PAYMENT_METHODS } from '@renderer/constants/appliances'
@@ -99,23 +100,28 @@ function openTransferModal(): void {
 
 async function handleSaveTransaction(): Promise<void> {
   if (!form.value.amount || form.value.amount <= 0 || !form.value.description?.trim()) {
-    alert('يرجى إدخال المبلغ والبيان')
+    swalError('بيانات غير مكتملة', 'يرجى إدخال المبلغ والبيان')
     return
   }
-  await appStore.withLoading(async () => {
-    await window.api.addTreasuryTransaction(plain(form.value))
-    modalOpen.value = false
-    await loadData()
-  }, 'جاري حفظ الحركة المالية بالخزينة...')
+  try {
+    await appStore.withLoading(async () => {
+      await window.api.addTreasuryTransaction(plain(form.value))
+      modalOpen.value = false
+      await loadData()
+    }, 'جاري حفظ الحركة المالية بالخزينة...')
+    swalSuccess('تم تسجيل الحركة المالية بالخزينة بنجاح')
+  } catch (err: unknown) {
+    swalError('تعذر حفظ الحركة المالية', err instanceof Error ? err.message : '')
+  }
 }
 
 async function handleTransferFunds(): Promise<void> {
   if (!transferForm.value.amount || transferForm.value.amount <= 0) {
-    alert('يرجى إدخال مبلغ صحيح للتحويل')
+    swalError('مبلغ غير صحيح', 'يرجى إدخال مبلغ صحيح للتحويل')
     return
   }
   if (transferForm.value.fromMethod === transferForm.value.toMethod) {
-    alert('يرجى اختيار خزينة / محفظة مختلفة للتحويل إليها')
+    swalError('خطأ في الاختيار', 'يرجى اختيار خزينة / محفظة مختلفة للتحويل إليها')
     return
   }
   try {
@@ -124,17 +130,27 @@ async function handleTransferFunds(): Promise<void> {
       transferModalOpen.value = false
       await loadData()
     }, 'جاري تحويل الرصيد بين الخزائن...')
+    swalSuccess('تم تحويل الرصيد بين الخزائن بنجاح')
   } catch (err: unknown) {
-    alert(err instanceof Error ? err.message : 'فشل التحويل بين الخزائن')
+    swalError('فشل التحويل بين الخزائن', err instanceof Error ? err.message : '')
   }
 }
 
 async function handleDeleteTransaction(id: number): Promise<void> {
-  if (!confirm('هل أنت متأكد من حذف هذه الحركة المالية؟')) return
-  await appStore.withLoading(async () => {
-    await window.api.deleteTreasuryTransaction(id)
-    await loadData()
-  }, 'جاري حذف الحركة المالية...')
+  const confirmed = await swalConfirm(
+    'حذف الحركة المالية؟',
+    'هل أنت متأكد من حذف هذه الحركة المالية من سجل الخزينة؟'
+  )
+  if (!confirmed) return
+  try {
+    await appStore.withLoading(async () => {
+      await window.api.deleteTreasuryTransaction(id)
+      await loadData()
+    }, 'جاري حذف الحركة المالية...')
+    swalSuccess('تم حذف الحركة المالية بنجاح')
+  } catch (err: unknown) {
+    swalError('تعذر حذف الحركة', err instanceof Error ? err.message : '')
+  }
 }
 
 onMounted(loadData)

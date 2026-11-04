@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { plain } from '@renderer/utils/plain'
+import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { ref, onMounted } from 'vue'
 import { useAppStore } from '@renderer/stores/appStore'
 import jokerTechLogo from '@renderer/assets/joker-tech-logo.png'
@@ -44,6 +45,7 @@ async function handleSaveSettings(): Promise<void> {
     await appStore.loadSettings()
     statusMessage.value = 'تم حفظ إعدادات المركز وقوالب الطباعة بنجاح!'
   }, 'جاري حفظ إعدادات المركز...')
+  swalSuccess('تم حفظ إعدادات المركز وقوالب الطباعة بنجاح!')
   setTimeout(() => {
     statusMessage.value = ''
   }, 4000)
@@ -53,6 +55,7 @@ async function handleCreateBackup(): Promise<void> {
   const res = await window.api.createBackup()
   if (res.success) {
     statusMessage.value = `تم حفظ النسخة الاحتياطية بنجاح في: ${res.filePath}`
+    swalSuccess('تم حفظ النسخة الاحتياطية بنجاح', res.filePath)
   }
 }
 
@@ -63,6 +66,7 @@ async function handleChooseAutoBackupDir(): Promise<void> {
     await window.api.saveSettings(plain(form.value))
     await appStore.loadSettings()
     statusMessage.value = `تم تحديث مجلد النسخ الاحتياطي التلقائي إلى: ${res.dirPath}`
+    swalSuccess('تم تحديث مجلد النسخ الاحتياطي التلقائي', res.dirPath)
   }
 }
 
@@ -71,20 +75,26 @@ async function handleRunAutoBackupNow(): Promise<void> {
   const res = await window.api.runAutoBackupNow()
   if (res.success) {
     statusMessage.value = `تم أخذ نسخة احتياطية تلقائية فورية في: ${res.filePath}`
+    swalSuccess('تم أخذ نسخة احتياطية فورية بنجاح', res.filePath)
   }
 }
 
 async function handleRestoreBackup(): Promise<void> {
-  if (
-    !confirm(
-      'تنبيه هام: استعادة نسخة احتياطية ستقوم باستبدال البيانات الحالية بالنسخة المختارة. هل تريد المتابعة؟'
-    )
+  const confirmed = await swalConfirm(
+    'استعادة نسخة احتياطية سابقة؟',
+    'تنبيه هام: استعادة نسخة احتياطية ستقوم باستبدال البيانات الحالية بالنسخة المختارة. هل تريد المتابعة؟',
+    'نعم، استعادة النسخة'
   )
-    return
-  const res = await window.api.restoreBackup()
-  if (res.success) {
-    await loadSettingsData()
-    statusMessage.value = 'تم استعادة قاعدة البيانات بنجاح!'
+  if (!confirmed) return
+  try {
+    const res = await window.api.restoreBackup()
+    if (res.success) {
+      await loadSettingsData()
+      statusMessage.value = 'تم استعادة قاعدة البيانات بنجاح!'
+      swalSuccess('تم استعادة قاعدة البيانات بنجاح!')
+    }
+  } catch (err: unknown) {
+    swalError('فشل استعادة النسخة الاحتياطية', err instanceof Error ? err.message : '')
   }
 }
 

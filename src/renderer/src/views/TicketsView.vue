@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { plain } from '@renderer/utils/plain'
+import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
@@ -419,10 +420,12 @@ async function handleSaveTicket(andPrint = false): Promise<void> {
   errorMsg.value = ''
   if (!form.value.customer_name.trim() || !form.value.customer_phone.trim()) {
     errorMsg.value = 'يرجى إدخال اسم العميل ورقم الهاتف'
+    swalError('بيانات غير مكتملة', errorMsg.value)
     return
   }
   if (!form.value.complaint.trim()) {
     errorMsg.value = 'يرجى كتابة شكوى العميل أو وصف العطل'
+    swalError('بيانات غير مكتملة', errorMsg.value)
     return
   }
 
@@ -437,6 +440,9 @@ async function handleSaveTicket(andPrint = false): Promise<void> {
       },
       isEdit ? 'جاري حفظ تعديلات طلب الصيانة...' : 'جاري تسجيل وحفظ بلاغ الصيانة...'
     )
+    swalSuccess(
+      isEdit ? 'تم حفظ تعديلات بلاغ الصيانة بنجاح' : `تم تسجيل بلاغ الصيانة رقم ${saved.ticket_number} بنجاح`
+    )
     if (andPrint) {
       appStore.openPrintModal(
         saved,
@@ -447,16 +453,25 @@ async function handleSaveTicket(andPrint = false): Promise<void> {
     }
   } catch (err: unknown) {
     errorMsg.value = err instanceof Error ? err.message : 'حدث خطأ أثناء حفظ الطلب'
+    swalError('خطأ أثناء حفظ الطلب', errorMsg.value)
   }
 }
 
 async function handleDeleteTicket(t: MaintenanceTicket): Promise<void> {
-  if (!confirm(`هل أنت متأكد من حذف الطلب رقم ${t.ticket_number}؟ سيتم إرجاع أي قطع غيار للمخزن.`))
-    return
-  await appStore.withLoading(async () => {
-    await window.api.deleteTicket(t.id)
-    await loadData()
-  }, 'جاري حذف طلب الصيانة...')
+  const confirmed = await swalConfirm(
+    `حذف بلاغ الصيانة (${t.ticket_number})؟`,
+    'سيتم حذف الطلب وإرجاع أي قطع غيار منصرفة إلى المخزن تلقائياً.'
+  )
+  if (!confirmed) return
+  try {
+    await appStore.withLoading(async () => {
+      await window.api.deleteTicket(t.id)
+      await loadData()
+    }, 'جاري حذف طلب الصيانة...')
+    swalSuccess(`تم حذف طلب الصيانة رقم ${t.ticket_number} بنجاح`)
+  } catch (err: unknown) {
+    swalError('تعذر حذف الطلب', err instanceof Error ? err.message : '')
+  }
 }
 
 onMounted(async () => {

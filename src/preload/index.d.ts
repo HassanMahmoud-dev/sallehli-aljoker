@@ -121,6 +121,7 @@ export interface IElectronAPI {
   onUpdateAvailable: (callback: (payload: UpdateCheckResult) => void) => () => void
 
   getSystemStatus: () => Promise<SystemControlStatus>
+  setBrowserConfig: (enabled: boolean) => Promise<SystemControlStatus>
   setLanConfig: (payload: { enabled: boolean; port?: number }) => Promise<SystemControlStatus>
   setAutoStartWindows: (enabled: boolean) => Promise<SystemControlStatus>
 }

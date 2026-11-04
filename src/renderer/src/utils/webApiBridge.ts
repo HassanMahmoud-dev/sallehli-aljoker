@@ -80,6 +80,7 @@ export function ensureWebApiBridge(): void {
     onUpdateAvailable: () => () => {},
 
     getSystemStatus: () => invokeHttp('system:status'),
+    setBrowserConfig: (enabled) => invokeHttp('system:setBrowserConfig', enabled),
     setLanConfig: (payload) => invokeHttp('system:setLanConfig', payload),
     setAutoStartWindows: (enabled) => invokeHttp('system:setAutoStart', enabled)
   }

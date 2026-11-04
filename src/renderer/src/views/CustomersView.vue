@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { plain } from '@renderer/utils/plain'
+import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { ref, onMounted, watch } from 'vue'
 import type { Customer, CustomerAppliance, MaintenanceTicket } from '@shared/types'
 import { APPLIANCE_TYPES, APPLIANCE_BRANDS } from '@renderer/constants/appliances'
@@ -140,19 +141,33 @@ function removeApplianceFaultImage(idx: number): void {
 
 async function handleSaveAppliance(): Promise<void> {
   const isEdit = Boolean(applianceForm.value.id)
-  await appStore.withLoading(async () => {
-    await window.api.saveCustomerAppliance(plain(applianceForm.value))
-    applianceModalOpen.value = false
-    await refreshCustomerHistory()
-  }, isEdit ? 'جاري حفظ تعديلات الجهاز...' : 'جاري إضافة الجهاز لسجل العميل...')
+  try {
+    await appStore.withLoading(async () => {
+      await window.api.saveCustomerAppliance(plain(applianceForm.value))
+      applianceModalOpen.value = false
+      await refreshCustomerHistory()
+    }, isEdit ? 'جاري حفظ تعديلات الجهاز...' : 'جاري إضافة الجهاز لسجل العميل...')
+    swalSuccess(isEdit ? 'تم تحديث بيانات الجهاز بنجاح' : 'تمت إضافة الجهاز لسجل العميل بنجاح')
+  } catch (err: unknown) {
+    swalError('تعذر حفظ بيانات الجهاز', err instanceof Error ? err.message : '')
+  }
 }
 
 async function handleDeleteAppliance(app: CustomerAppliance): Promise<void> {
-  if (!confirm(`هل أنت متأكد من حذف الجهاز "${app.appliance_type}" من سجل العميل؟`)) return
-  await appStore.withLoading(async () => {
-    await window.api.deleteCustomerAppliance(app.id)
-    await refreshCustomerHistory()
-  }, 'جاري حذف الجهاز من سجل العميل...')
+  const confirmed = await swalConfirm(
+    `حذف الجهاز (${app.appliance_type})؟`,
+    'هل أنت متأكد من حذف هذا الجهاز من سجل العميل؟'
+  )
+  if (!confirmed) return
+  try {
+    await appStore.withLoading(async () => {
+      await window.api.deleteCustomerAppliance(app.id)
+      await refreshCustomerHistory()
+    }, 'جاري حذف الجهاز من سجل العميل...')
+    swalSuccess('تم حذف الجهاز من سجل العميل بنجاح')
+  } catch (err: unknown) {
+    swalError('تعذر حذف الجهاز', err instanceof Error ? err.message : '')
+  }
 }
 
 // Direct upload of warranty image or fault images on a Ticket inside Customer History
@@ -170,6 +185,7 @@ async function handleTicketWarrantyUpload(t: MaintenanceTicket, e: Event): Promi
     input.value = ''
     await refreshCustomerHistory()
   }, 'جاري حفظ صورة شهادة الضمان...')
+  swalSuccess('تم حفظ صورة شهادة الضمان بنجاح')
 }
 
 async function handleRemoveTicketWarrantyImage(t: MaintenanceTicket): Promise<void> {
@@ -181,6 +197,7 @@ async function handleRemoveTicketWarrantyImage(t: MaintenanceTicket): Promise<vo
     })
     await refreshCustomerHistory()
   }, 'جاري حذف صورة شهادة الضمان...')
+  swalSuccess('تم حذف صورة شهادة الضمان')
 }
 
 async function handleTicketFaultUpload(t: MaintenanceTicket, e: Event): Promise<void> {
@@ -201,6 +218,7 @@ async function handleTicketFaultUpload(t: MaintenanceTicket, e: Event): Promise<
     input.value = ''
     await refreshCustomerHistory()
   }, 'جاري حفظ صور العطل...')
+  swalSuccess('تم حفظ صور العطل بنجاح')
 }
 
 async function handleRemoveTicketFaultImage(t: MaintenanceTicket, idx: number): Promise<void> {
@@ -214,30 +232,41 @@ async function handleRemoveTicketFaultImage(t: MaintenanceTicket, idx: number): 
     })
     await refreshCustomerHistory()
   }, 'جاري حذف صورة العطل...')
+  swalSuccess('تم حذف صورة العطل')
 }
 
 async function handleSaveCustomer(): Promise<void> {
   if (!form.value.name?.trim() || !form.value.phone?.trim()) {
-    alert('يرجى إدخال اسم العميل ورقم الهاتف')
+    swalError('بيانات غير مكتملة', 'يرجى إدخال اسم العميل ورقم الهاتف')
     return
   }
   const isEdit = Boolean(form.value.id)
-  await appStore.withLoading(async () => {
-    await window.api.saveCustomer(plain(form.value))
-    modalOpen.value = false
-    await loadCustomers()
-  }, isEdit ? 'جاري حفظ تعديلات العميل...' : 'جاري إضافة العميل الجديد...')
+  try {
+    await appStore.withLoading(async () => {
+      await window.api.saveCustomer(plain(form.value))
+      modalOpen.value = false
+      await loadCustomers()
+    }, isEdit ? 'جاري حفظ تعديلات العميل...' : 'جاري إضافة العميل الجديد...')
+    swalSuccess(isEdit ? 'تم حفظ تعديلات بيانات العميل بنجاح' : 'تمت إضافة العميل الجديد بنجاح')
+  } catch (err: unknown) {
+    swalError('تعذر حفظ بيانات العميل', err instanceof Error ? err.message : '')
+  }
 }
 
 async function handleDeleteCustomer(c: Customer): Promise<void> {
-  if (!confirm(`هل أنت متأكد من حذف ملف العميل "${c.name}"؟`)) return
+  const confirmed = await swalConfirm(
+    `حذف ملف العميل (${c.name})؟`,
+    'هل أنت متأكد من حذف بيانات هذا العميل؟'
+  )
+  if (!confirmed) return
   try {
     await appStore.withLoading(async () => {
       await window.api.deleteCustomer(c.id)
       await loadCustomers()
     }, 'جاري حذف ملف العميل...')
+    swalSuccess('تم حذف ملف العميل بنجاح')
   } catch {
-    alert('لا يمكن حذف عميل مرتبط بطلبات صيانة سابقة حفاظاً على السجل المالي.')
+    swalError('لا يمكن الحذف', 'لا يمكن حذف عميل مرتبط بطلبات صيانة سابقة حفاظاً على السجل المالي.')
   }
 }
 

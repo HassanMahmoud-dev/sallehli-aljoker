@@ -2072,6 +2072,7 @@ export function getSettings(): CenterSettings {
     auto_backup_enabled: Number(map.auto_backup_enabled ?? 1),
     auto_backup_dir: map.auto_backup_dir || getDefaultAutoBackupDir(),
     auto_backup_keep_count: Number(map.auto_backup_keep_count ?? 10),
+    browser_enabled: Number(map.browser_enabled ?? 1),
     lan_enabled: Number(map.lan_enabled ?? 1),
     lan_port: Number(map.lan_port || 4545),
     auto_start_windows: Number(map.auto_start_windows ?? 0),

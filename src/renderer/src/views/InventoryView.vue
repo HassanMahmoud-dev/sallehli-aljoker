@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { plain } from '@renderer/utils/plain'
+import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { ref, onMounted, watch } from 'vue'
 import type { SparePart, InventoryMovement, Technician } from '@shared/types'
 import { PART_CATEGORIES } from '@renderer/constants/appliances'
@@ -118,15 +119,20 @@ function openMovementModal(p: SparePart, type: InventoryMovement['movement_type'
 
 async function handleSavePart(): Promise<void> {
   if (!partForm.value.name?.trim()) {
-    alert('يرجى إدخال اسم قطعة الغيار')
+    swalError('بيانات غير مكتملة', 'يرجى إدخال اسم قطعة الغيار')
     return
   }
   const isEdit = Boolean(partForm.value.id)
-  await appStore.withLoading(async () => {
-    await window.api.saveSparePart(plain(partForm.value))
-    partModalOpen.value = false
-    await loadData()
-  }, isEdit ? 'جاري حفظ تعديلات الصنف...' : 'جاري إضافة قطعة الغيار للمخزن...')
+  try {
+    await appStore.withLoading(async () => {
+      await window.api.saveSparePart(plain(partForm.value))
+      partModalOpen.value = false
+      await loadData()
+    }, isEdit ? 'جاري حفظ تعديلات الصنف...' : 'جاري إضافة قطعة الغيار للمخزن...')
+    swalSuccess(isEdit ? 'تم حفظ تعديلات قطعة الغيار بنجاح' : 'تمت إضافة قطعة الغيار للمخزن بنجاح')
+  } catch (err: unknown) {
+    swalError('تعذر حفظ قطعة الغيار', err instanceof Error ? err.message : '')
+  }
 }
 
 async function handleRecordMovement(): Promise<void> {
@@ -136,20 +142,26 @@ async function handleRecordMovement(): Promise<void> {
       moveModalOpen.value = false
       await loadData()
     }, 'جاري تسجيل حركة المخزن...')
+    swalSuccess('تم تسجيل حركة المخزن وتحديث الأرصدة بنجاح')
   } catch (err: unknown) {
-    alert(err instanceof Error ? err.message : 'تعذر تسجيل حركة المخزن')
+    swalError('تعذر تسجيل حركة المخزن', err instanceof Error ? err.message : '')
   }
 }
 
 async function handleDeletePart(p: SparePart): Promise<void> {
-  if (!confirm(`هل أنت متأكد من حذف الصنف "${p.name}"؟`)) return
+  const confirmed = await swalConfirm(
+    `حذف الصنف (${p.name})؟`,
+    'هل أنت متأكد من حذف قطعة الغيار هذه من المخزن؟'
+  )
+  if (!confirmed) return
   try {
     await appStore.withLoading(async () => {
       await window.api.deleteSparePart(p.id)
       await loadData()
     }, 'جاري حذف قطعة الغيار...')
+    swalSuccess('تم حذف قطعة الغيار بنجاح')
   } catch {
-    alert('لا يمكن حذف قطعة غيار مستخدمة في طلبات صيانة سابقة')
+    swalError('لا يمكن الحذف', 'لا يمكن حذف قطعة غيار مستخدمة في طلبات صيانة سابقة')
   }
 }
 

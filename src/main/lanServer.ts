@@ -54,6 +54,7 @@ export function getLocalIPv4Addresses(): string[] {
 
 export function getSystemControlStatus(): SystemControlStatus {
   const settings = getSettings()
+  const browserEnabled = Boolean(settings.browser_enabled ?? 1)
   const lanEnabled = Boolean(settings.lan_enabled ?? 1)
   const port = isRunning ? activePort : Number(settings.lan_port || 4545)
   const ips = getLocalIPv4Addresses()
@@ -71,6 +72,7 @@ export function getSystemControlStatus(): SystemControlStatus {
   }
 
   return {
+    browserEnabled,
     lanEnabled,
     lanRunning: isRunning,
     lanPort: port,
@@ -142,6 +144,31 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   if (req.method === 'OPTIONS') {
     res.writeHead(204)
     res.end()
+    return
+  }
+
+  const settings = getSettings()
+  const browserEnabled = Boolean(settings.browser_enabled ?? 1)
+  const lanEnabled = Boolean(settings.lan_enabled ?? 1)
+  const remoteAddr = req.socket?.remoteAddress || ''
+  const isLoopback =
+    remoteAddr === '127.0.0.1' ||
+    remoteAddr === '::1' ||
+    remoteAddr === '::ffff:127.0.0.1'
+
+  if (isLoopback && !browserEnabled) {
+    res.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8' })
+    res.end(
+      '<div dir="rtl" style="font-family:sans-serif;text-align:center;padding:60px;"><h2>تشغيل البرنامج عبر المتصفح معطل حالياً من قِبل السوبر أدمن</h2></div>'
+    )
+    return
+  }
+
+  if (!isLoopback && !lanEnabled) {
+    res.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8' })
+    res.end(
+      '<div dir="rtl" style="font-family:sans-serif;text-align:center;padding:60px;"><h2>تشغيل البرنامج على الشبكة المحلية (LAN) معطل حالياً من قِبل السوبر أدمن</h2></div>'
+    )
     return
   }
 

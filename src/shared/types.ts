@@ -217,6 +217,7 @@ export interface CenterSettings {
   auto_backup_enabled?: number
   auto_backup_dir?: string
   auto_backup_keep_count?: number
+  browser_enabled?: number
   lan_enabled?: number
   lan_port?: number
   auto_start_windows?: number
@@ -224,6 +225,7 @@ export interface CenterSettings {
 }
 
 export interface SystemControlStatus {
+  browserEnabled: boolean
   lanEnabled: boolean
   lanRunning: boolean
   lanPort: number

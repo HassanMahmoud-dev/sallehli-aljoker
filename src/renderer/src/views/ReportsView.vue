@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { swalSuccess, swalError } from '@renderer/utils/swal'
 import type { FinancialReportData, MaintenanceTicket } from '@shared/types'
 import { PAYMENT_METHODS } from '@renderer/constants/appliances'
 import { useAppStore } from '@renderer/stores/appStore'
@@ -88,8 +89,9 @@ async function handleConfirmCollect(): Promise<void> {
       collectModalOpen.value = false
       await loadReport()
     }, 'جاري تسجيل التحصيل وإضافته للخزينة...')
+    swalSuccess('تم تسجيل التحصيل وإضافته للخزينة بنجاح')
   } catch (err: unknown) {
-    alert(err instanceof Error ? err.message : 'تعذر تسجيل التحصيل')
+    swalError('تعذر تسجيل التحصيل', err instanceof Error ? err.message : '')
   }
 }
 

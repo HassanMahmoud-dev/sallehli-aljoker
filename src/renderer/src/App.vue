@@ -108,8 +108,8 @@ const navItems = computed(() => {
 
 const primaryBrowserUrl = computed(() => {
   const st = appStore.systemStatus
-  if (!st || !st.lanEnabled || !st.lanRunning) return ''
-  return st.urls[0] || st.localUrl
+  if (!st || !st.lanRunning || !st.browserEnabled) return ''
+  return st.lanEnabled && st.urls[0] ? st.urls[0] : st.localUrl
 })
 
 function openInBrowser(): void {

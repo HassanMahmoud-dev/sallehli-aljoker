@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import type { User, UserRole } from '@shared/types'
 import { USER_ROLE_LABELS } from '@renderer/constants/appliances'
 import { useAppStore } from '@renderer/stores/appStore'
@@ -116,20 +117,24 @@ async function extendTenantSubscription(user: User, months: number): Promise<voi
     successMsg.value = `تم تجديد اشتراك المستأجر (${user.full_name}) لمدة ${months} شهر حتى تاريخ ${newEnd}`
     await loadUsers()
   }, 'جاري تجديد فترة الاشتراك...')
+  swalSuccess(`تم تجديد اشتراك المستأجر (${user.full_name}) بنجاح`, `ساري حتى ${newEnd}`)
 }
 
 async function handleSaveUser(): Promise<void> {
   errorMsg.value = ''
   if (!form.value.username.trim() || !form.value.full_name.trim()) {
     errorMsg.value = 'يرجى إدخال اسم المستخدم والاسم الكامل'
+    swalError('بيانات غير مكتملة', errorMsg.value)
     return
   }
   if (!form.value.id && !form.value.password.trim()) {
     errorMsg.value = 'يرجى تحديد كلمة مرور للمستخدم الجديد'
+    swalError('بيانات غير مكتملة', errorMsg.value)
     return
   }
   if (form.value.role === 'tenant' && !form.value.subscription_end) {
     errorMsg.value = 'يرجى تحديد تاريخ انتهاء الاشتراك لحساب مستأجر البرنامج'
+    swalError('بيانات غير مكتملة', errorMsg.value)
     return
   }
 
@@ -145,21 +150,28 @@ async function handleSaveUser(): Promise<void> {
       successMsg.value = 'تم حفظ بيانات المستخدم والصلاحية بنجاح'
       await loadUsers()
     }, isEdit ? 'جاري حفظ تعديلات المستخدم...' : 'جاري إنشاء المستخدم والترخيص...')
+    swalSuccess(isEdit ? 'تم حفظ تعديلات المستخدم والترخيص بنجاح' : 'تم إنشاء حساب المستخدم والترخيص بنجاح')
   } catch (err: unknown) {
     errorMsg.value = err instanceof Error ? err.message : 'تعذر حفظ المستخدم (ربما اسم المستخدم مكرر)'
+    swalError('تعذر حفظ المستخدم', errorMsg.value)
   }
 }
 
 async function handleDeleteUser(user: User): Promise<void> {
   if (user.username === 'admin') return
-  if (!confirm(`هل أنت متأكد من حذف المستخدم "${user.full_name}"؟`)) return
+  const confirmed = await swalConfirm(
+    `حذف المستخدم (${user.full_name})؟`,
+    'هل أنت متأكد من حذف هذا الحساب نهائياً؟'
+  )
+  if (!confirmed) return
   try {
     await appStore.withLoading(async () => {
       await window.api.deleteUser(user.id)
       await loadUsers()
     }, 'جاري حذف حساب المستخدم...')
+    swalSuccess('تم حذف حساب المستخدم بنجاح')
   } catch (err: unknown) {
-    alert(err instanceof Error ? err.message : 'فشل الحذف')
+    swalError('فشل الحذف', err instanceof Error ? err.message : '')
   }
 }
 

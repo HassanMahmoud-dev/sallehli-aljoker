@@ -143,6 +143,7 @@ const api = {
 
   // Super Admin System Control (LAN & Browser Server + Windows Auto-Start)
   getSystemStatus: () => invoke('system:status'),
+  setBrowserConfig: (enabled: boolean) => invoke('system:setBrowserConfig', enabled),
   setLanConfig: (payload: { enabled: boolean; port?: number }) =>
     invoke('system:setLanConfig', payload),
   setAutoStartWindows: (enabled: boolean) => invoke('system:setAutoStart', enabled)
