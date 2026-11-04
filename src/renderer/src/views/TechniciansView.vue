@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import type { Technician } from '@shared/types'
-import { UserCog, UserPlus, Edit3, Trash2, Wallet, X } from 'lucide-vue-next'
+import { useAppStore } from '@renderer/stores/appStore'
+import { compressImageFile } from '@renderer/utils/imageHelper'
+import { UserCog, UserPlus, Edit3, Trash2, Wallet, Upload, Camera, X } from 'lucide-vue-next'
 
+const appStore = useAppStore()
 const technicians = ref<Technician[]>([])
 const modalOpen = ref(false)
 const payoutModalOpen = ref(false)
@@ -17,11 +20,20 @@ const form = ref<Partial<Technician>>({
   commission_rate: 30,
   base_salary: 0,
   is_active: 1,
-  notes: ''
+  notes: '',
+  avatar_base64: ''
 })
 
 async function loadTechnicians(): Promise<void> {
   technicians.value = await window.api.listTechnicians()
+}
+
+async function handleAvatarUpload(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  form.value.avatar_base64 = await compressImageFile(file, 600, 600, 0.85)
+  input.value = ''
 }
 
 function openCreateModal(): void {
@@ -32,13 +44,14 @@ function openCreateModal(): void {
     commission_rate: 30,
     base_salary: 0,
     is_active: 1,
-    notes: ''
+    notes: '',
+    avatar_base64: ''
   }
   modalOpen.value = true
 }
 
 function openEditModal(t: Technician): void {
-  form.value = { ...t }
+  form.value = { ...t, avatar_base64: t.avatar_base64 || '' }
   modalOpen.value = true
 }
 
@@ -95,7 +108,7 @@ onMounted(loadTechnicians)
           إدارة الفنيين، خطوط السير، ونسب العمولات
         </h1>
         <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-          متابعة الطلبات المفتوحة مع كل فني، عهدة قطع الغيار، وحساب وصرف نسب العمولات تلقائياً
+          ملف وصورة كل فني، متابعة الطلبات المفتوحة، عهدة قطع الغيار، وحساب وصرف نسب العمولات تلقائياً
         </p>
       </div>
 
@@ -117,17 +130,39 @@ onMounted(loadTechnicians)
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs flex flex-col justify-between space-y-4"
       >
         <div>
-          <div class="flex items-start justify-between">
-            <div>
-              <h3 class="font-black text-base text-slate-900 dark:text-white">{{ tech.name }}</h3>
-              <p class="text-xs text-blue-600 dark:text-blue-400 font-bold mt-0.5">
-                {{ tech.specialty }}
-              </p>
-              <p class="text-xs text-slate-500 font-mono mt-0.5">📞 {{ tech.phone }}</p>
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex items-center gap-3">
+              <!-- Technician Avatar -->
+              <div
+                v-if="tech.avatar_base64"
+                @click="appStore.openImagePreview(tech.avatar_base64, tech.name)"
+                class="w-14 h-14 rounded-2xl border-2 border-blue-500/40 overflow-hidden shrink-0 cursor-pointer shadow-xs hover:ring-2 hover:ring-blue-500 transition"
+                title="اضغط لتكبير صورة الفني"
+              >
+                <img :src="tech.avatar_base64" :alt="tech.name" class="w-full h-full object-cover" />
+              </div>
+              <div
+                v-else
+                @click="openEditModal(tech)"
+                class="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 text-white flex flex-col items-center justify-center shrink-0 cursor-pointer shadow-xs"
+                title="اضغط لإضافة صورة للفني"
+              >
+                <span class="font-black text-lg leading-none">{{ tech.name.slice(0, 1) }}</span>
+                <Camera class="w-3 h-3 opacity-70 mt-0.5" />
+              </div>
+
+              <div>
+                <h3 class="font-black text-base text-slate-900 dark:text-white">{{ tech.name }}</h3>
+                <p class="text-xs text-blue-600 dark:text-blue-400 font-bold mt-0.5">
+                  {{ tech.specialty }}
+                </p>
+                <p class="text-xs text-slate-500 font-mono mt-0.5">📞 {{ tech.phone }}</p>
+              </div>
             </div>
+
             <span
               :class="[
-                'px-2.5 py-1 rounded-full text-[11px] font-bold',
+                'px-2.5 py-1 rounded-full text-[11px] font-bold shrink-0',
                 tech.is_active
                   ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
                   : 'bg-rose-100 text-rose-800'
@@ -190,7 +225,9 @@ onMounted(loadTechnicians)
           </div>
         </div>
 
-        <div class="flex items-center justify-between pt-3 border-t border-slate-200 dark:border-slate-800 text-xs">
+        <div
+          class="flex items-center justify-between pt-3 border-t border-slate-200 dark:border-slate-800 text-xs"
+        >
           <button
             type="button"
             @click="openPayoutModal(tech)"
@@ -205,10 +242,12 @@ onMounted(loadTechnicians)
               type="button"
               @click="openEditModal(tech)"
               class="p-1.5 rounded-lg bg-slate-100 hover:bg-blue-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 cursor-pointer"
+              title="تعديل بيانات وصورة الفني"
             >
               <Edit3 class="w-4 h-4" />
             </button>
             <button
+              v-if="appStore.canDeleteRecords"
               type="button"
               @click="handleDeleteTechnician(tech)"
               class="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-100 text-slate-700 hover:text-rose-600 dark:bg-slate-800 dark:text-slate-300 cursor-pointer"
@@ -232,12 +271,55 @@ onMounted(loadTechnicians)
           class="px-6 py-4 bg-slate-100 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between"
         >
           <h3 class="font-bold text-sm">
-            {{ form.id ? 'تعديل بيانات الفني' : 'إضافة فني صيانة جديد' }}
+            {{ form.id ? 'تعديل بيانات وصورة الفني' : 'إضافة فني صيانة جديد' }}
           </h3>
           <button @click="modalOpen = false" class="cursor-pointer"><X class="w-4 h-4" /></button>
         </div>
 
         <form @submit.prevent="handleSaveTechnician" class="p-6 space-y-3 text-xs">
+          <!-- Technician Photo Upload Box -->
+          <div
+            class="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3"
+          >
+            <div class="flex items-center gap-3">
+              <div
+                v-if="form.avatar_base64"
+                @click="appStore.openImagePreview(form.avatar_base64, form.name || 'صورة الفني')"
+                class="w-14 h-14 rounded-2xl border-2 border-blue-400 overflow-hidden cursor-pointer shrink-0"
+              >
+                <img :src="form.avatar_base64" class="w-full h-full object-cover" />
+              </div>
+              <div
+                v-else
+                class="w-14 h-14 rounded-2xl bg-blue-100 dark:bg-blue-950 text-blue-600 flex items-center justify-center shrink-0"
+              >
+                <Camera class="w-6 h-6" />
+              </div>
+              <div>
+                <div class="font-bold text-slate-900 dark:text-white">الصورة الشخصية للفني</div>
+                <div class="text-[11px] text-slate-500">تظهر في بطاقة الفني وتقارير العمولات</div>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-1.5 shrink-0">
+              <label
+                class="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1 cursor-pointer"
+              >
+                <Upload class="w-3.5 h-3.5" />
+                <span>{{ form.avatar_base64 ? 'تغيير' : 'رفع صورة' }}</span>
+                <input type="file" accept="image/*" class="hidden" @change="handleAvatarUpload" />
+              </label>
+              <button
+                v-if="form.avatar_base64"
+                type="button"
+                @click="form.avatar_base64 = ''"
+                class="px-2.5 py-2 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold cursor-pointer"
+              >
+                حذف
+              </button>
+            </div>
+          </div>
+
           <div>
             <label class="block font-bold mb-1">اسم الفني / المهندس *</label>
             <input

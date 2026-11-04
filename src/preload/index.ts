@@ -3,6 +3,7 @@ import type {
   LoginPayload,
   User,
   Customer,
+  CustomerAppliance,
   Technician,
   SparePart,
   InventoryMovement,
@@ -21,13 +22,16 @@ const api = {
     ipcRenderer.invoke('users:save', data),
   deleteUser: (id: number) => ipcRenderer.invoke('users:delete', id),
 
-  // Customers
+  // Customers & Appliances
   listCustomers: (search?: string) => ipcRenderer.invoke('customers:list', search),
   findCustomerByPhone: (phone: string) => ipcRenderer.invoke('customers:findByPhone', phone),
   saveCustomer: (data: Partial<Customer>) => ipcRenderer.invoke('customers:save', data),
   deleteCustomer: (id: number) => ipcRenderer.invoke('customers:delete', id),
   getCustomerAppliances: (customerId: number) =>
     ipcRenderer.invoke('customers:appliances', customerId),
+  saveCustomerAppliance: (data: Partial<CustomerAppliance>) =>
+    ipcRenderer.invoke('customers:saveAppliance', data),
+  deleteCustomerAppliance: (id: number) => ipcRenderer.invoke('customers:deleteAppliance', id),
 
   // Technicians
   listTechnicians: () => ipcRenderer.invoke('technicians:list'),
@@ -62,13 +66,32 @@ const api = {
       recordPaymentInTreasury?: boolean
     }
   ) => ipcRenderer.invoke('tickets:save', data),
+  updateTicketImages: (payload: {
+    ticketId: number
+    warranty_image?: string
+    fault_images?: string[]
+  }) => ipcRenderer.invoke('tickets:updateImages', payload),
   deleteTicket: (id: number) => ipcRenderer.invoke('tickets:delete', id),
 
-  // Treasury
+  // Treasury & Reports
   listTreasuryTransactions: () => ipcRenderer.invoke('treasury:list'),
   addTreasuryTransaction: (data: Partial<TreasuryTransaction>) =>
     ipcRenderer.invoke('treasury:add', data),
+  transferTreasuryFunds: (payload: {
+    fromMethod: string
+    toMethod: string
+    amount: number
+    notes?: string
+  }) => ipcRenderer.invoke('treasury:transfer', payload),
+  collectTicketReceivable: (payload: {
+    ticketId: number
+    amount: number
+    paymentMethod: string
+    notes?: string
+  }) => ipcRenderer.invoke('treasury:collectReceivable', payload),
   deleteTreasuryTransaction: (id: number) => ipcRenderer.invoke('treasury:delete', id),
+  getFinancialReport: (payload?: { dateFrom?: string; dateTo?: string }) =>
+    ipcRenderer.invoke('reports:financial', payload),
 
   // Dashboard & Settings & Backup
   getAppVersion: () => ipcRenderer.invoke('app:version'),
@@ -79,6 +102,8 @@ const api = {
   getDatabasePath: () => ipcRenderer.invoke('db:path'),
   createBackup: () => ipcRenderer.invoke('backup:create'),
   restoreBackup: () => ipcRenderer.invoke('backup:restore'),
+  chooseBackupDir: () => ipcRenderer.invoke('backup:chooseDir'),
+  runAutoBackupNow: () => ipcRenderer.invoke('backup:autoNow'),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
 
   // Application Updates (Online & Offline)

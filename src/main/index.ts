@@ -13,6 +13,8 @@ import {
   saveCustomer,
   deleteCustomer,
   getCustomerAppliances,
+  saveCustomerAppliance,
+  deleteCustomerAppliance,
   listTechnicians,
   saveTechnician,
   deleteTechnician,
@@ -23,15 +25,20 @@ import {
   listInventoryMovements,
   listTickets,
   saveTicket,
+  updateTicketImages,
   deleteTicket,
   listTreasuryTransactions,
   addTreasuryTransaction,
+  transferTreasuryFunds,
+  collectTicketReceivable,
   deleteTreasuryTransaction,
+  getFinancialReport,
   getDashboardStats,
   getSettings,
   saveSettings,
   createBackupToFile,
   restoreBackupFromFile,
+  runAutoBackup,
   getDatabasePath
 } from './db'
 import {
@@ -89,7 +96,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('users:save', (_e, data) => saveUser(data))
   ipcMain.handle('users:delete', (_e, id: number) => deleteUser(id))
 
-  // Customers
+  // Customers & Appliances
   ipcMain.handle('customers:list', (_e, search?: string) => listCustomers(search))
   ipcMain.handle('customers:findByPhone', (_e, phone: string) => findCustomerByPhone(phone))
   ipcMain.handle('customers:save', (_e, data) => saveCustomer(data))
@@ -97,6 +104,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle('customers:appliances', (_e, customerId: number) =>
     getCustomerAppliances(customerId)
   )
+  ipcMain.handle('customers:saveAppliance', (_e, data) => saveCustomerAppliance(data))
+  ipcMain.handle('customers:deleteAppliance', (_e, id: number) => deleteCustomerAppliance(id))
 
   // Technicians
   ipcMain.handle('technicians:list', () => listTechnicians())
@@ -113,12 +122,18 @@ function registerIpcHandlers(): void {
   // Maintenance Tickets
   ipcMain.handle('tickets:list', (_e, filters) => listTickets(filters))
   ipcMain.handle('tickets:save', (_e, data) => saveTicket(data))
+  ipcMain.handle('tickets:updateImages', (_e, payload) => updateTicketImages(payload))
   ipcMain.handle('tickets:delete', (_e, id: number) => deleteTicket(id))
 
-  // Treasury
+  // Treasury & Reports
   ipcMain.handle('treasury:list', () => listTreasuryTransactions())
   ipcMain.handle('treasury:add', (_e, data) => addTreasuryTransaction(data))
+  ipcMain.handle('treasury:transfer', (_e, payload) => transferTreasuryFunds(payload))
+  ipcMain.handle('treasury:collectReceivable', (_e, payload) => collectTicketReceivable(payload))
   ipcMain.handle('treasury:delete', (_e, id: number) => deleteTreasuryTransaction(id))
+  ipcMain.handle('reports:financial', (_e, payload?: { dateFrom?: string; dateTo?: string }) =>
+    getFinancialReport(payload?.dateFrom, payload?.dateTo)
+  )
 
   // Dashboard & Settings
   ipcMain.handle('app:version', () => app.getVersion())
@@ -127,7 +142,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('settings:save', (_e, settings) => saveSettings(settings))
   ipcMain.handle('db:path', () => getDatabasePath())
 
-  // Backup & Restore
+  // Backup & Restore & Auto-Backup
   ipcMain.handle('backup:create', async () => {
     if (!mainWindow) return { success: false }
     const dateStr = new Date().toISOString().slice(0, 10)
@@ -151,6 +166,20 @@ function registerIpcHandlers(): void {
     if (canceled || filePaths.length === 0) return { success: false }
     restoreBackupFromFile(filePaths[0])
     return { success: true, filePath: filePaths[0] }
+  })
+
+  ipcMain.handle('backup:chooseDir', async () => {
+    if (!mainWindow) return { success: false }
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: 'اختر مجلد حفظ النسخ الاحتياطية التلقائية',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (canceled || filePaths.length === 0) return { success: false }
+    return { success: true, dirPath: filePaths[0] }
+  })
+
+  ipcMain.handle('backup:autoNow', () => {
+    return runAutoBackup()
   })
 
   // External Links (e.g. WhatsApp)
@@ -184,6 +213,10 @@ app.whenReady().then(() => {
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('before-quit', () => {
+  runAutoBackup()
 })
 
 app.on('window-all-closed', () => {

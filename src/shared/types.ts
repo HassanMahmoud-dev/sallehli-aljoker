@@ -1,4 +1,10 @@
-export type UserRole = 'super_admin' | 'owner' | 'tenant'
+export type UserRole =
+  | 'super_admin'
+  | 'owner'
+  | 'tenant'
+  | 'receptionist'
+  | 'cashier'
+  | 'storekeeper'
 
 export interface User {
   id: number
@@ -9,6 +15,7 @@ export interface User {
   is_active: number // 1 or 0
   subscription_start: string | null
   subscription_end: string | null
+  subscription_sig?: string | null
   notes: string
   created_at: string
 }
@@ -50,6 +57,8 @@ export interface CustomerAppliance {
   notes: string
   last_warranty_end?: string | null
   last_ticket_number?: string | null
+  warranty_image?: string
+  fault_images?: string[]
   created_at: string
 }
 
@@ -62,6 +71,7 @@ export interface Technician {
   base_salary: number
   is_active: number
   notes: string
+  avatar_base64?: string
   created_at: string
   active_tickets_count?: number
   custody_parts_count?: number
@@ -81,6 +91,7 @@ export interface SparePart {
   min_quantity: number
   location: string
   notes: string
+  image_base64?: string
   created_at: string
 }
 
@@ -163,6 +174,8 @@ export interface MaintenanceTicket {
   warranty_end_date: string | null
   is_under_previous_warranty: number
   previous_ticket_number: string | null
+  warranty_image?: string
+  fault_images?: string[]
   notes: string
   completed_at: string | null
   delivered_at: string | null
@@ -201,6 +214,9 @@ export interface CenterSettings {
   warranty_terms: string
   receipt_footer: string
   update_url?: string
+  auto_backup_enabled?: number
+  auto_backup_dir?: string
+  auto_backup_keep_count?: number
 }
 
 export interface UpdateCheckResult {
@@ -239,4 +255,60 @@ export interface DashboardStats {
   monthNetProfit: number
   recentTickets: MaintenanceTicket[]
   lowStockParts: SparePart[]
+}
+
+export interface TechnicianStatementItem {
+  id: number
+  name: string
+  phone: string
+  specialty: string
+  avatar_base64?: string
+  commission_rate: number
+  base_salary: number
+  completed_tickets_count: number
+  period_labor_and_inspection: number
+  period_earned_commission: number
+  period_paid_commission: number
+  total_earned_commission: number
+  total_paid_commission: number
+  remaining_balance: number
+}
+
+export interface FinancialReportData {
+  dateFrom: string
+  dateTo: string
+  summary: {
+    totalIncome: number
+    totalExpense: number
+    totalTechCommissions: number
+    totalPartsRevenue: number
+    totalPartsCost: number
+    totalPartsProfit: number
+    totalInspectionAndLabor: number
+    netProfit: number
+    ticketsCount: number
+    completedTicketsCount: number
+    totalReceivables: number
+  }
+  balancesByMethod: Record<
+    string,
+    {
+      income: number
+      expense: number
+      net: number
+    }
+  >
+  periodBalancesByMethod: Record<
+    string,
+    {
+      income: number
+      expense: number
+      net: number
+    }
+  >
+  technicianStatements: TechnicianStatementItem[]
+  customerReceivables: MaintenanceTicket[]
+  topAppliances: Array<{ appliance_type: string; count: number; revenue: number }>
+  topBrands: Array<{ brand: string; count: number; revenue: number }>
+  transactions: TreasuryTransaction[]
 }

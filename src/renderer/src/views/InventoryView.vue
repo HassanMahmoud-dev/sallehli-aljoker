@@ -2,6 +2,8 @@
 import { ref, onMounted, watch } from 'vue'
 import type { SparePart, InventoryMovement, Technician } from '@shared/types'
 import { PART_CATEGORIES } from '@renderer/constants/appliances'
+import { useAppStore } from '@renderer/stores/appStore'
+import { compressImageFile } from '@renderer/utils/imageHelper'
 import {
   Package,
   PlusCircle,
@@ -11,9 +13,12 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   AlertTriangle,
+  Image as ImageIcon,
+  Upload,
   X
 } from 'lucide-vue-next'
 
+const appStore = useAppStore()
 const parts = ref<SparePart[]>([])
 const movements = ref<InventoryMovement[]>([])
 const technicians = ref<Technician[]>([])
@@ -33,7 +38,8 @@ const partForm = ref<Partial<SparePart>>({
   quantity: 5,
   min_quantity: 3,
   location: '',
-  notes: ''
+  notes: '',
+  image_base64: ''
 })
 
 const moveForm = ref<{
@@ -67,6 +73,14 @@ watch(searchQuery, () => {
   loadData()
 })
 
+async function handlePartImageUpload(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  partForm.value.image_base64 = await compressImageFile(file, 900, 900, 0.82)
+  input.value = ''
+}
+
 function openCreatePartModal(): void {
   partForm.value = {
     code: `PT-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -78,13 +92,14 @@ function openCreatePartModal(): void {
     quantity: 5,
     min_quantity: 3,
     location: '',
-    notes: ''
+    notes: '',
+    image_base64: ''
   }
   partModalOpen.value = true
 }
 
 function openEditPartModal(p: SparePart): void {
-  partForm.value = { ...p }
+  partForm.value = { ...p, image_base64: p.image_base64 || '' }
   partModalOpen.value = true
 }
 
@@ -153,7 +168,7 @@ onMounted(loadData)
           مخزن قطع الغيار وعهدة الفنيين
         </h1>
         <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-          إدارة أرصدة قطع الغيار، أسعار الشراء والبيع، تنبيهات النواقص، وصرف واستلام عهدة الفنيين
+          إدارة أرصدة وصور قطع الغيار، أسعار الشراء والبيع، تنبيهات النواقص، وصرف واستلام عهدة الفنيين
         </p>
       </div>
 
@@ -217,10 +232,11 @@ onMounted(loadData)
       <table class="w-full text-right text-xs">
         <thead class="bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-bold">
           <tr>
+            <th class="py-3.5 px-4">الصورة</th>
             <th class="py-3.5 px-4">الكود</th>
             <th class="py-3.5 px-4">اسم قطعة الغيار</th>
             <th class="py-3.5 px-4">التصنيف والماركة</th>
-            <th class="py-3.5 px-4">سعر الشراء</th>
+            <th v-if="appStore.canViewPurchasePrices" class="py-3.5 px-4">سعر الشراء</th>
             <th class="py-3.5 px-4">سعر البيع للعميل</th>
             <th class="py-3.5 px-4">الرصيد المتاح</th>
             <th class="py-3.5 px-4">المكان</th>
@@ -233,6 +249,22 @@ onMounted(loadData)
             :key="p.id"
             class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition"
           >
+            <td class="py-2.5 px-4">
+              <div
+                v-if="p.image_base64"
+                @click="appStore.openImagePreview(p.image_base64, `${p.name} (${p.code})`)"
+                class="w-11 h-11 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition bg-white"
+                title="اضغط لتكبير صورة قطعة الغيار"
+              >
+                <img :src="p.image_base64" :alt="p.name" class="w-full h-full object-cover" />
+              </div>
+              <div
+                v-else
+                class="w-11 h-11 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-center text-slate-400"
+              >
+                <ImageIcon class="w-4 h-4" />
+              </div>
+            </td>
             <td class="py-3.5 px-4 font-mono font-bold text-blue-600 dark:text-blue-400">
               {{ p.code }}
             </td>
@@ -243,7 +275,9 @@ onMounted(loadData)
               <div class="font-bold">{{ p.category }}</div>
               <div class="text-slate-500">{{ p.brand }}</div>
             </td>
-            <td class="py-3.5 px-4 font-semibold">{{ p.purchase_price }} ج.م</td>
+            <td v-if="appStore.canViewPurchasePrices" class="py-3.5 px-4 font-semibold">
+              {{ p.purchase_price }} ج.م
+            </td>
             <td class="py-3.5 px-4 font-black text-emerald-600 dark:text-emerald-400">
               {{ p.selling_price }} ج.م
             </td>
@@ -287,6 +321,7 @@ onMounted(loadData)
                   <Edit3 class="w-4 h-4" />
                 </button>
                 <button
+                  v-if="appStore.canDeleteRecords"
                   type="button"
                   @click="handleDeletePart(p)"
                   class="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-100 text-slate-700 hover:text-rose-600 dark:bg-slate-800 dark:text-slate-300 cursor-pointer"
@@ -363,6 +398,56 @@ onMounted(loadData)
         </div>
 
         <form @submit.prevent="handleSavePart" class="p-6 space-y-3">
+          <!-- Spare Part Image Attachment -->
+          <div
+            class="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-4"
+          >
+            <div class="flex items-center gap-3">
+              <div
+                v-if="partForm.image_base64"
+                @click="appStore.openImagePreview(partForm.image_base64, partForm.name || 'صورة قطعة الغيار')"
+                class="w-16 h-16 rounded-xl border border-blue-300 overflow-hidden bg-white cursor-pointer shrink-0"
+              >
+                <img :src="partForm.image_base64" class="w-full h-full object-cover" />
+              </div>
+              <div
+                v-else
+                class="w-16 h-16 rounded-xl border border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center text-slate-400 shrink-0"
+              >
+                <ImageIcon class="w-6 h-6" />
+              </div>
+              <div>
+                <div class="font-bold text-slate-900 dark:text-white">صورة قطعة الغيار</div>
+                <div class="text-[11px] text-slate-500">
+                  أرفق صورة واضحة للقطعة لسهولة التعرف عليها في المخزن
+                </div>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2 shrink-0">
+              <label
+                class="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Upload class="w-3.5 h-3.5" />
+                <span>{{ partForm.image_base64 ? 'تغيير الصورة' : 'إرفاق صورة' }}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  class="hidden"
+                  @change="handlePartImageUpload"
+                />
+              </label>
+              <button
+                v-if="partForm.image_base64"
+                type="button"
+                @click="partForm.image_base64 = ''"
+                class="px-2.5 py-2 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold cursor-pointer"
+              >
+                حذف
+              </button>
+            </div>
+          </div>
+
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block font-bold mb-1">كود القطعة *</label>

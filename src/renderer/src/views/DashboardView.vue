@@ -94,6 +94,7 @@ onMounted(loadStats)
           تسجيل بلاغ صيانة جديد
         </button>
         <button
+          v-if="appStore.canViewInventory"
           type="button"
           @click="router.push('/inventory')"
           class="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs transition cursor-pointer"
@@ -102,6 +103,7 @@ onMounted(loadStats)
           مخزن قطع الغيار
         </button>
         <button
+          v-if="appStore.canViewFinancials"
           type="button"
           @click="router.push('/treasury')"
           class="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition cursor-pointer"
@@ -153,6 +155,7 @@ onMounted(loadStats)
       </div>
 
       <div
+        v-if="appStore.canViewFinancials"
         class="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between"
       >
         <div>
@@ -172,6 +175,7 @@ onMounted(loadStats)
       </div>
 
       <div
+        v-if="appStore.isFullManager"
         class="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between"
       >
         <div>

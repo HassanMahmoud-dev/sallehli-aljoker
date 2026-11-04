@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
+import { compressImageFile } from '@renderer/utils/imageHelper'
 import {
   APPLIANCE_TYPES,
   APPLIANCE_BRANDS,
@@ -27,6 +28,8 @@ import {
   Home,
   Building2,
   PackagePlus,
+  Camera,
+  ShieldCheck,
   X
 } from 'lucide-vue-next'
 
@@ -86,6 +89,8 @@ const form = ref<{
   warranty_months: number
   is_under_previous_warranty: number
   previous_ticket_number: string | null
+  warranty_image: string
+  fault_images: string[]
   notes: string
   parts: TicketPartItem[]
 }>({
@@ -113,6 +118,8 @@ const form = ref<{
   warranty_months: 6,
   is_under_previous_warranty: 0,
   previous_ticket_number: null,
+  warranty_image: '',
+  fault_images: [],
   notes: '',
   parts: []
 })
@@ -243,6 +250,31 @@ function removePartFromTicket(index: number): void {
   form.value.parts.splice(index, 1)
 }
 
+async function handleWarrantyImageUpload(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  form.value.warranty_image = await compressImageFile(file, 1100, 1100, 0.84)
+  input.value = ''
+}
+
+async function handleFaultImagesUpload(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  const files = input.files
+  if (!files || files.length === 0) return
+  const list = [...form.value.fault_images]
+  for (const file of Array.from(files)) {
+    const compressed = await compressImageFile(file, 1000, 1000, 0.82)
+    list.push(compressed)
+  }
+  form.value.fault_images = list
+  input.value = ''
+}
+
+function removeFaultImage(index: number): void {
+  form.value.fault_images.splice(index, 1)
+}
+
 function openCreateModal(): void {
   errorMsg.value = ''
   existingAppliances.value = []
@@ -273,6 +305,8 @@ function openCreateModal(): void {
     warranty_months: appStore.settings.default_warranty_months || 6,
     is_under_previous_warranty: 0,
     previous_ticket_number: null,
+    warranty_image: '',
+    fault_images: [],
     notes: '',
     parts: []
   }
@@ -312,6 +346,8 @@ function openEditModal(t: MaintenanceTicket): void {
     warranty_months: t.warranty_months,
     is_under_previous_warranty: t.is_under_previous_warranty,
     previous_ticket_number: t.previous_ticket_number,
+    warranty_image: t.warranty_image || '',
+    fault_images: Array.isArray(t.fault_images) ? [...t.fault_images] : [],
     notes: t.notes || '',
     parts: t.parts ? t.parts.map((p) => ({ ...p })) : []
   }
@@ -847,6 +883,100 @@ onMounted(async () => {
                   placeholder="مثال: تم الكشف وتغيير طلمبة الطرد وتنظيف الفلتر وتجربة الجهاز..."
                   class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700"
                 ></textarea>
+              </div>
+            </div>
+
+            <!-- Warranty Image & Fault Images Attachment -->
+            <div
+              class="pt-3 border-t border-slate-200 dark:border-slate-700 grid grid-cols-1 md:grid-cols-2 gap-3"
+            >
+              <!-- Warranty Image -->
+              <div
+                class="p-3 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 flex items-center justify-between gap-3"
+              >
+                <div class="flex items-center gap-2.5">
+                  <img
+                    v-if="form.warranty_image"
+                    :src="form.warranty_image"
+                    @click="appStore.openImagePreview(form.warranty_image, 'صورة الضمان')"
+                    class="w-12 h-12 rounded-lg border border-emerald-500 object-cover bg-white cursor-pointer shrink-0"
+                  />
+                  <div>
+                    <div class="font-bold text-emerald-800 dark:text-emerald-300">
+                      🛡️ صورة شهادة الضمان
+                    </div>
+                    <div class="text-[10px] text-slate-500">تُحفظ أيضاً في سجل أجهزة العميل</div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <label
+                    class="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <ShieldCheck class="w-3.5 h-3.5" />
+                    <span>{{ form.warranty_image ? 'تغيير' : 'إرفاق صورة' }}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      class="hidden"
+                      @change="handleWarrantyImageUpload"
+                    />
+                  </label>
+                  <button
+                    v-if="form.warranty_image"
+                    type="button"
+                    @click="form.warranty_image = ''"
+                    class="px-2 py-1.5 rounded-lg bg-rose-100 text-rose-700 font-bold cursor-pointer"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+
+              <!-- Fault Images -->
+              <div
+                class="p-3 rounded-xl bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 space-y-2"
+              >
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="font-bold text-amber-900 dark:text-amber-300">
+                      📷 صور العطل والجهاز ({{ form.fault_images.length }})
+                    </div>
+                    <div class="text-[10px] text-slate-500">قبل وبعد الصيانة</div>
+                  </div>
+                  <label
+                    class="px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Camera class="w-3.5 h-3.5" />
+                    <span>إرفاق صور العطل (+)</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      class="hidden"
+                      @change="handleFaultImagesUpload"
+                    />
+                  </label>
+                </div>
+                <div v-if="form.fault_images.length > 0" class="flex flex-wrap gap-1.5">
+                  <div
+                    v-for="(img, idx) in form.fault_images"
+                    :key="idx"
+                    class="relative w-12 h-12 rounded-lg border border-amber-500 overflow-hidden bg-white"
+                  >
+                    <img
+                      :src="img"
+                      @click="appStore.openImagePreview(img, `صورة العطل ${idx + 1}`)"
+                      class="w-full h-full object-cover cursor-pointer"
+                    />
+                    <button
+                      type="button"
+                      @click="removeFaultImage(idx)"
+                      class="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-rose-600 text-white flex items-center justify-center text-[10px] cursor-pointer"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

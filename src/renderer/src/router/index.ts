@@ -7,6 +7,7 @@ import CustomersView from '@renderer/views/CustomersView.vue'
 import TechniciansView from '@renderer/views/TechniciansView.vue'
 import InventoryView from '@renderer/views/InventoryView.vue'
 import TreasuryView from '@renderer/views/TreasuryView.vue'
+import ReportsView from '@renderer/views/ReportsView.vue'
 import SettingsView from '@renderer/views/SettingsView.vue'
 import SuperAdminView from '@renderer/views/SuperAdminView.vue'
 
@@ -56,19 +57,25 @@ const router = createRouter({
       path: '/treasury',
       name: 'treasury',
       component: TreasuryView,
-      meta: { requiresAuth: true }
+      meta: { requiresAuth: true, requiresFinancials: true }
+    },
+    {
+      path: '/reports',
+      name: 'reports',
+      component: ReportsView,
+      meta: { requiresAuth: true, requiresFinancials: true }
     },
     {
       path: '/settings',
       name: 'settings',
       component: SettingsView,
-      meta: { requiresAuth: true }
+      meta: { requiresAuth: true, requiresManager: true }
     },
     {
       path: '/super-admin',
       name: 'super-admin',
       component: SuperAdminView,
-      meta: { requiresAuth: true, requiresSuperAdmin: true }
+      meta: { requiresAuth: true, requiresManageUsers: true }
     }
   ]
 })
@@ -81,7 +88,13 @@ router.beforeEach((to) => {
   if (to.name === 'login' && appStore.isAuthenticated) {
     return { name: 'dashboard' }
   }
-  if (to.meta.requiresSuperAdmin && !appStore.isSuperAdmin) {
+  if (to.meta.requiresFinancials && !appStore.canViewFinancials) {
+    return { name: 'dashboard' }
+  }
+  if (to.meta.requiresManager && !appStore.isFullManager) {
+    return { name: 'dashboard' }
+  }
+  if (to.meta.requiresManageUsers && !appStore.canManageUsers) {
     return { name: 'dashboard' }
   }
   return true

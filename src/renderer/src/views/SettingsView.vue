@@ -53,6 +53,24 @@ async function handleCreateBackup(): Promise<void> {
   }
 }
 
+async function handleChooseAutoBackupDir(): Promise<void> {
+  const res = await window.api.chooseBackupDir()
+  if (res.success && res.dirPath) {
+    form.value.auto_backup_dir = res.dirPath
+    await window.api.saveSettings(form.value)
+    await appStore.loadSettings()
+    statusMessage.value = `تم تحديث مجلد النسخ الاحتياطي التلقائي إلى: ${res.dirPath}`
+  }
+}
+
+async function handleRunAutoBackupNow(): Promise<void> {
+  await window.api.saveSettings(form.value)
+  const res = await window.api.runAutoBackupNow()
+  if (res.success) {
+    statusMessage.value = `تم أخذ نسخة احتياطية تلقائية فورية في: ${res.filePath}`
+  }
+}
+
 async function handleRestoreBackup(): Promise<void> {
   if (
     !confirm(
@@ -301,6 +319,55 @@ onMounted(loadSettingsData)
             <Upload class="w-4 h-4" />
             استعادة نسخة احتياطية سابقة
           </button>
+
+          <!-- Automatic Backup Settings -->
+          <div
+            class="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2.5"
+          >
+            <div class="flex items-center justify-between">
+              <label for="autoBackupToggle" class="font-black text-slate-900 dark:text-white">
+                تفعيل النسخ الاحتياطي التلقائي عند إغلاق البرنامج
+              </label>
+              <input
+                id="autoBackupToggle"
+                type="checkbox"
+                :checked="Boolean(form.auto_backup_enabled)"
+                @change="
+                  (e) => (form.auto_backup_enabled = (e.target as HTMLInputElement).checked ? 1 : 0)
+                "
+                class="w-4 h-4 cursor-pointer"
+              />
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-bold text-slate-500 mb-1">
+                مجلد حفظ النسخ التلقائية (يحتفظ بآخر {{ form.auto_backup_keep_count || 10 }} نسخ)
+              </label>
+              <div class="flex items-center gap-1.5">
+                <input
+                  v-model="form.auto_backup_dir"
+                  type="text"
+                  readonly
+                  class="flex-1 px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-[10px]"
+                />
+                <button
+                  type="button"
+                  @click="handleChooseAutoBackupDir"
+                  class="px-2.5 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 font-bold cursor-pointer shrink-0"
+                >
+                  تغيير المجلد
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              @click="handleRunAutoBackupNow"
+              class="w-full py-2 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-bold cursor-pointer"
+            >
+              أخذ نسخة احتياطية تلقائية فورية الآن
+            </button>
+          </div>
         </div>
 
         <!-- Program Version, Updates & Developer Info Box -->

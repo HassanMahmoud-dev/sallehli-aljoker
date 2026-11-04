@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import type { User, UserRole } from '@shared/types'
 import { USER_ROLE_LABELS } from '@renderer/constants/appliances'
+import { useAppStore } from '@renderer/stores/appStore'
 import {
   ShieldCheck,
   UserPlus,
@@ -13,10 +14,16 @@ import {
   KeyRound
 } from 'lucide-vue-next'
 
+const appStore = useAppStore()
 const users = ref<User[]>([])
 const modalOpen = ref(false)
 const errorMsg = ref('')
 const successMsg = ref('')
+
+const visibleUsers = computed(() => {
+  if (appStore.isSuperAdmin) return users.value
+  return users.value.filter((u) => u.role !== 'super_admin')
+})
 
 const form = ref<{
   id?: number
@@ -56,7 +63,7 @@ function openCreateModal(): void {
     password: '',
     full_name: '',
     phone: '',
-    role: 'tenant',
+    role: appStore.isSuperAdmin ? 'tenant' : 'receptionist',
     is_active: 1,
     subscription_start: today.toISOString().slice(0, 10),
     subscription_end: nextMonth.toISOString().slice(0, 10),
@@ -256,7 +263,7 @@ onMounted(loadUsers)
           </thead>
           <tbody class="divide-y divide-slate-200 dark:divide-slate-800 text-xs">
             <tr
-              v-for="u in users"
+              v-for="u in visibleUsers"
               :key="u.id"
               class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition"
             >
@@ -435,9 +442,18 @@ onMounted(loadUsers)
                 :disabled="form.username === 'admin'"
                 class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold"
               >
-                <option value="super_admin">سوبر أدمن (مالك البرنامج بالكامل)</option>
-                <option value="owner">مستخدم مالك البرنامج (نسخة دائمة)</option>
-                <option value="tenant">مستخدم مستأجر البرنامج (اشتراك محدد)</option>
+                <option v-if="appStore.isSuperAdmin" value="super_admin">
+                  سوبر أدمن (مالك البرنامج بالكامل)
+                </option>
+                <option v-if="appStore.isSuperAdmin" value="owner">
+                  مستخدم مالك البرنامج (نسخة دائمة)
+                </option>
+                <option v-if="appStore.isSuperAdmin" value="tenant">
+                  مستخدم مستأجر البرنامج (اشتراك محدد)
+                </option>
+                <option value="receptionist">موظف استقبال وخدمة عملاء</option>
+                <option value="cashier">كاشير / محاسب مالي</option>
+                <option value="storekeeper">أمين مخزن قطع الغيار</option>
               </select>
             </div>
             <div>

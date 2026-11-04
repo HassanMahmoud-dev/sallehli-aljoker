@@ -6,7 +6,7 @@ export const useAppStore = defineStore('app', () => {
   const currentUser = ref<User | null>(null)
   const subscriptionDaysRemaining = ref<number | null>(null)
   const isDark = ref<boolean>(localStorage.getItem('sallehli_theme') === 'dark')
-  const appVersion = ref<string>('v1.0.0')
+  const appVersion = ref<string>('v1.0.5')
 
   const settings = ref<CenterSettings>({
     center_name: 'مركز صلحلي للصيانة المعتمدة',
@@ -21,7 +21,10 @@ export const useAppStore = defineStore('app', () => {
     default_warranty_months: 6,
     warranty_terms: '',
     receipt_footer: '',
-    update_url: 'HassanMahmoud-dev/sallehli-aljoker'
+    update_url: 'HassanMahmoud-dev/sallehli-aljoker',
+    auto_backup_enabled: 1,
+    auto_backup_dir: '',
+    auto_backup_keep_count: 10
   })
 
   // Print Modal State
@@ -33,10 +36,37 @@ export const useAppStore = defineStore('app', () => {
   // Update Modal State
   const updateModalOpen = ref(false)
 
+  // Global Image Lightbox Preview State
+  const imagePreviewOpen = ref(false)
+  const imagePreviewSrc = ref('')
+  const imagePreviewTitle = ref('')
+
   const isAuthenticated = computed(() => !!currentUser.value)
   const isSuperAdmin = computed(() => currentUser.value?.role === 'super_admin')
   const isOwner = computed(() => currentUser.value?.role === 'owner')
   const isTenant = computed(() => currentUser.value?.role === 'tenant')
+
+  // Role-Based Access Control (RBAC) computed flags
+  const isFullManager = computed(() =>
+    ['super_admin', 'owner', 'tenant'].includes(currentUser.value?.role || '')
+  )
+  const canManageUsers = computed(() =>
+    ['super_admin', 'owner', 'tenant'].includes(currentUser.value?.role || '')
+  )
+  const canViewFinancials = computed(() =>
+    ['super_admin', 'owner', 'tenant', 'cashier'].includes(currentUser.value?.role || '')
+  )
+  const canViewInventory = computed(() =>
+    ['super_admin', 'owner', 'tenant', 'storekeeper', 'cashier'].includes(
+      currentUser.value?.role || ''
+    )
+  )
+  const canViewPurchasePrices = computed(() =>
+    ['super_admin', 'owner', 'tenant', 'storekeeper'].includes(currentUser.value?.role || '')
+  )
+  const canDeleteRecords = computed(() =>
+    ['super_admin', 'owner', 'tenant'].includes(currentUser.value?.role || '')
+  )
 
   function applyTheme(): void {
     if (isDark.value) {
@@ -53,15 +83,26 @@ export const useAppStore = defineStore('app', () => {
     applyTheme()
   }
 
+  async function fetchVersion(): Promise<void> {
+    try {
+      if (window.api?.getAppVersion) {
+        const ver = await window.api.getAppVersion()
+        if (ver) {
+          appVersion.value = ver.startsWith('v') ? ver : `v${ver}`
+          document.title = `صلحلي ${appVersion.value} - نظام إدارة مركز صيانة الأجهزة الكهربائية`
+        }
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
   async function loadSettings(): Promise<void> {
     try {
       const data = await window.api.getSettings()
       settings.value = data
       activePrintFormat.value = data.default_print_format || 'a4'
-      if (window.api.getAppVersion) {
-        const ver = await window.api.getAppVersion()
-        if (ver) appVersion.value = ver.startsWith('v') ? ver : `v${ver}`
-      }
+      await fetchVersion()
     } catch (e) {
       console.error('Failed to load settings', e)
     }
@@ -101,6 +142,19 @@ export const useAppStore = defineStore('app', () => {
     updateModalOpen.value = false
   }
 
+  function openImagePreview(src: string, title = 'معاينة الصورة'): void {
+    if (!src) return
+    imagePreviewSrc.value = src
+    imagePreviewTitle.value = title
+    imagePreviewOpen.value = true
+  }
+
+  function closeImagePreview(): void {
+    imagePreviewOpen.value = false
+    imagePreviewSrc.value = ''
+    imagePreviewTitle.value = ''
+  }
+
   function sendWhatsAppToCustomer(ticket: MaintenanceTicket): void {
     let rawPhone = (ticket.customer_phone || '').replace(/\D/g, '')
     if (rawPhone.startsWith('01') && rawPhone.length === 11) {
@@ -134,12 +188,22 @@ export const useAppStore = defineStore('app', () => {
     activePrintFormat,
     activePrintDocType,
     updateModalOpen,
+    imagePreviewOpen,
+    imagePreviewSrc,
+    imagePreviewTitle,
     isAuthenticated,
     isSuperAdmin,
     isOwner,
     isTenant,
+    isFullManager,
+    canManageUsers,
+    canViewFinancials,
+    canViewInventory,
+    canViewPurchasePrices,
+    canDeleteRecords,
     applyTheme,
     toggleTheme,
+    fetchVersion,
     loadSettings,
     setSession,
     logout,
@@ -147,6 +211,8 @@ export const useAppStore = defineStore('app', () => {
     closePrintModal,
     openUpdateModal,
     closeUpdateModal,
+    openImagePreview,
+    closeImagePreview,
     sendWhatsAppToCustomer
   }
 })

@@ -12,6 +12,7 @@ import type {
   TreasuryTransaction,
   CenterSettings,
   DashboardStats,
+  FinancialReportData,
   UpdateCheckResult,
   UpdateProgressPayload
 } from '../shared/types'
@@ -31,6 +32,8 @@ export interface IElectronAPI {
   saveCustomer: (data: Partial<Customer>) => Promise<Customer>
   deleteCustomer: (id: number) => Promise<void>
   getCustomerAppliances: (customerId: number) => Promise<CustomerAppliance[]>
+  saveCustomerAppliance: (data: Partial<CustomerAppliance>) => Promise<CustomerAppliance>
+  deleteCustomerAppliance: (id: number) => Promise<void>
 
   listTechnicians: () => Promise<Technician[]>
   saveTechnician: (data: Partial<Technician>) => Promise<Technician>
@@ -62,11 +65,32 @@ export interface IElectronAPI {
       recordPaymentInTreasury?: boolean
     }
   ) => Promise<MaintenanceTicket>
+  updateTicketImages: (payload: {
+    ticketId: number
+    warranty_image?: string
+    fault_images?: string[]
+  }) => Promise<MaintenanceTicket>
   deleteTicket: (id: number) => Promise<void>
 
   listTreasuryTransactions: () => Promise<TreasuryTransaction[]>
   addTreasuryTransaction: (data: Partial<TreasuryTransaction>) => Promise<TreasuryTransaction>
+  transferTreasuryFunds: (payload: {
+    fromMethod: string
+    toMethod: string
+    amount: number
+    notes?: string
+  }) => Promise<void>
+  collectTicketReceivable: (payload: {
+    ticketId: number
+    amount: number
+    paymentMethod: string
+    notes?: string
+  }) => Promise<MaintenanceTicket>
   deleteTreasuryTransaction: (id: number) => Promise<void>
+  getFinancialReport: (payload?: {
+    dateFrom?: string
+    dateTo?: string
+  }) => Promise<FinancialReportData>
 
   getAppVersion: () => Promise<string>
   getDashboardStats: () => Promise<DashboardStats>
@@ -75,6 +99,8 @@ export interface IElectronAPI {
   getDatabasePath: () => Promise<string>
   createBackup: () => Promise<{ success: boolean; filePath?: string }>
   restoreBackup: () => Promise<{ success: boolean; filePath?: string }>
+  chooseBackupDir: () => Promise<{ success: boolean; dirPath?: string }>
+  runAutoBackupNow: () => Promise<{ success: boolean; filePath?: string }>
   openExternal: (url: string) => Promise<void>
 
   checkForUpdates: (customUrl?: string) => Promise<UpdateCheckResult>

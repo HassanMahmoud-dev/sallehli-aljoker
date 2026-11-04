@@ -13,12 +13,14 @@ import {
   UserCog,
   Package,
   Wallet,
+  PieChart,
   Settings,
   ShieldCheck,
   Sun,
   Moon,
   LogOut,
-  RefreshCw
+  RefreshCw,
+  X
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -26,21 +28,62 @@ const route = useRoute()
 const appStore = useAppStore()
 
 const navItems = computed(() => {
-  const items = [
+  const role = appStore.currentUser?.role || 'tenant'
+  const items: Array<{ name: string; path: string; label: string; icon: unknown }> = [
     { name: 'dashboard', path: '/dashboard', label: 'لوحة التحكم اليومية', icon: LayoutDashboard },
     { name: 'tickets', path: '/tickets', label: 'بلاغات وطلبات الصيانة', icon: Wrench },
-    { name: 'customers', path: '/customers', label: 'العملاء وسجل الأجهزة', icon: Users },
-    { name: 'technicians', path: '/technicians', label: 'الفنيين والعمولات', icon: UserCog },
-    { name: 'inventory', path: '/inventory', label: 'المخزن وقطع الغيار', icon: Package },
-    { name: 'treasury', path: '/treasury', label: 'الخزينة والحسابات', icon: Wallet },
-    { name: 'settings', path: '/settings', label: 'إعدادات المركز والطباعة', icon: Settings }
+    { name: 'customers', path: '/customers', label: 'العملاء وسجل الأجهزة', icon: Users }
   ]
 
-  if (appStore.isSuperAdmin) {
+  if (['super_admin', 'owner', 'tenant', 'receptionist', 'cashier'].includes(role)) {
+    items.push({
+      name: 'technicians',
+      path: '/technicians',
+      label: 'الفنيين والعمولات',
+      icon: UserCog
+    })
+  }
+
+  if (appStore.canViewInventory) {
+    items.push({
+      name: 'inventory',
+      path: '/inventory',
+      label: 'المخزن وقطع الغيار',
+      icon: Package
+    })
+  }
+
+  if (appStore.canViewFinancials) {
+    items.push({
+      name: 'treasury',
+      path: '/treasury',
+      label: 'الخزينة والحسابات',
+      icon: Wallet
+    })
+    items.push({
+      name: 'reports',
+      path: '/reports',
+      label: 'التقارير المالية والمحاسبية',
+      icon: PieChart
+    })
+  }
+
+  if (appStore.isFullManager) {
+    items.push({
+      name: 'settings',
+      path: '/settings',
+      label: 'إعدادات المركز والطباعة',
+      icon: Settings
+    })
+  }
+
+  if (appStore.canManageUsers) {
     items.push({
       name: 'super-admin',
       path: '/super-admin',
-      label: 'لوحة السوبر أدمن والتراخيص',
+      label: appStore.isSuperAdmin
+        ? 'لوحة السوبر أدمن والتراخيص'
+        : 'إدارة الموظفين والصلاحيات',
       icon: ShieldCheck
     })
   }
@@ -54,6 +97,7 @@ function handleLogout(): void {
 
 onMounted(() => {
   appStore.applyTheme()
+  appStore.fetchVersion()
 })
 </script>
 
@@ -96,13 +140,13 @@ onMounted(() => {
           </div>
 
           <!-- Navigation Links -->
-          <nav class="p-3 space-y-1.5">
+          <nav class="p-3 space-y-1">
             <router-link
               v-for="item in navItems"
               :key="item.name"
               :to="item.path"
               :class="[
-                'flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition',
+                'flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-bold transition',
                 route.path.startsWith(item.path)
                   ? item.name === 'super-admin'
                     ? 'bg-purple-600 text-white shadow-md shadow-purple-600/25'
@@ -122,22 +166,16 @@ onMounted(() => {
             <div class="font-black text-xs text-slate-900 dark:text-white truncate">
               {{ appStore.currentUser?.full_name }}
             </div>
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between gap-1">
               <span
                 :class="[
-                  'inline-block px-2 py-0.5 rounded-full text-[10px] font-bold',
+                  'inline-block px-2 py-0.5 rounded-full text-[10px] font-bold truncate',
                   USER_ROLE_LABELS[appStore.currentUser?.role || 'tenant']?.badge
                 ]"
               >
-                {{
-                  appStore.currentUser?.role === 'super_admin'
-                    ? 'سوبر أدمن'
-                    : appStore.currentUser?.role === 'owner'
-                      ? 'مالك البرنامج'
-                      : 'مستأجر البرنامج'
-                }}
+                {{ USER_ROLE_LABELS[appStore.currentUser?.role || 'tenant']?.label }}
               </span>
-              <span class="text-[11px] font-mono text-slate-400">
+              <span class="text-[11px] font-mono text-slate-400 shrink-0">
                 @{{ appStore.currentUser?.username }}
               </span>
             </div>
@@ -201,5 +239,36 @@ onMounted(() => {
 
     <!-- Global Program Update Modal (Online & Offline) -->
     <UpdateModal />
+
+    <!-- Global Image Lightbox Preview Modal -->
+    <div
+      v-if="appStore.imagePreviewOpen"
+      @click.self="appStore.closeImagePreview"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-xs p-4"
+    >
+      <div
+        class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-3xl w-full overflow-hidden"
+      >
+        <div
+          class="px-5 py-3.5 bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between text-xs"
+        >
+          <h3 class="font-black text-sm">{{ appStore.imagePreviewTitle }}</h3>
+          <button
+            type="button"
+            @click="appStore.closeImagePreview"
+            class="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+          >
+            <X class="w-4 h-4" />
+          </button>
+        </div>
+        <div class="p-4 flex items-center justify-center bg-slate-950/5 max-h-[80vh] overflow-auto">
+          <img
+            :src="appStore.imagePreviewSrc"
+            :alt="appStore.imagePreviewTitle"
+            class="max-h-[72vh] w-auto object-contain rounded-xl shadow-md"
+          />
+        </div>
+      </div>
+    </div>
   </div>
 </template>

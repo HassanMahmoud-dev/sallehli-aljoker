@@ -1,9 +1,11 @@
 import { app } from 'electron'
 import { join } from 'path'
-import { existsSync, mkdirSync, copyFileSync } from 'fs'
+import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'fs'
+import { scryptSync, createHmac, timingSafeEqual } from 'crypto'
 import { createRequire } from 'module'
 import type {
   User,
+  UserRole,
   LoginPayload,
   AuthResponse,
   Customer,
@@ -15,10 +17,15 @@ import type {
   TicketPartItem,
   TreasuryTransaction,
   CenterSettings,
-  DashboardStats
+  DashboardStats,
+  FinancialReportData,
+  TechnicianStatementItem
 } from '../shared/types'
 
 const requireModule = createRequire(import.meta.url)
+
+const PASSWORD_SALT = 'sallehli_aljoker_salt_v1_2026'
+const LICENSE_HMAC_SECRET = 'sallehli_aljoker_license_secret_key_v1'
 
 interface StatementLike {
   run: (...params: unknown[]) => { changes: number | bigint; lastInsertRowid: number | bigint }
@@ -34,6 +41,46 @@ interface DatabaseLike {
 
 let db: DatabaseLike
 let dbFilePath = ''
+
+function hashPassword(password: string): string {
+  const derived = scryptSync(password, PASSWORD_SALT, 32).toString('hex')
+  return `scrypt:${derived}`
+}
+
+function verifyPassword(password: string, storedHash: string): { valid: boolean; needsUpgrade: boolean } {
+  if (storedHash.startsWith('scrypt:')) {
+    const expectedHex = storedHash.slice('scrypt:'.length)
+    const actualHex = scryptSync(password, PASSWORD_SALT, 32).toString('hex')
+    try {
+      const valid = timingSafeEqual(Buffer.from(expectedHex, 'hex'), Buffer.from(actualHex, 'hex'))
+      return { valid, needsUpgrade: false }
+    } catch {
+      return { valid: false, needsUpgrade: false }
+    }
+  }
+  const valid = storedHash === password
+  return { valid, needsUpgrade: valid }
+}
+
+function signSubscription(username: string, role: string, subscriptionEnd: string | null): string {
+  const payload = `${username.trim().toLowerCase()}|${role}|${subscriptionEnd || ''}`
+  return createHmac('sha256', LICENSE_HMAC_SECRET).update(payload).digest('hex')
+}
+
+function parseJsonArray(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.filter((x) => typeof x === 'string')
+  if (typeof raw === 'string' && raw.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        return parsed.filter((x) => typeof x === 'string')
+      }
+    } catch {
+      return []
+    }
+  }
+  return []
+}
 
 function createDatabaseConnection(filePath: string): DatabaseLike {
   try {
@@ -68,6 +115,14 @@ export function getDatabasePath(): string {
   return dbFilePath
 }
 
+export function getDefaultAutoBackupDir(): string {
+  const dir = join(app.getPath('userData'), 'backups')
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  return dir
+}
+
 export function initDatabase(): void {
   const userDataDir = app.getPath('userData')
   if (!existsSync(userDataDir)) {
@@ -76,7 +131,86 @@ export function initDatabase(): void {
   dbFilePath = join(userDataDir, 'sallehli_aljoker.sqlite')
   db = createDatabaseConnection(dbFilePath)
   createTables()
+  runMigrations()
   seedDefaults()
+}
+
+function ensureColumn(tableName: string, columnName: string, columnDef: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>
+  const exists = cols.some((c) => c.name === columnName)
+  if (!exists) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDef};`)
+  }
+}
+
+function runMigrations(): void {
+  // 1. Upgrade users table if old CHECK constraint only allowed 3 roles
+  const userTableMeta = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'")
+    .get() as { sql?: string } | undefined
+
+  if (userTableMeta?.sql && !userTableMeta.sql.includes('receptionist')) {
+    runTransaction(() => {
+      db.exec(`
+        CREATE TABLE users_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          full_name TEXT NOT NULL,
+          phone TEXT DEFAULT '',
+          role TEXT NOT NULL CHECK(role IN ('super_admin', 'owner', 'tenant', 'receptionist', 'cashier', 'storekeeper')),
+          is_active INTEGER NOT NULL DEFAULT 1,
+          subscription_start TEXT DEFAULT NULL,
+          subscription_end TEXT DEFAULT NULL,
+          subscription_sig TEXT DEFAULT '',
+          notes TEXT DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        );
+        INSERT INTO users_new (id, username, password_hash, full_name, phone, role, is_active, subscription_start, subscription_end, notes, created_at)
+        SELECT id, username, password_hash, full_name, phone, role, is_active, subscription_start, subscription_end, notes, created_at FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+      `)
+    })
+  } else {
+    ensureColumn('users', 'subscription_sig', "TEXT DEFAULT ''")
+  }
+
+  // 2. Ensure new image columns across tables
+  ensureColumn('spare_parts', 'image_base64', "TEXT DEFAULT ''")
+  ensureColumn('technicians', 'avatar_base64', "TEXT DEFAULT ''")
+  ensureColumn('customer_appliances', 'warranty_image', "TEXT DEFAULT ''")
+  ensureColumn('customer_appliances', 'fault_images', "TEXT DEFAULT '[]'")
+  ensureColumn('maintenance_tickets', 'warranty_image', "TEXT DEFAULT ''")
+  ensureColumn('maintenance_tickets', 'fault_images', "TEXT DEFAULT '[]'")
+
+  // 3. Backfill subscription signatures & hash any unhashed passwords
+  const allUsers = db
+    .prepare(
+      'SELECT id, username, password_hash, role, subscription_end, subscription_sig FROM users'
+    )
+    .all() as Array<{
+    id: number
+    username: string
+    password_hash: string
+    role: string
+    subscription_end: string | null
+    subscription_sig: string | null
+  }>
+
+  for (const u of allUsers) {
+    const newHash = u.password_hash.startsWith('scrypt:')
+      ? u.password_hash
+      : hashPassword(u.password_hash)
+    const sig = u.subscription_sig || signSubscription(u.username, u.role, u.subscription_end)
+    if (newHash !== u.password_hash || sig !== u.subscription_sig) {
+      db.prepare('UPDATE users SET password_hash = ?, subscription_sig = ? WHERE id = ?').run(
+        newHash,
+        sig,
+        u.id
+      )
+    }
+  }
 }
 
 function createTables(): void {
@@ -87,10 +221,11 @@ function createTables(): void {
       password_hash TEXT NOT NULL,
       full_name TEXT NOT NULL,
       phone TEXT DEFAULT '',
-      role TEXT NOT NULL CHECK(role IN ('super_admin', 'owner', 'tenant')),
+      role TEXT NOT NULL CHECK(role IN ('super_admin', 'owner', 'tenant', 'receptionist', 'cashier', 'storekeeper')),
       is_active INTEGER NOT NULL DEFAULT 1,
       subscription_start TEXT DEFAULT NULL,
       subscription_end TEXT DEFAULT NULL,
+      subscription_sig TEXT DEFAULT '',
       notes TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
     );
@@ -121,6 +256,8 @@ function createTables(): void {
       notes TEXT DEFAULT '',
       last_warranty_end TEXT DEFAULT NULL,
       last_ticket_number TEXT DEFAULT NULL,
+      warranty_image TEXT DEFAULT '',
+      fault_images TEXT DEFAULT '[]',
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
       FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
     );
@@ -134,6 +271,7 @@ function createTables(): void {
       base_salary REAL NOT NULL DEFAULT 0,
       is_active INTEGER NOT NULL DEFAULT 1,
       notes TEXT DEFAULT '',
+      avatar_base64 TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
     );
 
@@ -149,6 +287,7 @@ function createTables(): void {
       min_quantity INTEGER NOT NULL DEFAULT 3,
       location TEXT DEFAULT '',
       notes TEXT DEFAULT '',
+      image_base64 TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
     );
 
@@ -187,6 +326,8 @@ function createTables(): void {
       warranty_end_date TEXT DEFAULT NULL,
       is_under_previous_warranty INTEGER NOT NULL DEFAULT 0,
       previous_ticket_number TEXT DEFAULT NULL,
+      warranty_image TEXT DEFAULT '',
+      fault_images TEXT DEFAULT '[]',
       notes TEXT DEFAULT '',
       completed_at TEXT DEFAULT NULL,
       delivered_at TEXT DEFAULT NULL,
@@ -245,14 +386,17 @@ function seedDefaults(): void {
     .get('admin') as { id: number } | undefined
 
   if (!existingAdmin) {
+    const hashed = hashPassword('8520')
+    const sig = signSubscription('admin', 'super_admin', null)
     db.prepare(
-      `INSERT INTO users (username, password_hash, full_name, phone, role, is_active, notes)
-       VALUES (?, ?, ?, ?, 'super_admin', 1, ?)`
+      `INSERT INTO users (username, password_hash, full_name, phone, role, is_active, subscription_sig, notes)
+       VALUES (?, ?, ?, ?, 'super_admin', 1, ?, ?)`
     ).run(
       'admin',
-      '8520',
+      hashed,
       'السوبر أدمن (مالك النظام)',
       '01000000000',
+      sig,
       'الحساب الرئيسي لمالك البرنامج بالكامل'
     )
   }
@@ -260,7 +404,8 @@ function seedDefaults(): void {
   // 2. Ensure default Center Settings exist
   const defaultSettings: CenterSettings = {
     center_name: 'مركز صلحلي للصيانة المعتمدة',
-    center_subtitle: 'صيانة جميع الأجهزة المنزلية والكهربائية (غسالات - ثلاجات - ديب فريزر - تكييفات - بوتاجازات - سخانات)',
+    center_subtitle:
+      'صيانة جميع الأجهزة المنزلية والكهربائية (غسالات - ثلاجات - ديب فريزر - تكييفات - بوتاجازات - سخانات)',
     phone1: '01012345678',
     phone2: '01112345678',
     whatsapp: '201012345678',
@@ -271,16 +416,21 @@ function seedDefaults(): void {
     default_warranty_months: 6,
     warranty_terms:
       '1. يشمل الضمان قطع الغيار المستبدلة والعطل الذي تم إصلاحه فقط خلال فترة الضمان المحددة.\n2. لا يشمل الضمان الأعطال الناتجة عن سوء الاستخدام أو تذبذب التيار الكهربائي أو الكسر.\n3. يرجى الاحتفاظ بهذه الفاتورة لتقديمها عند طلب الصيانة بالضمان.',
-    receipt_footer: 'شكراً لثقتكم في مركز صلحلي - خدمتكم شرف لنا على مدار الساعة'
+    receipt_footer: 'شكراً لثقتكم في مركز صلحلي - خدمتكم شرف لنا على مدار الساعة',
+    update_url: 'HassanMahmoud-dev/sallehli-aljoker',
+    auto_backup_enabled: 1,
+    auto_backup_dir: getDefaultAutoBackupDir(),
+    auto_backup_keep_count: 10
   }
 
   const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
   for (const [k, v] of Object.entries(defaultSettings)) {
-    insertSetting.run(k, String(v))
+    insertSetting.run(k, String(v ?? ''))
   }
 
   // 3. Seed sample operational data if no technicians or parts exist yet
-  const techCount = (db.prepare('SELECT COUNT(*) as cnt FROM technicians').get() as { cnt: number }).cnt
+  const techCount = (db.prepare('SELECT COUNT(*) as cnt FROM technicians').get() as { cnt: number })
+    .cnt
   if (techCount === 0) {
     db.prepare(
       `INSERT INTO technicians (name, phone, specialty, commission_rate, base_salary, is_active, notes)
@@ -291,7 +441,9 @@ function seedDefaults(): void {
     ).run()
   }
 
-  const partsCount = (db.prepare('SELECT COUNT(*) as cnt FROM spare_parts').get() as { cnt: number }).cnt
+  const partsCount = (
+    db.prepare('SELECT COUNT(*) as cnt FROM spare_parts').get() as { cnt: number }
+  ).cnt
   if (partsCount === 0) {
     db.prepare(
       `INSERT INTO spare_parts (code, name, category, brand, purchase_price, selling_price, quantity, min_quantity, location)
@@ -306,7 +458,8 @@ function seedDefaults(): void {
     ).run()
   }
 
-  const custCount = (db.prepare('SELECT COUNT(*) as cnt FROM customers').get() as { cnt: number }).cnt
+  const custCount = (db.prepare('SELECT COUNT(*) as cnt FROM customers').get() as { cnt: number })
+    .cnt
   if (custCount === 0) {
     db.prepare(
       `INSERT INTO customers (name, phone, phone2, area, address, notes)
@@ -363,29 +516,56 @@ function seedDefaults(): void {
 }
 
 // ==========================================
-// 1. AUTH & LICENSING (Super Admin / Owner / Tenant)
+// 1. AUTH & LICENSING (Super Admin / Owner / Tenant / Staff Roles)
 // ==========================================
 
 export function loginUser(payload: LoginPayload): AuthResponse {
   const userRow = db
     .prepare(
       `SELECT id, username, password_hash, full_name, phone, role, is_active,
-              subscription_start, subscription_end, notes, created_at
+              subscription_start, subscription_end, subscription_sig, notes, created_at
        FROM users WHERE username = ?`
     )
-    .get(payload.username.trim()) as (User & { password_hash: string }) | undefined
+    .get(payload.username.trim()) as
+    | (User & { password_hash: string; subscription_sig?: string })
+    | undefined
 
-  if (!userRow || userRow.password_hash !== payload.password) {
+  if (!userRow) {
     return {
       success: false,
       message: 'اسم المستخدم أو كلمة المرور غير صحيحة'
     }
   }
 
+  const { valid, needsUpgrade } = verifyPassword(payload.password, userRow.password_hash)
+  if (!valid) {
+    return {
+      success: false,
+      message: 'اسم المستخدم أو كلمة المرور غير صحيحة'
+    }
+  }
+
+  if (needsUpgrade) {
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(
+      hashPassword(payload.password),
+      userRow.id
+    )
+  }
+
   if (!userRow.is_active) {
     return {
       success: false,
       message: 'هذا الحساب موقوف حالياً. يرجى التواصل مع مالك البرنامج (السوبر أدمن).'
+    }
+  }
+
+  // Verify digital signature of role & subscription_end to prevent SQLite tampering
+  const expectedSig = signSubscription(userRow.username, userRow.role, userRow.subscription_end)
+  if (userRow.subscription_sig && userRow.subscription_sig !== expectedSig) {
+    return {
+      success: false,
+      message:
+        'تم اكتشاف تلاعب غير مصرح به في بيانات الترخيص أو صلاحية الحساب. يرجى مراجعة السوبر أدمن.'
     }
   }
 
@@ -417,7 +597,7 @@ export function loginUser(payload: LoginPayload): AuthResponse {
     }
   }
 
-  const { password_hash: _, ...safeUser } = userRow
+  const { password_hash: _, subscription_sig: __, ...safeUser } = userRow
   return {
     success: true,
     user: safeUser,
@@ -435,37 +615,46 @@ export function listUsers(): User[] {
 }
 
 export function saveUser(data: Partial<User> & { password?: string }): User {
+  const username = data.username?.trim() || ''
+  const role: UserRole = data.role || 'tenant'
+  const subEnd = role === 'tenant' ? data.subscription_end || null : null
+  const subStart = role === 'tenant' ? data.subscription_start || null : null
+  const sig = signSubscription(username, role, subEnd)
+
   if (data.id) {
     if (data.password && data.password.trim() !== '') {
+      const hashed = hashPassword(data.password.trim())
       db.prepare(
         `UPDATE users SET username = ?, password_hash = ?, full_name = ?, phone = ?, role = ?,
-         is_active = ?, subscription_start = ?, subscription_end = ?, notes = ?
+         is_active = ?, subscription_start = ?, subscription_end = ?, subscription_sig = ?, notes = ?
          WHERE id = ?`
       ).run(
-        data.username?.trim(),
-        data.password.trim(),
+        username,
+        hashed,
         data.full_name?.trim(),
         data.phone || '',
-        data.role || 'tenant',
+        role,
         data.is_active ?? 1,
-        data.subscription_start || null,
-        data.subscription_end || null,
+        subStart,
+        subEnd,
+        sig,
         data.notes || '',
         data.id
       )
     } else {
       db.prepare(
         `UPDATE users SET username = ?, full_name = ?, phone = ?, role = ?,
-         is_active = ?, subscription_start = ?, subscription_end = ?, notes = ?
+         is_active = ?, subscription_start = ?, subscription_end = ?, subscription_sig = ?, notes = ?
          WHERE id = ?`
       ).run(
-        data.username?.trim(),
+        username,
         data.full_name?.trim(),
         data.phone || '',
-        data.role || 'tenant',
+        role,
         data.is_active ?? 1,
-        data.subscription_start || null,
-        data.subscription_end || null,
+        subStart,
+        subEnd,
+        sig,
         data.notes || '',
         data.id
       )
@@ -476,20 +665,22 @@ export function saveUser(data: Partial<User> & { password?: string }): User {
       )
       .get(data.id) as User
   } else {
+    const hashed = hashPassword(data.password?.trim() || '1234')
     const info = db
       .prepare(
-        `INSERT INTO users (username, password_hash, full_name, phone, role, is_active, subscription_start, subscription_end, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO users (username, password_hash, full_name, phone, role, is_active, subscription_start, subscription_end, subscription_sig, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
-        data.username?.trim(),
-        data.password?.trim() || '1234',
+        username,
+        hashed,
         data.full_name?.trim(),
         data.phone || '',
-        data.role || 'tenant',
+        role,
         data.is_active ?? 1,
-        data.subscription_start || null,
-        data.subscription_end || null,
+        subStart,
+        subEnd,
+        sig,
         data.notes || ''
       )
     return db
@@ -511,8 +702,24 @@ export function deleteUser(id: number): void {
 }
 
 // ==========================================
-// 2. CUSTOMERS & APPLIANCES
+// 2. CUSTOMERS & APPLIANCES & IMAGES
 // ==========================================
+
+function normalizeApplianceRow(row: Record<string, unknown>): CustomerAppliance {
+  return {
+    ...(row as unknown as CustomerAppliance),
+    warranty_image: String(row.warranty_image || ''),
+    fault_images: parseJsonArray(row.fault_images)
+  }
+}
+
+function normalizeTicketRow(row: Record<string, unknown>): MaintenanceTicket {
+  return {
+    ...(row as unknown as MaintenanceTicket),
+    warranty_image: String(row.warranty_image || ''),
+    fault_images: parseJsonArray(row.fault_images)
+  }
+}
 
 export function listCustomers(search = ''): Customer[] {
   const q = `%${search.trim()}%`
@@ -540,15 +747,19 @@ export function findCustomerByPhone(phone: string): {
 
   if (!customer) return { customer: null, appliances: [], previousTickets: [] }
 
-  const appliances = db
+  const rawAppliances = db
     .prepare('SELECT * FROM customer_appliances WHERE customer_id = ? ORDER BY id DESC')
-    .all(customer.id) as CustomerAppliance[]
+    .all(customer.id) as Record<string, unknown>[]
 
-  const previousTickets = db
-    .prepare('SELECT * FROM maintenance_tickets WHERE customer_id = ? ORDER BY id DESC LIMIT 10')
-    .all(customer.id) as MaintenanceTicket[]
+  const rawTickets = db
+    .prepare('SELECT * FROM maintenance_tickets WHERE customer_id = ? ORDER BY id DESC LIMIT 20')
+    .all(customer.id) as Record<string, unknown>[]
 
-  return { customer, appliances, previousTickets }
+  return {
+    customer,
+    appliances: rawAppliances.map(normalizeApplianceRow),
+    previousTickets: rawTickets.map(normalizeTicketRow)
+  }
 }
 
 export function saveCustomer(data: Partial<Customer>): Customer {
@@ -591,9 +802,116 @@ export function deleteCustomer(id: number): void {
 }
 
 export function getCustomerAppliances(customerId: number): CustomerAppliance[] {
-  return db
+  const rows = db
     .prepare('SELECT * FROM customer_appliances WHERE customer_id = ? ORDER BY id DESC')
-    .all(customerId) as CustomerAppliance[]
+    .all(customerId) as Record<string, unknown>[]
+  return rows.map(normalizeApplianceRow)
+}
+
+export function saveCustomerAppliance(data: Partial<CustomerAppliance>): CustomerAppliance {
+  const faultImagesJson = JSON.stringify(Array.isArray(data.fault_images) ? data.fault_images : [])
+  const warrantyImg = data.warranty_image || ''
+
+  if (data.id) {
+    db.prepare(
+      `UPDATE customer_appliances
+       SET appliance_type = ?, brand = ?, model = ?, serial_number = ?, notes = ?,
+           last_warranty_end = ?, last_ticket_number = ?, warranty_image = ?, fault_images = ?
+       WHERE id = ?`
+    ).run(
+      data.appliance_type?.trim() || '',
+      data.brand?.trim() || '',
+      data.model?.trim() || '',
+      data.serial_number?.trim() || '',
+      data.notes?.trim() || '',
+      data.last_warranty_end || null,
+      data.last_ticket_number || null,
+      warrantyImg,
+      faultImagesJson,
+      data.id
+    )
+    const row = db.prepare('SELECT * FROM customer_appliances WHERE id = ?').get(data.id) as Record<
+      string,
+      unknown
+    >
+    return normalizeApplianceRow(row)
+  } else {
+    const info = db
+      .prepare(
+        `INSERT INTO customer_appliances (
+          customer_id, appliance_type, brand, model, serial_number, notes,
+          last_warranty_end, last_ticket_number, warranty_image, fault_images
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        data.customer_id,
+        data.appliance_type?.trim() || '',
+        data.brand?.trim() || '',
+        data.model?.trim() || '',
+        data.serial_number?.trim() || '',
+        data.notes?.trim() || '',
+        data.last_warranty_end || null,
+        data.last_ticket_number || null,
+        warrantyImg,
+        faultImagesJson
+      )
+    const row = db
+      .prepare('SELECT * FROM customer_appliances WHERE id = ?')
+      .get(Number(info.lastInsertRowid)) as Record<string, unknown>
+    return normalizeApplianceRow(row)
+  }
+}
+
+export function deleteCustomerAppliance(id: number): void {
+  db.prepare('DELETE FROM customer_appliances WHERE id = ?').run(id)
+}
+
+export function updateTicketImages(payload: {
+  ticketId: number
+  warranty_image?: string
+  fault_images?: string[]
+}): MaintenanceTicket {
+  const faultImagesJson = JSON.stringify(
+    Array.isArray(payload.fault_images) ? payload.fault_images : []
+  )
+  const warrantyImg = payload.warranty_image || ''
+
+  db.prepare(
+    `UPDATE maintenance_tickets
+     SET warranty_image = ?, fault_images = ?, updated_at = datetime('now', 'localtime')
+     WHERE id = ?`
+  ).run(warrantyImg, faultImagesJson, payload.ticketId)
+
+  const raw = db
+    .prepare(
+      `SELECT mt.*, t.name as technician_name
+       FROM maintenance_tickets mt
+       LEFT JOIN technicians t ON t.id = mt.technician_id
+       WHERE mt.id = ?`
+    )
+    .get(payload.ticketId) as Record<string, unknown>
+
+  const ticket = normalizeTicketRow(raw)
+
+  // Also sync to matching customer_appliances record if present
+  if (ticket.customer_id && ticket.appliance_type && ticket.brand) {
+    db.prepare(
+      `UPDATE customer_appliances
+       SET warranty_image = CASE WHEN ? != '' THEN ? ELSE warranty_image END,
+           fault_images = CASE WHEN ? != '[]' THEN ? ELSE fault_images END
+       WHERE customer_id = ? AND appliance_type = ? AND brand = ?`
+    ).run(
+      warrantyImg,
+      warrantyImg,
+      faultImagesJson,
+      faultImagesJson,
+      ticket.customer_id,
+      ticket.appliance_type,
+      ticket.brand
+    )
+  }
+
+  return ticket
 }
 
 // ==========================================
@@ -626,7 +944,7 @@ export function saveTechnician(data: Partial<Technician>): Technician {
   if (data.id) {
     db.prepare(
       `UPDATE technicians
-       SET name = ?, phone = ?, specialty = ?, commission_rate = ?, base_salary = ?, is_active = ?, notes = ?
+       SET name = ?, phone = ?, specialty = ?, commission_rate = ?, base_salary = ?, is_active = ?, notes = ?, avatar_base64 = ?
        WHERE id = ?`
     ).run(
       data.name?.trim(),
@@ -636,14 +954,15 @@ export function saveTechnician(data: Partial<Technician>): Technician {
       Number(data.base_salary ?? 0),
       data.is_active ?? 1,
       data.notes?.trim() || '',
+      data.avatar_base64 || '',
       data.id
     )
     return db.prepare('SELECT * FROM technicians WHERE id = ?').get(data.id) as Technician
   } else {
     const info = db
       .prepare(
-        `INSERT INTO technicians (name, phone, specialty, commission_rate, base_salary, is_active, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO technicians (name, phone, specialty, commission_rate, base_salary, is_active, notes, avatar_base64)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         data.name?.trim(),
@@ -652,7 +971,8 @@ export function saveTechnician(data: Partial<Technician>): Technician {
         Number(data.commission_rate ?? 30),
         Number(data.base_salary ?? 0),
         data.is_active ?? 1,
-        data.notes?.trim() || ''
+        data.notes?.trim() || '',
+        data.avatar_base64 || ''
       )
     return db
       .prepare('SELECT * FROM technicians WHERE id = ?')
@@ -684,7 +1004,7 @@ export function saveSparePart(data: Partial<SparePart>): SparePart {
     db.prepare(
       `UPDATE spare_parts
        SET code = ?, name = ?, category = ?, brand = ?, purchase_price = ?, selling_price = ?,
-           quantity = ?, min_quantity = ?, location = ?, notes = ?
+           quantity = ?, min_quantity = ?, location = ?, notes = ?, image_base64 = ?
        WHERE id = ?`
     ).run(
       data.code?.trim(),
@@ -697,6 +1017,7 @@ export function saveSparePart(data: Partial<SparePart>): SparePart {
       Number(data.min_quantity ?? 3),
       data.location?.trim() || '',
       data.notes?.trim() || '',
+      data.image_base64 || '',
       data.id
     )
     return db.prepare('SELECT * FROM spare_parts WHERE id = ?').get(data.id) as SparePart
@@ -704,8 +1025,8 @@ export function saveSparePart(data: Partial<SparePart>): SparePart {
     const code = data.code?.trim() || `PT-${Date.now().toString().slice(-5)}`
     const info = db
       .prepare(
-        `INSERT INTO spare_parts (code, name, category, brand, purchase_price, selling_price, quantity, min_quantity, location, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO spare_parts (code, name, category, brand, purchase_price, selling_price, quantity, min_quantity, location, notes, image_base64)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         code,
@@ -717,7 +1038,8 @@ export function saveSparePart(data: Partial<SparePart>): SparePart {
         Number(data.quantity ?? 0),
         Number(data.min_quantity ?? 3),
         data.location?.trim() || '',
-        data.notes?.trim() || ''
+        data.notes?.trim() || '',
+        data.image_base64 || ''
       )
     return db
       .prepare('SELECT * FROM spare_parts WHERE id = ?')
@@ -848,7 +1170,8 @@ export function listTickets(filters?: {
   }
 
   sql += ' ORDER BY mt.id DESC'
-  const rows = db.prepare(sql).all(...params) as MaintenanceTicket[]
+  const rawRows = db.prepare(sql).all(...params) as Record<string, unknown>[]
+  const rows = rawRows.map(normalizeTicketRow)
 
   const getPartsStmt = db.prepare('SELECT * FROM ticket_parts WHERE ticket_id = ?')
   for (const row of rows) {
@@ -931,6 +1254,9 @@ export function saveTicket(
       warrantyEnd = null
     }
 
+    const warrantyImg = data.warranty_image || ''
+    const faultImagesJson = JSON.stringify(Array.isArray(data.fault_images) ? data.fault_images : [])
+
     let ticketId = data.id
     let ticketNumber = data.ticket_number || ''
     let previousPaid = 0
@@ -963,7 +1289,8 @@ export function saveTicket(
           labor_cost = ?, parts_total = ?, parts_cost_total = ?, discount = ?,
           total_amount = ?, paid_amount = ?, remaining_amount = ?, payment_method = ?,
           warranty_months = ?, warranty_start_date = ?, warranty_end_date = ?,
-          is_under_previous_warranty = ?, previous_ticket_number = ?, notes = ?,
+          is_under_previous_warranty = ?, previous_ticket_number = ?,
+          warranty_image = ?, fault_images = ?, notes = ?,
           completed_at = CASE WHEN ? IN ('repaired', 'delivered') AND completed_at IS NULL THEN datetime('now', 'localtime') ELSE completed_at END,
           delivered_at = CASE WHEN ? = 'delivered' AND delivered_at IS NULL THEN datetime('now', 'localtime') ELSE delivered_at END,
           updated_at = datetime('now', 'localtime')
@@ -1000,6 +1327,8 @@ export function saveTicket(
         warrantyEnd,
         data.is_under_previous_warranty ? 1 : 0,
         data.previous_ticket_number || null,
+        warrantyImg,
+        faultImagesJson,
         data.notes?.trim() || '',
         data.status || 'new',
         data.status || 'new',
@@ -1015,8 +1344,9 @@ export function saveTicket(
             service_type, status, priority, complaint, diagnosis, technician_id, scheduled_date,
             inspection_fee, labor_cost, parts_total, parts_cost_total, discount, total_amount,
             paid_amount, remaining_amount, payment_method, warranty_months,
-            warranty_start_date, warranty_end_date, is_under_previous_warranty, previous_ticket_number, notes
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            warranty_start_date, warranty_end_date, is_under_previous_warranty, previous_ticket_number,
+            warranty_image, fault_images, notes
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           ticketNumber,
@@ -1051,6 +1381,8 @@ export function saveTicket(
           warrantyEnd,
           data.is_under_previous_warranty ? 1 : 0,
           data.previous_ticket_number || null,
+          warrantyImg,
+          faultImagesJson,
           data.notes?.trim() || ''
         )
       ticketId = Number(info.lastInsertRowid)
@@ -1096,29 +1428,37 @@ export function saveTicket(
     // 5. Upsert Customer Appliance record for history & warranty tracking
     const existingAppliance = db
       .prepare(
-        `SELECT id FROM customer_appliances
+        `SELECT id, warranty_image, fault_images FROM customer_appliances
          WHERE customer_id = ? AND appliance_type = ? AND brand = ? LIMIT 1`
       )
       .get(customerId, data.appliance_type?.trim(), data.brand?.trim()) as
-      | { id: number }
+      | { id: number; warranty_image?: string; fault_images?: string }
       | undefined
 
     if (existingAppliance) {
+      const mergedWarrantyImg = warrantyImg || existingAppliance.warranty_image || ''
+      const mergedFaultImages =
+        faultImagesJson !== '[]' ? faultImagesJson : existingAppliance.fault_images || '[]'
       db.prepare(
         `UPDATE customer_appliances
-         SET model = ?, serial_number = ?, last_warranty_end = COALESCE(?, last_warranty_end), last_ticket_number = ?
+         SET model = ?, serial_number = ?, last_warranty_end = COALESCE(?, last_warranty_end),
+             last_ticket_number = ?, warranty_image = ?, fault_images = ?
          WHERE id = ?`
       ).run(
         data.model?.trim() || '',
         data.serial_number?.trim() || '',
         warrantyEnd,
         ticketNumber,
+        mergedWarrantyImg,
+        mergedFaultImages,
         existingAppliance.id
       )
     } else {
       db.prepare(
-        `INSERT INTO customer_appliances (customer_id, appliance_type, brand, model, serial_number, last_warranty_end, last_ticket_number)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO customer_appliances (
+          customer_id, appliance_type, brand, model, serial_number,
+          last_warranty_end, last_ticket_number, warranty_image, fault_images
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         customerId,
         data.appliance_type?.trim(),
@@ -1126,7 +1466,9 @@ export function saveTicket(
         data.model?.trim() || '',
         data.serial_number?.trim() || '',
         warrantyEnd,
-        ticketNumber
+        ticketNumber,
+        warrantyImg,
+        faultImagesJson
       )
     }
 
@@ -1144,14 +1486,16 @@ export function saveTicket(
       )
     }
 
-    const saved = db
+    const rawSaved = db
       .prepare(
         `SELECT mt.*, t.name as technician_name
          FROM maintenance_tickets mt
          LEFT JOIN technicians t ON t.id = mt.technician_id
          WHERE mt.id = ?`
       )
-      .get(ticketId) as MaintenanceTicket
+      .get(ticketId) as Record<string, unknown>
+
+    const saved = normalizeTicketRow(rawSaved)
     saved.parts = db
       .prepare('SELECT * FROM ticket_parts WHERE ticket_id = ?')
       .all(ticketId) as TicketPartItem[]
@@ -1175,7 +1519,7 @@ export function deleteTicket(id: number): void {
 }
 
 // ==========================================
-// 6. TREASURY & FINANCE
+// 6. TREASURY, MULTI-WALLET & ADVANCED REPORTS
 // ==========================================
 
 export function listTreasuryTransactions(): TreasuryTransaction[] {
@@ -1185,7 +1529,7 @@ export function listTreasuryTransactions(): TreasuryTransaction[] {
        FROM treasury_transactions tt
        LEFT JOIN maintenance_tickets mt ON mt.id = tt.ticket_id
        LEFT JOIN technicians tech ON tech.id = tt.technician_id
-       ORDER BY tt.id DESC LIMIT 250`
+       ORDER BY tt.id DESC LIMIT 300`
     )
     .all() as TreasuryTransaction[]
 }
@@ -1211,8 +1555,296 @@ export function addTreasuryTransaction(data: Partial<TreasuryTransaction>): Trea
     .get(Number(info.lastInsertRowid)) as TreasuryTransaction
 }
 
+export function transferTreasuryFunds(payload: {
+  fromMethod: string
+  toMethod: string
+  amount: number
+  notes?: string
+}): void {
+  const amt = Number(payload.amount || 0)
+  if (amt <= 0) throw new Error('يرجى إدخال مبلغ صحيح للتحويل')
+  if (payload.fromMethod === payload.toMethod) {
+    throw new Error('لا يمكن التحويل إلى نفس الخزينة / المحفظة')
+  }
+
+  runTransaction(() => {
+    const desc = payload.notes?.trim()
+      ? `تحويل بين الخزائن: ${payload.notes.trim()}`
+      : `تحويل رصيد داخلي بمبلغ ${amt} ج.م`
+
+    db.prepare(
+      `INSERT INTO treasury_transactions (transaction_type, category, amount, payment_method, description)
+       VALUES ('expense', 'تحويل بين الخزائن', ?, ?, ?)`
+    ).run(amt, payload.fromMethod, `${desc} (صادر)`)
+
+    db.prepare(
+      `INSERT INTO treasury_transactions (transaction_type, category, amount, payment_method, description)
+       VALUES ('income', 'تحويل بين الخزائن', ?, ?, ?)`
+    ).run(amt, payload.toMethod, `${desc} (وارد)`)
+  })
+}
+
+export function collectTicketReceivable(payload: {
+  ticketId: number
+  amount: number
+  paymentMethod: string
+  notes?: string
+}): MaintenanceTicket {
+  return runTransaction(() => {
+    const raw = db
+      .prepare('SELECT * FROM maintenance_tickets WHERE id = ?')
+      .get(payload.ticketId) as Record<string, unknown> | undefined
+    if (!raw) throw new Error('طلب الصيانة غير موجود')
+
+    const ticket = normalizeTicketRow(raw)
+    const collectAmt = Math.min(Number(payload.amount || 0), ticket.remaining_amount)
+    if (collectAmt <= 0) throw new Error('المبلغ المحصل يجب أن يكون أكبر من صفر')
+
+    const newPaid = ticket.paid_amount + collectAmt
+    const newRemaining = Math.max(0, ticket.total_amount - newPaid)
+
+    db.prepare(
+      `UPDATE maintenance_tickets
+       SET paid_amount = ?, remaining_amount = ?, payment_method = ?, updated_at = datetime('now', 'localtime')
+       WHERE id = ?`
+    ).run(newPaid, newRemaining, payload.paymentMethod || 'cash', ticket.id)
+
+    db.prepare(
+      `INSERT INTO treasury_transactions (transaction_type, category, amount, ticket_id, payment_method, description)
+       VALUES ('income', 'تحصيل مديونية عميل', ?, ?, ?, ?)`
+    ).run(
+      collectAmt,
+      ticket.id,
+      payload.paymentMethod || 'cash',
+      payload.notes?.trim() ||
+        `تحصيل متبقي من طلب صيانة ${ticket.ticket_number} - العميل: ${ticket.customer_name}`
+    )
+
+    const updated = db
+      .prepare('SELECT * FROM maintenance_tickets WHERE id = ?')
+      .get(ticket.id) as Record<string, unknown>
+    return normalizeTicketRow(updated)
+  })
+}
+
 export function deleteTreasuryTransaction(id: number): void {
   db.prepare('DELETE FROM treasury_transactions WHERE id = ?').run(id)
+}
+
+export function getFinancialReport(dateFrom?: string, dateTo?: string): FinancialReportData {
+  const today = new Date().toISOString().slice(0, 10)
+  const firstOfMonth = `${today.slice(0, 8)}01`
+  const from = dateFrom?.trim() || firstOfMonth
+  const to = dateTo?.trim() || today
+
+  // 1. All-time balances per payment method (including internal transfers)
+  const methods = ['cash', 'vodafone_cash', 'instapay', 'bank']
+  const balancesByMethod: Record<string, { income: number; expense: number; net: number }> = {}
+  const periodBalancesByMethod: Record<string, { income: number; expense: number; net: number }> = {}
+
+  for (const m of methods) {
+    balancesByMethod[m] = { income: 0, expense: 0, net: 0 }
+    periodBalancesByMethod[m] = { income: 0, expense: 0, net: 0 }
+  }
+
+  const allMethodRows = db
+    .prepare(
+      `SELECT payment_method, transaction_type, SUM(amount) as total
+       FROM treasury_transactions
+       GROUP BY payment_method, transaction_type`
+    )
+    .all() as Array<{ payment_method: string; transaction_type: string; total: number }>
+
+  for (const r of allMethodRows) {
+    const m = balancesByMethod[r.payment_method] || { income: 0, expense: 0, net: 0 }
+    if (r.transaction_type === 'income') {
+      m.income += Number(r.total || 0)
+    } else {
+      m.expense += Number(r.total || 0)
+    }
+    m.net = m.income - m.expense
+    balancesByMethod[r.payment_method] = m
+  }
+
+  const periodMethodRows = db
+    .prepare(
+      `SELECT payment_method, transaction_type, SUM(amount) as total
+       FROM treasury_transactions
+       WHERE date(created_at) BETWEEN ? AND ?
+       GROUP BY payment_method, transaction_type`
+    )
+    .all(from, to) as Array<{ payment_method: string; transaction_type: string; total: number }>
+
+  for (const r of periodMethodRows) {
+    const m = periodBalancesByMethod[r.payment_method] || { income: 0, expense: 0, net: 0 }
+    if (r.transaction_type === 'income') {
+      m.income += Number(r.total || 0)
+    } else {
+      m.expense += Number(r.total || 0)
+    }
+    m.net = m.income - m.expense
+    periodBalancesByMethod[r.payment_method] = m
+  }
+
+  // 2. Period income / expense / tech commissions (excluding internal transfers from profit calculation)
+  const totalIncome = (
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions
+         WHERE transaction_type = 'income' AND category != 'تحويل بين الخزائن'
+         AND date(created_at) BETWEEN ? AND ?`
+      )
+      .get(from, to) as { total: number }
+  ).total
+
+  const totalExpense = (
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions
+         WHERE transaction_type = 'expense' AND category != 'تحويل بين الخزائن'
+         AND date(created_at) BETWEEN ? AND ?`
+      )
+      .get(from, to) as { total: number }
+  ).total
+
+  const totalTechCommissions = (
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions
+         WHERE transaction_type = 'tech_commission'
+         AND date(created_at) BETWEEN ? AND ?`
+      )
+      .get(from, to) as { total: number }
+  ).total
+
+  // 3. Tickets metrics in period
+  const ticketAgg = db
+    .prepare(
+      `SELECT
+        COUNT(*) as ticketsCount,
+        COALESCE(SUM(CASE WHEN status IN ('repaired', 'delivered') THEN 1 ELSE 0 END), 0) as completedTicketsCount,
+        COALESCE(SUM(CASE WHEN status IN ('repaired', 'delivered') THEN parts_total ELSE 0 END), 0) as totalPartsRevenue,
+        COALESCE(SUM(CASE WHEN status IN ('repaired', 'delivered') THEN parts_cost_total ELSE 0 END), 0) as totalPartsCost,
+        COALESCE(SUM(CASE WHEN status IN ('repaired', 'delivered') THEN (inspection_fee + labor_cost - discount) ELSE 0 END), 0) as totalInspectionAndLabor
+       FROM maintenance_tickets
+       WHERE date(created_at) BETWEEN ? AND ?`
+    )
+    .get(from, to) as {
+    ticketsCount: number
+    completedTicketsCount: number
+    totalPartsRevenue: number
+    totalPartsCost: number
+    totalInspectionAndLabor: number
+  }
+
+  const rawReceivables = db
+    .prepare(
+      `SELECT mt.*, t.name as technician_name
+       FROM maintenance_tickets mt
+       LEFT JOIN technicians t ON t.id = mt.technician_id
+       WHERE mt.remaining_amount > 0 AND mt.status != 'cancelled'
+       ORDER BY mt.remaining_amount DESC`
+    )
+    .all() as Record<string, unknown>[]
+  const customerReceivables = rawReceivables.map(normalizeTicketRow)
+  const totalReceivables = customerReceivables.reduce((sum, t) => sum + t.remaining_amount, 0)
+
+  const totalPartsProfit = ticketAgg.totalPartsRevenue - ticketAgg.totalPartsCost
+  const netProfit = totalIncome - totalExpense - totalTechCommissions - ticketAgg.totalPartsCost
+
+  // 4. Technician Statements
+  const technicianStatements = db
+    .prepare(
+      `SELECT
+        tech.id, tech.name, tech.phone, tech.specialty, tech.avatar_base64,
+        tech.commission_rate, tech.base_salary,
+        COALESCE((SELECT COUNT(*) FROM maintenance_tickets mt
+          WHERE mt.technician_id = tech.id AND mt.status IN ('repaired', 'delivered')
+          AND date(mt.created_at) BETWEEN ? AND ?), 0) as completed_tickets_count,
+        COALESCE((SELECT SUM(mt.labor_cost + mt.inspection_fee) FROM maintenance_tickets mt
+          WHERE mt.technician_id = tech.id AND mt.status IN ('repaired', 'delivered')
+          AND date(mt.created_at) BETWEEN ? AND ?), 0) as period_labor_and_inspection,
+        COALESCE((SELECT SUM((mt.labor_cost + mt.inspection_fee) * (tech.commission_rate / 100.0)) FROM maintenance_tickets mt
+          WHERE mt.technician_id = tech.id AND mt.status IN ('repaired', 'delivered')
+          AND date(mt.created_at) BETWEEN ? AND ?), 0) as period_earned_commission,
+        COALESCE((SELECT SUM(tt.amount) FROM treasury_transactions tt
+          WHERE tt.technician_id = tech.id AND tt.transaction_type = 'tech_commission'
+          AND date(tt.created_at) BETWEEN ? AND ?), 0) as period_paid_commission,
+        COALESCE((SELECT SUM((mt.labor_cost + mt.inspection_fee) * (tech.commission_rate / 100.0)) FROM maintenance_tickets mt
+          WHERE mt.technician_id = tech.id AND mt.status IN ('repaired', 'delivered')), 0) as total_earned_commission,
+        COALESCE((SELECT SUM(tt.amount) FROM treasury_transactions tt
+          WHERE tt.technician_id = tech.id AND tt.transaction_type = 'tech_commission'), 0) as total_paid_commission
+       FROM technicians tech
+       ORDER BY tech.id ASC`
+    )
+    .all(from, to, from, to, from, to, from, to) as Array<
+    Omit<TechnicianStatementItem, 'remaining_balance'>
+  >
+
+  const statementsWithBalance: TechnicianStatementItem[] = technicianStatements.map((s) => ({
+    ...s,
+    remaining_balance: Math.max(
+      0,
+      Math.round((s.total_earned_commission || 0) - (s.total_paid_commission || 0))
+    )
+  }))
+
+  // 5. Top Appliances & Brands
+  const topAppliances = db
+    .prepare(
+      `SELECT appliance_type, COUNT(*) as count, COALESCE(SUM(total_amount), 0) as revenue
+       FROM maintenance_tickets
+       WHERE date(created_at) BETWEEN ? AND ?
+       GROUP BY appliance_type
+       ORDER BY count DESC LIMIT 10`
+    )
+    .all(from, to) as Array<{ appliance_type: string; count: number; revenue: number }>
+
+  const topBrands = db
+    .prepare(
+      `SELECT brand, COUNT(*) as count, COALESCE(SUM(total_amount), 0) as revenue
+       FROM maintenance_tickets
+       WHERE date(created_at) BETWEEN ? AND ?
+       GROUP BY brand
+       ORDER BY count DESC LIMIT 10`
+    )
+    .all(from, to) as Array<{ brand: string; count: number; revenue: number }>
+
+  const transactions = db
+    .prepare(
+      `SELECT tt.*, mt.ticket_number, tech.name as technician_name
+       FROM treasury_transactions tt
+       LEFT JOIN maintenance_tickets mt ON mt.id = tt.ticket_id
+       LEFT JOIN technicians tech ON tech.id = tt.technician_id
+       WHERE date(tt.created_at) BETWEEN ? AND ?
+       ORDER BY tt.id DESC`
+    )
+    .all(from, to) as TreasuryTransaction[]
+
+  return {
+    dateFrom: from,
+    dateTo: to,
+    summary: {
+      totalIncome,
+      totalExpense,
+      totalTechCommissions,
+      totalPartsRevenue: ticketAgg.totalPartsRevenue,
+      totalPartsCost: ticketAgg.totalPartsCost,
+      totalPartsProfit,
+      totalInspectionAndLabor: ticketAgg.totalInspectionAndLabor,
+      netProfit,
+      ticketsCount: ticketAgg.ticketsCount,
+      completedTicketsCount: ticketAgg.completedTicketsCount,
+      totalReceivables
+    },
+    balancesByMethod,
+    periodBalancesByMethod,
+    technicianStatements: statementsWithBalance,
+    customerReceivables,
+    topAppliances,
+    topBrands,
+    transactions
+  }
 }
 
 // ==========================================
@@ -1276,7 +1908,7 @@ export function getDashboardStats(): DashboardStats {
   const todayIncome = (
     db
       .prepare(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type = 'income' AND date(created_at) = ?`
+        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type = 'income' AND category != 'تحويل بين الخزائن' AND date(created_at) = ?`
       )
       .get(today) as { total: number }
   ).total
@@ -1284,7 +1916,7 @@ export function getDashboardStats(): DashboardStats {
   const todayExpense = (
     db
       .prepare(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type IN ('expense', 'tech_commission') AND date(created_at) = ?`
+        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type IN ('expense', 'tech_commission') AND category != 'تحويل بين الخزائن' AND date(created_at) = ?`
       )
       .get(today) as { total: number }
   ).total
@@ -1292,7 +1924,7 @@ export function getDashboardStats(): DashboardStats {
   const monthIncome = (
     db
       .prepare(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type = 'income' AND strftime('%Y-%m', created_at) = ?`
+        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type = 'income' AND category != 'تحويل بين الخزائن' AND strftime('%Y-%m', created_at) = ?`
       )
       .get(monthPrefix) as { total: number }
   ).total
@@ -1300,7 +1932,7 @@ export function getDashboardStats(): DashboardStats {
   const monthExpense = (
     db
       .prepare(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type = 'expense' AND strftime('%Y-%m', created_at) = ?`
+        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type = 'expense' AND category != 'تحويل بين الخزائن' AND strftime('%Y-%m', created_at) = ?`
       )
       .get(monthPrefix) as { total: number }
   ).total
@@ -1370,7 +2002,10 @@ export function getSettings(): CenterSettings {
     default_warranty_months: Number(map.default_warranty_months ?? 6),
     warranty_terms: map.warranty_terms || '',
     receipt_footer: map.receipt_footer || '',
-    update_url: map.update_url || 'HassanMahmoud-dev/sallehli-aljoker'
+    update_url: map.update_url || 'HassanMahmoud-dev/sallehli-aljoker',
+    auto_backup_enabled: Number(map.auto_backup_enabled ?? 1),
+    auto_backup_dir: map.auto_backup_dir || getDefaultAutoBackupDir(),
+    auto_backup_keep_count: Number(map.auto_backup_keep_count ?? 10)
   }
 }
 
@@ -1395,11 +2030,46 @@ export function createBackupToFile(destinationPath: string): void {
   copyFileSync(dbFilePath, destinationPath)
 }
 
-export function createPreUpdateBackup(): string {
-  const backupsDir = join(app.getPath('userData'), 'backups')
-  if (!existsSync(backupsDir)) {
-    mkdirSync(backupsDir, { recursive: true })
+export function runAutoBackup(): { success: boolean; filePath?: string } {
+  try {
+    const settings = getSettings()
+    if (!settings.auto_backup_enabled) {
+      return { success: false }
+    }
+    const targetDir = settings.auto_backup_dir || getDefaultAutoBackupDir()
+    if (!existsSync(targetDir)) {
+      mkdirSync(targetDir, { recursive: true })
+    }
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const backupFile = join(targetDir, `Sallehli-AutoBackup-${timestamp}.sqlite`)
+    createBackupToFile(backupFile)
+
+    // Prune older auto-backups exceeding keep count
+    const keepCount = Math.max(2, Number(settings.auto_backup_keep_count || 10))
+    const files = readdirSync(targetDir)
+      .filter((f) => f.startsWith('Sallehli-AutoBackup-') && f.endsWith('.sqlite'))
+      .map((f) => {
+        const full = join(targetDir, f)
+        return { full, mtime: statSync(full).mtimeMs }
+      })
+      .sort((a, b) => b.mtime - a.mtime)
+
+    for (let i = keepCount; i < files.length; i++) {
+      try {
+        unlinkSync(files[i].full)
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+
+    return { success: true, filePath: backupFile }
+  } catch {
+    return { success: false }
   }
+}
+
+export function createPreUpdateBackup(): string {
+  const backupsDir = getDefaultAutoBackupDir()
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const backupPath = join(backupsDir, `Sallehli-PreUpdate-${timestamp}.sqlite`)
   createBackupToFile(backupPath)
@@ -1423,4 +2093,5 @@ export function restoreBackupFromFile(sourcePath: string): void {
   db.close()
   copyFileSync(sourcePath, dbFilePath)
   db = createDatabaseConnection(dbFilePath)
+  runMigrations()
 }

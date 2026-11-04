@@ -1,6 +1,6 @@
 {
   "name": "sallehli",
-  "version": "1.0.1",
+  "version": "1.0.5",
   "description": "صلحلي - نظام إدارة مراكز صيانة الأجهزة الكهربائية والمنزلية",
   "main": "./out/main/index.js",
   "author": "شركة الجوكر تك (Al-Joker Tech)",
@@ -10,8 +10,9 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps",
-    "build:win": "electron-vite build && electron-builder --win --x64",
-    "build:dir": "electron-vite build && electron-builder --dir --x64"
+    "sync-version": "powershell -ExecutionPolicy Bypass -File build/sync-installer-version.ps1",
+    "build:win": "npm run sync-version && electron-vite build && electron-builder --win --x64",
+    "build:dir": "npm run sync-version && electron-vite build && electron-builder --dir --x64"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",

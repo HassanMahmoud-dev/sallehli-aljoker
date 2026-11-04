@@ -110,5 +110,20 @@ export const USER_ROLE_LABELS: Record<string, { label: string; desc: string; bad
     label: 'مستأجر البرنامج (اشتراك محدد بمدة)',
     desc: 'صلاحية إدارة المركز خلال فترة الإيجار المحددة',
     badge: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+  },
+  receptionist: {
+    label: 'موظف استقبال وخدمة عملاء',
+    desc: 'تسجيل البلاغات والعملاء والأجهزة بدون رؤية الخزينة والأرباح',
+    badge: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300'
+  },
+  cashier: {
+    label: 'كاشير / محاسب مالي',
+    desc: 'إدارة البلاغات والعملاء والخزينة والتقارير المالية',
+    badge: 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300'
+  },
+  storekeeper: {
+    label: 'أمين مخزن قطع الغيار',
+    desc: 'إدارة مخزن قطع الغيار وعهدة الفنيين وطلبات الصيانة',
+    badge: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300'
   }
 }
