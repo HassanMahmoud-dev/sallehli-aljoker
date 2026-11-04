@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { plain } from '@renderer/utils/plain'
 import { ref, onMounted, watch } from 'vue'
 import type { SparePart, InventoryMovement, Technician } from '@shared/types'
 import { PART_CATEGORIES } from '@renderer/constants/appliances'
@@ -120,14 +121,14 @@ async function handleSavePart(): Promise<void> {
     alert('يرجى إدخال اسم قطعة الغيار')
     return
   }
-  await window.api.saveSparePart(partForm.value)
+  await window.api.saveSparePart(plain(partForm.value))
   partModalOpen.value = false
   await loadData()
 }
 
 async function handleRecordMovement(): Promise<void> {
   try {
-    await window.api.recordInventoryMovement(moveForm.value)
+    await window.api.recordInventoryMovement(plain(moveForm.value))
     moveModalOpen.value = false
     await loadData()
   } catch (err: unknown) {

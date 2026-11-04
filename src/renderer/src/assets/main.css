@@ -49,3 +49,30 @@
     display: none !important;
   }
 }
+
+
+/* Required vs optional fields */
+input[required]:not([type='checkbox']):not([type='radio']):not([type='file']),
+select[required],
+textarea[required],
+.field-required {
+  background-color: #fffbeb !important; /* amber-50 */
+  border-color: #f59e0b !important; /* amber-500 */
+  box-shadow: inset -3px 0 0 #f59e0b;
+}
+input[required]:focus,
+select[required]:focus,
+textarea[required]:focus,
+.field-required:focus {
+  outline: 2px solid rgba(245, 158, 11, 0.45);
+}
+.dark input[required]:not([type='checkbox']):not([type='radio']):not([type='file']),
+.dark select[required],
+.dark textarea[required],
+.dark .field-required {
+  background-color: rgba(120, 53, 15, 0.28) !important;
+  border-color: #d97706 !important;
+}
+label.label-required::after {
+  content: '';
+}

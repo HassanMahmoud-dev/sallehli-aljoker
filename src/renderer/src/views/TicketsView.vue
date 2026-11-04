@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { plain } from '@renderer/utils/plain'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
@@ -366,9 +367,7 @@ async function handleSaveTicket(andPrint = false): Promise<void> {
   }
 
   try {
-    const saved = await window.api.saveTicket({
-      ...form.value
-    })
+    const saved = await window.api.saveTicket(plain({ ...form.value }))
     modalOpen.value = false
     await loadData()
     if (andPrint) {

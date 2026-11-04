@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { plain } from '@renderer/utils/plain'
 import { ref, computed, onMounted } from 'vue'
 import type { TreasuryTransaction, DashboardStats } from '@shared/types'
 import { PAYMENT_METHODS } from '@renderer/constants/appliances'
@@ -101,7 +102,7 @@ async function handleSaveTransaction(): Promise<void> {
     alert('يرجى إدخال المبلغ والبيان')
     return
   }
-  await window.api.addTreasuryTransaction(form.value)
+  await window.api.addTreasuryTransaction(plain(form.value))
   modalOpen.value = false
   await loadData()
 }
@@ -116,7 +117,7 @@ async function handleTransferFunds(): Promise<void> {
     return
   }
   try {
-    await window.api.transferTreasuryFunds({ ...transferForm.value })
+    await window.api.transferTreasuryFunds(plain({ ...transferForm.value }))
     transferModalOpen.value = false
     await loadData()
   } catch (err: unknown) {

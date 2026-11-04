@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { plain } from '@renderer/utils/plain'
 import { ref, onMounted } from 'vue'
 import { useAppStore } from '@renderer/stores/appStore'
 import jokerTechLogo from '@renderer/assets/joker-tech-logo.png'
@@ -38,7 +39,7 @@ function handleLogoUpload(e: Event): void {
 }
 
 async function handleSaveSettings(): Promise<void> {
-  await window.api.saveSettings(form.value)
+  await window.api.saveSettings(plain(form.value))
   await appStore.loadSettings()
   statusMessage.value = 'تم حفظ إعدادات المركز وقوالب الطباعة بنجاح!'
   setTimeout(() => {
@@ -57,14 +58,14 @@ async function handleChooseAutoBackupDir(): Promise<void> {
   const res = await window.api.chooseBackupDir()
   if (res.success && res.dirPath) {
     form.value.auto_backup_dir = res.dirPath
-    await window.api.saveSettings(form.value)
+    await window.api.saveSettings(plain(form.value))
     await appStore.loadSettings()
     statusMessage.value = `تم تحديث مجلد النسخ الاحتياطي التلقائي إلى: ${res.dirPath}`
   }
 }
 
 async function handleRunAutoBackupNow(): Promise<void> {
-  await window.api.saveSettings(form.value)
+  await window.api.saveSettings(plain(form.value))
   const res = await window.api.runAutoBackupNow()
   if (res.success) {
     statusMessage.value = `تم أخذ نسخة احتياطية تلقائية فورية في: ${res.filePath}`

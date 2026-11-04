@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { plain } from '@renderer/utils/plain'
 import { ref, onMounted } from 'vue'
 import type { Technician } from '@shared/types'
 import { useAppStore } from '@renderer/stores/appStore'
@@ -68,7 +69,7 @@ async function handleSaveTechnician(): Promise<void> {
     alert('يرجى إدخال اسم الفني ورقم الهاتف')
     return
   }
-  await window.api.saveTechnician(form.value)
+  await window.api.saveTechnician(plain(form.value))
   modalOpen.value = false
   await loadTechnicians()
 }

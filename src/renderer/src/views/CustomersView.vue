@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { plain } from '@renderer/utils/plain'
 import { ref, onMounted, watch } from 'vue'
 import type { Customer, CustomerAppliance, MaintenanceTicket } from '@shared/types'
 import { APPLIANCE_TYPES, APPLIANCE_BRANDS } from '@renderer/constants/appliances'
@@ -138,7 +139,7 @@ function removeApplianceFaultImage(idx: number): void {
 }
 
 async function handleSaveAppliance(): Promise<void> {
-  await window.api.saveCustomerAppliance(applianceForm.value)
+  await window.api.saveCustomerAppliance(plain(applianceForm.value))
   applianceModalOpen.value = false
   await refreshCustomerHistory()
 }
@@ -207,7 +208,7 @@ async function handleSaveCustomer(): Promise<void> {
     alert('يرجى إدخال اسم العميل ورقم الهاتف')
     return
   }
-  await window.api.saveCustomer(form.value)
+  await window.api.saveCustomer(plain(form.value))
   modalOpen.value = false
   await loadCustomers()
 }

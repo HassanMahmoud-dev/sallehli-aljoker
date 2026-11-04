@@ -1,6 +1,6 @@
 {
   "name": "sallehli",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "صلحلي - نظام إدارة مراكز صيانة الأجهزة الكهربائية والمنزلية",
   "main": "./out/main/index.js",
   "author": "شركة الجوكر تك (Al-Joker Tech)",
