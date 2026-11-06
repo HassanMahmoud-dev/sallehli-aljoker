@@ -209,7 +209,7 @@ onUnmounted(() => {
           <div>
             <div class="flex items-center gap-2">
               <h2 class="text-base font-black text-slate-900 dark:text-white">
-                تحديث برنامج صلحلي
+                تحديث برنامج {{ appStore.appName }}
               </h2>
               <span
                 class="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 font-mono font-bold text-[11px]"

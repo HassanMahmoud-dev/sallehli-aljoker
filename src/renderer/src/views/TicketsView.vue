@@ -4,6 +4,9 @@ import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
+import { useTerms } from '@renderer/composables/useTerms'
+import DynamicFields from '@renderer/components/DynamicFields.vue'
+import AudiogramChart from '@renderer/components/AudiogramChart.vue'
 import { compressImageFile } from '@renderer/utils/imageHelper'
 import {
   APPLIANCE_TYPES,
@@ -17,7 +20,10 @@ import type {
   SparePart,
   TicketPartItem,
   Customer,
-  CustomerAppliance
+  CustomerAppliance,
+  Product,
+  ProductSerial,
+  HearingTest
 } from '@shared/types'
 import {
   PlusCircle,
@@ -35,19 +41,47 @@ import {
   ShieldCheck,
   Users,
   CheckCircle2,
-  X
+  Barcode,
+  Truck,
+  Headphones,
+  RotateCcw,
+  X,
+  Activity,
+  Eye
 } from 'lucide-vue-next'
 
 const route = useRoute()
 const appStore = useAppStore()
+const { t } = useTerms()
+
+const availableDeviceTypes = computed(() => {
+  const base = appStore.deviceTypes.length ? appStore.deviceTypes : APPLIANCE_TYPES
+  const cur = form.value.appliance_type
+  if (cur && !base.includes(cur)) {
+    return [cur, ...base]
+  }
+  return base
+})
+
+const availableBrands = computed(() => {
+  const base = appStore.brands.length ? appStore.brands : APPLIANCE_BRANDS
+  const cur = form.value.brand
+  if (cur && !base.includes(cur)) {
+    return [cur, ...base]
+  }
+  return base
+})
 
 const tickets = ref<MaintenanceTicket[]>([])
 const technicians = ref<Technician[]>([])
 const spareParts = ref<SparePart[]>([])
+const products = ref<Product[]>([])
+const availableLoanerSerials = ref<ProductSerial[]>([])
 const allCustomers = ref<Customer[]>([])
 const customerSearchInput = ref('')
 const showCustomerSuggestions = ref(false)
 const activeCustomerField = ref<'search' | 'phone' | 'name' | null>(null)
+const serialOrInvoiceQuery = ref('')
 
 const searchQuery = ref('')
 const statusFilter = ref('all')
@@ -66,9 +100,27 @@ const activeWarrantyAlert = ref<{
   warranty_end_date: string
 } | null>(null)
 
-// Selected spare part for adding to ticket
+const hearingSummary = ref<{
+  latestTest: HearingTest | null
+  implantsCount: number
+  latestFollowup: any
+} | null>(null)
+const previewAudiogramOpen = ref(false)
+
+async function loadHearingSummary(customerId: number): Promise<void> {
+  if (!appStore.isHearingAidsProfile) return
+  try {
+    hearingSummary.value = await window.api.getLatestHearingTestSummary(customerId)
+  } catch {
+    hearingSummary.value = null
+  }
+}
+
+// Selected spare part / product for adding to ticket
 const selectedPartId = ref<number | null>(null)
 const selectedPartQty = ref<number>(1)
+const selectedProductId = ref<number | null>(null)
+const selectedProductQty = ref<number>(1)
 
 const form = ref<{
   id?: number
@@ -98,8 +150,23 @@ const form = ref<{
   warranty_months: number
   is_under_previous_warranty: number
   previous_ticket_number: string | null
+  sales_invoice_id: number | null
+  product_serial_id: number | null
+  is_external_repair: number
+  external_vendor: string
+  external_sent_date: string | null
+  external_expected_date: string | null
+  external_returned_date: string | null
+  external_cost: number
+  external_tracking_no: string
+  loaner_serial_id: number | null
+  loaner_serial_no: string
+  loaner_product_name: string
+  loaner_handed_at: string | null
+  loaner_returned_at: string | null
   warranty_image: string
   fault_images: string[]
+  extra_data: Record<string, any>
   notes: string
   parts: TicketPartItem[]
 }>({
@@ -108,8 +175,8 @@ const form = ref<{
   customer_phone2: '',
   customer_area: '',
   customer_address: '',
-  appliance_type: APPLIANCE_TYPES[0],
-  brand: APPLIANCE_BRANDS[0],
+  appliance_type: '',
+  brand: '',
   model: '',
   serial_number: '',
   service_type: 'home_visit',
@@ -127,8 +194,23 @@ const form = ref<{
   warranty_months: 6,
   is_under_previous_warranty: 0,
   previous_ticket_number: null,
+  sales_invoice_id: null,
+  product_serial_id: null,
+  is_external_repair: 0,
+  external_vendor: '',
+  external_sent_date: null,
+  external_expected_date: null,
+  external_returned_date: null,
+  external_cost: 0,
+  external_tracking_no: '',
+  loaner_serial_id: null,
+  loaner_serial_no: '',
+  loaner_product_name: '',
+  loaner_handed_at: null,
+  loaner_returned_at: null,
   warranty_image: '',
   fault_images: [],
+  extra_data: {},
   notes: '',
   parts: []
 })
@@ -152,7 +234,7 @@ const computedRemainingAmount = computed(() =>
 )
 
 async function loadData(): Promise<void> {
-  const [ticketRows, techRows, partRows, custRows] = await Promise.all([
+  const [ticketRows, techRows, partRows, custRows, prodRows, serialRows] = await Promise.all([
     window.api.listTickets({
       search: searchQuery.value,
       status: statusFilter.value,
@@ -160,12 +242,16 @@ async function loadData(): Promise<void> {
     }),
     window.api.listTechnicians(),
     window.api.listSpareParts(),
-    window.api.listCustomers('')
+    window.api.listCustomers(''),
+    window.api.listProducts({ activeOnly: true }),
+    window.api.listProductSerials({ status: 'in_stock' })
   ])
   tickets.value = ticketRows
   technicians.value = techRows
   spareParts.value = partRows
   allCustomers.value = custRows
+  products.value = prodRows
+  availableLoanerSerials.value = serialRows
 }
 
 const filteredCustomersForSelection = computed(() => {
@@ -239,6 +325,9 @@ async function handlePhoneLookup(): Promise<void> {
     }
     existingAppliances.value = res.appliances
     previousTickets.value = res.previousTickets
+    if (res.customer.id && appStore.isHearingAidsProfile) {
+      loadHearingSummary(res.customer.id)
+    }
 
     // Check if any previous ticket has active warranty today
     const today = new Date().toISOString().slice(0, 10)
@@ -277,6 +366,9 @@ function selectExistingAppliance(app: CustomerAppliance): void {
   form.value.brand = app.brand
   form.value.model = app.model || ''
   form.value.serial_number = app.serial_number || ''
+  if (app.extra_data && typeof app.extra_data === 'object') {
+    form.value.extra_data = { ...form.value.extra_data, ...app.extra_data }
+  }
 }
 
 function addPartToTicket(): void {
@@ -302,6 +394,109 @@ function addPartToTicket(): void {
   }
   selectedPartId.value = null
   selectedPartQty.value = 1
+}
+
+function addProductToTicket(): void {
+  if (!selectedProductId.value) return
+  const prod = products.value.find((p) => p.id === selectedProductId.value)
+  if (!prod) return
+
+  const qty = Math.max(1, Number(selectedProductQty.value || 1))
+  const existing = form.value.parts.find((p) => p.product_id === prod.id)
+  if (existing) {
+    existing.quantity += qty
+    existing.total_price = existing.quantity * existing.unit_price
+  } else {
+    form.value.parts.push({
+      part_id: null,
+      product_id: prod.id,
+      variant_id: prod.variants?.[0]?.id || null,
+      unit: 'piece',
+      pack_size: 1,
+      part_name: prod.name,
+      part_code: prod.code,
+      quantity: qty,
+      unit_cost: prod.cost_price,
+      unit_price: prod.sale_price,
+      total_price: qty * prod.sale_price
+    })
+  }
+  selectedProductId.value = null
+  selectedProductQty.value = 1
+}
+
+async function handleLookupSerialOrInvoice(customQuery?: string): Promise<void> {
+  const q = (customQuery ?? serialOrInvoiceQuery.value).trim()
+  if (!q) return
+  const res = await window.api.lookupSerialOrInvoiceForTicket(q)
+  if (!res.found) {
+    swalError('لم يتم العثور على نتائج', `لا توجد سماعة أو فاتورة مطابقة لـ (${q})`)
+    return
+  }
+
+  if (res.customer) {
+    form.value.customer_id = res.customer.id
+    form.value.customer_name = res.customer.name
+    form.value.customer_phone = res.customer.phone
+    form.value.customer_phone2 = res.customer.phone2 || ''
+    form.value.customer_area = res.customer.area || ''
+    form.value.customer_address = res.customer.address || ''
+    customerSearchInput.value = `${res.customer.name} — ${res.customer.phone}`
+  } else if (res.invoice) {
+    form.value.customer_name = res.invoice.customer_name
+    form.value.customer_phone = res.invoice.customer_phone || ''
+  }
+
+  if (res.product) {
+    form.value.appliance_type = res.product.sub_category || 'سماعة طبية'
+    form.value.brand = res.product.brand || availableBrands.value[0] || 'عام'
+    form.value.model = res.product.model || res.product.name
+  }
+
+  if (res.serial) {
+    form.value.serial_number = res.serial.serial_no
+    form.value.product_serial_id = res.serial.id
+  }
+
+  if (res.invoice) {
+    form.value.sales_invoice_id = res.invoice.id
+  }
+
+  if (res.earSide) {
+    form.value.extra_data = { ...form.value.extra_data, ear_side: res.earSide }
+  }
+
+  if (res.isUnderWarranty) {
+    form.value.is_under_previous_warranty = 1
+    form.value.priority = 'warranty_return'
+    form.value.inspection_fee = 0
+    activeWarrantyAlert.value = {
+      ticket_number: res.invoice?.invoice_number || res.serial?.serial_no || 'ضمان مبيعات',
+      appliance_type: form.value.appliance_type,
+      brand: form.value.brand,
+      warranty_end_date: res.warrantyEndDate || ''
+    }
+  }
+}
+
+async function handleReturnLoaner(ticket: MaintenanceTicket): Promise<void> {
+  const ok = await swalConfirm(
+    'استرداد السماعة البديلة المؤقتة',
+    `هل تم استلام السماعة البديلة (${ticket.loaner_product_name} - S/N: ${ticket.loaner_serial_no}) من العميل وإعادتها للمخزن؟`
+  )
+  if (!ok) return
+  try {
+    await appStore.withLoading(async () => {
+      await window.api.returnTicketLoaner(ticket.id)
+      await loadData()
+      if (form.value.id === ticket.id) {
+        form.value.loaner_returned_at = new Date().toISOString().slice(0, 19).replace('T', ' ')
+      }
+    }, 'جاري استرداد السماعة البديلة للمخزن...')
+    swalSuccess('تم استرداد السماعة البديلة وإعادتها للمخزن بنجاح')
+  } catch (err: unknown) {
+    swalError('تعذر الاسترداد', err instanceof Error ? err.message : '')
+  }
 }
 
 function removePartFromTicket(index: number): void {
@@ -339,6 +534,7 @@ function openCreateModal(): void {
   previousTickets.value = []
   activeWarrantyAlert.value = null
   customerSearchInput.value = ''
+  serialOrInvoiceQuery.value = ''
   showCustomerSuggestions.value = false
   form.value = {
     customer_name: '',
@@ -346,11 +542,11 @@ function openCreateModal(): void {
     customer_phone2: '',
     customer_area: '',
     customer_address: '',
-    appliance_type: APPLIANCE_TYPES[0],
-    brand: APPLIANCE_BRANDS[0],
+    appliance_type: availableDeviceTypes.value[0] || '',
+    brand: availableBrands.value[0] || '',
     model: '',
     serial_number: '',
-    service_type: 'home_visit',
+    service_type: appStore.businessType === 'hearing_aids' ? 'workshop' : 'home_visit',
     status: 'new',
     priority: 'normal',
     complaint: '',
@@ -365,53 +561,84 @@ function openCreateModal(): void {
     warranty_months: appStore.settings.default_warranty_months || 6,
     is_under_previous_warranty: 0,
     previous_ticket_number: null,
+    sales_invoice_id: null,
+    product_serial_id: null,
+    is_external_repair: 0,
+    external_vendor: '',
+    external_sent_date: null,
+    external_expected_date: null,
+    external_returned_date: null,
+    external_cost: 0,
+    external_tracking_no: '',
+    loaner_serial_id: null,
+    loaner_serial_no: '',
+    loaner_product_name: '',
+    loaner_handed_at: null,
+    loaner_returned_at: null,
     warranty_image: '',
     fault_images: [],
+    extra_data: {},
     notes: '',
     parts: []
   }
   modalOpen.value = true
 }
 
-function openEditModal(t: MaintenanceTicket): void {
+function openEditModal(ticket: MaintenanceTicket): void {
   errorMsg.value = ''
   existingAppliances.value = []
   previousTickets.value = []
   activeWarrantyAlert.value = null
-  customerSearchInput.value = `${t.customer_name} — ${t.customer_phone}`
+  customerSearchInput.value = `${ticket.customer_name} — ${ticket.customer_phone}`
+  serialOrInvoiceQuery.value = ''
   showCustomerSuggestions.value = false
   form.value = {
-    id: t.id,
-    ticket_number: t.ticket_number,
-    customer_id: t.customer_id,
-    customer_name: t.customer_name,
-    customer_phone: t.customer_phone,
-    customer_phone2: t.customer_phone2 || '',
-    customer_area: t.customer_area || '',
-    customer_address: t.customer_address || '',
-    appliance_type: t.appliance_type,
-    brand: t.brand,
-    model: t.model || '',
-    serial_number: t.serial_number || '',
-    service_type: t.service_type,
-    status: t.status,
-    priority: t.priority,
-    complaint: t.complaint,
-    diagnosis: t.diagnosis || '',
-    technician_id: t.technician_id,
-    scheduled_date: t.scheduled_date,
-    inspection_fee: t.inspection_fee,
-    labor_cost: t.labor_cost,
-    discount: t.discount,
-    paid_amount: t.paid_amount,
-    payment_method: t.payment_method,
-    warranty_months: t.warranty_months,
-    is_under_previous_warranty: t.is_under_previous_warranty,
-    previous_ticket_number: t.previous_ticket_number,
-    warranty_image: t.warranty_image || '',
-    fault_images: Array.isArray(t.fault_images) ? [...t.fault_images] : [],
-    notes: t.notes || '',
-    parts: t.parts ? t.parts.map((p) => ({ ...p })) : []
+    id: ticket.id,
+    ticket_number: ticket.ticket_number,
+    customer_id: ticket.customer_id,
+    customer_name: ticket.customer_name,
+    customer_phone: ticket.customer_phone,
+    customer_phone2: ticket.customer_phone2 || '',
+    customer_area: ticket.customer_area || '',
+    customer_address: ticket.customer_address || '',
+    appliance_type: ticket.appliance_type,
+    brand: ticket.brand,
+    model: ticket.model || '',
+    serial_number: ticket.serial_number || '',
+    service_type: ticket.service_type,
+    status: ticket.status,
+    priority: ticket.priority,
+    complaint: ticket.complaint,
+    diagnosis: ticket.diagnosis || '',
+    technician_id: ticket.technician_id,
+    scheduled_date: ticket.scheduled_date,
+    inspection_fee: ticket.inspection_fee,
+    labor_cost: ticket.labor_cost,
+    discount: ticket.discount,
+    paid_amount: ticket.paid_amount,
+    payment_method: ticket.payment_method,
+    warranty_months: ticket.warranty_months,
+    is_under_previous_warranty: ticket.is_under_previous_warranty,
+    previous_ticket_number: ticket.previous_ticket_number,
+    sales_invoice_id: ticket.sales_invoice_id || null,
+    product_serial_id: ticket.product_serial_id || null,
+    is_external_repair: ticket.is_external_repair || 0,
+    external_vendor: ticket.external_vendor || '',
+    external_sent_date: ticket.external_sent_date || null,
+    external_expected_date: ticket.external_expected_date || null,
+    external_returned_date: ticket.external_returned_date || null,
+    external_cost: ticket.external_cost || 0,
+    external_tracking_no: ticket.external_tracking_no || '',
+    loaner_serial_id: ticket.loaner_serial_id || null,
+    loaner_serial_no: ticket.loaner_serial_no || '',
+    loaner_product_name: ticket.loaner_product_name || '',
+    loaner_handed_at: ticket.loaner_handed_at || null,
+    loaner_returned_at: ticket.loaner_returned_at || null,
+    warranty_image: ticket.warranty_image || '',
+    fault_images: Array.isArray(ticket.fault_images) ? [...ticket.fault_images] : [],
+    extra_data: ticket.extra_data ? { ...ticket.extra_data } : {},
+    notes: ticket.notes || '',
+    parts: ticket.parts ? ticket.parts.map((p) => ({ ...p })) : []
   }
   modalOpen.value = true
 }
@@ -427,6 +654,33 @@ async function handleSaveTicket(andPrint = false): Promise<void> {
     errorMsg.value = 'يرجى كتابة شكوى العميل أو وصف العطل'
     swalError('بيانات غير مكتملة', errorMsg.value)
     return
+  }
+  const devCheck = appStore.validateCustomFields('device', form.value.extra_data)
+  if (!devCheck.valid) {
+    errorMsg.value = `يرجى استكمال الحقل الإلزامي: ${devCheck.missingLabel}`
+    swalError('بيانات إضافية مطلوبة', errorMsg.value)
+    return
+  }
+  const tktCheck = appStore.validateCustomFields('ticket', form.value.extra_data)
+  if (!tktCheck.valid) {
+    errorMsg.value = `يرجى استكمال الحقل الإلزامي: ${tktCheck.missingLabel}`
+    swalError('بيانات إضافية مطلوبة', errorMsg.value)
+    return
+  }
+
+  // Warn if delivering ticket while loaner hearing aid is still not returned
+  if (
+    form.value.status === 'delivered' &&
+    form.value.loaner_serial_id &&
+    !form.value.loaner_returned_at
+  ) {
+    const confirmLoaner = await swalConfirm(
+      'تنبيه: سماعة بديلة مؤقتة بعهدة العميل!',
+      `العميل لديه سماعة بديلة مؤقتة (${form.value.loaner_product_name || ''} - S/N: ${form.value.loaner_serial_no || ''}) لم يُسجل استردادها بعد. هل تم استردادها الآن مع تسليم الجهاز؟`
+    )
+    if (confirmLoaner) {
+      form.value.loaner_returned_at = new Date().toISOString().slice(0, 19).replace('T', ' ')
+    }
   }
 
   try {
@@ -457,18 +711,18 @@ async function handleSaveTicket(andPrint = false): Promise<void> {
   }
 }
 
-async function handleDeleteTicket(t: MaintenanceTicket): Promise<void> {
+async function handleDeleteTicket(ticket: MaintenanceTicket): Promise<void> {
   const confirmed = await swalConfirm(
-    `حذف بلاغ الصيانة (${t.ticket_number})؟`,
-    'سيتم حذف الطلب وإرجاع أي قطع غيار منصرفة إلى المخزن تلقائياً.'
+    `حذف بلاغ الصيانة (${ticket.ticket_number})؟`,
+    `سيتم حذف الطلب وإرجاع أي ${t('parts')} منصرفة إلى المخزن تلقائياً.`
   )
   if (!confirmed) return
   try {
     await appStore.withLoading(async () => {
-      await window.api.deleteTicket(t.id)
+      await window.api.deleteTicket(ticket.id)
       await loadData()
     }, 'جاري حذف طلب الصيانة...')
-    swalSuccess(`تم حذف طلب الصيانة رقم ${t.ticket_number} بنجاح`)
+    swalSuccess(`تم حذف طلب الصيانة رقم ${ticket.ticket_number} بنجاح`)
   } catch (err: unknown) {
     swalError('تعذر حذف الطلب', err instanceof Error ? err.message : '')
   }
@@ -478,6 +732,11 @@ onMounted(async () => {
   await loadData()
   if (route.query.new === '1') {
     openCreateModal()
+  } else if (route.query.serial || route.query.invoice_id) {
+    openCreateModal()
+    const q = String(route.query.serial || route.query.invoice_id || '')
+    serialOrInvoiceQuery.value = q
+    await handleLookupSerialOrInvoice(q)
   }
 })
 </script>
@@ -492,10 +751,10 @@ onMounted(async () => {
         <div>
           <h1 class="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
             <Wrench class="w-5 h-5 text-blue-600" />
-            إدارة بلاغات وطلبات الصيانة والضمان
+            إدارة {{ t('ticketsPage') }} والضمان
           </h1>
           <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            تسجيل الزيارات المنزلية وأجهزة الورشة، صرف قطع الغيار، وإصدار الفواتير وشهادات الضمان (A4 / 80mm)
+            تسجيل الخدمات، صرف {{ t('parts') }}، وإصدار الفواتير وشهادات الضمان (A4 / 80mm)
           </p>
         </div>
 
@@ -505,7 +764,7 @@ onMounted(async () => {
           class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-600/20 transition cursor-pointer"
         >
           <PlusCircle class="w-4 h-4" />
-          تسجيل بلاغ صيانة جديد
+          تسجيل {{ t('ticket') }} جديد
         </button>
       </div>
 
@@ -518,7 +777,7 @@ onMounted(async () => {
           <input
             v-model="searchQuery"
             type="text"
-            placeholder="بحث برقم الطلب، اسم العميل، رقم الموبايل، نوع الجهاز، الماركة، أو السيريال..."
+            :placeholder="`بحث برقم الطلب، اسم العميل، الموبايل، نوع ${t('device')}، الماركة، أو السيريال...`"
             class="w-full pr-10 pl-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"
           />
         </div>
@@ -537,9 +796,9 @@ onMounted(async () => {
           v-model="serviceTypeFilter"
           class="px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold"
         >
-          <option value="all">جميع أنواع الخدمة (منزلي + ورشة)</option>
-          <option value="home_visit">زيارات منزلية فقط</option>
-          <option value="workshop">أجهزة داخل الورشة فقط</option>
+          <option value="all">جميع أنواع الخدمة</option>
+          <option value="home_visit">زيارات خارجية فقط</option>
+          <option value="workshop">{{ t('devices') }} داخل المركز فقط</option>
         </select>
       </div>
     </div>
@@ -556,7 +815,7 @@ onMounted(async () => {
             <tr>
               <th class="py-3.5 px-4">رقم الطلب</th>
               <th class="py-3.5 px-4">العميل والمنطقة</th>
-              <th class="py-3.5 px-4">الجهاز والعطل</th>
+              <th class="py-3.5 px-4">{{ t('device') }} والعطل</th>
               <th class="py-3.5 px-4">الخدمة والفني</th>
               <th class="py-3.5 px-4">الحالة</th>
               <th class="py-3.5 px-4">الحساب والمدفوع</th>
@@ -566,17 +825,17 @@ onMounted(async () => {
           </thead>
           <tbody class="divide-y divide-slate-200 dark:divide-slate-800">
             <tr
-              v-for="t in tickets"
-              :key="t.id"
+              v-for="ticket in tickets"
+              :key="ticket.id"
               class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition"
             >
               <td class="py-3.5 px-4">
                 <div class="font-mono font-black text-blue-600 dark:text-blue-400">
-                  {{ t.ticket_number }}
+                  {{ ticket.ticket_number }}
                 </div>
-                <div class="text-[11px] text-slate-500">{{ t.scheduled_date }}</div>
+                <div class="text-[11px] text-slate-500">{{ ticket.scheduled_date }}</div>
                 <span
-                  v-if="t.is_under_previous_warranty || t.priority === 'warranty_return'"
+                  v-if="ticket.is_under_previous_warranty || ticket.priority === 'warranty_return'"
                   class="inline-block mt-1 px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300 text-[10px] font-bold"
                 >
                   🛡️ إعادة بالضمان
@@ -584,36 +843,55 @@ onMounted(async () => {
               </td>
 
               <td class="py-3.5 px-4">
-                <div class="font-bold text-slate-900 dark:text-white">{{ t.customer_name }}</div>
-                <div class="text-slate-500 font-mono">{{ t.customer_phone }}</div>
-                <div v-if="t.customer_area" class="text-[11px] text-slate-500">
-                  📍 {{ t.customer_area }}
+                <div class="font-bold text-slate-900 dark:text-white">{{ ticket.customer_name }}</div>
+                <div class="text-slate-500 font-mono">{{ ticket.customer_phone }}</div>
+                <div v-if="ticket.customer_area" class="text-[11px] text-slate-500">
+                  📍 {{ ticket.customer_area }}
                 </div>
               </td>
 
               <td class="py-3.5 px-4 max-w-xs">
                 <div class="font-bold text-slate-900 dark:text-white">
-                  {{ t.appliance_type }} — <span class="text-blue-600">{{ t.brand }}</span>
+                  {{ ticket.appliance_type }} — <span class="text-blue-600">{{ ticket.brand }}</span>
                 </div>
                 <div class="text-[11px] text-slate-600 dark:text-slate-400 truncate">
-                  {{ t.complaint }}
+                  {{ ticket.complaint }}
+                </div>
+                <!-- Custom Field Badges shown in table -->
+                <div
+                  v-if="
+                    appStore
+                      .formatExtraDataEntries(ticket.extra_data, ['device', 'ticket'])
+                      .filter((x) => x.showInTable).length > 0
+                  "
+                  class="mt-1 flex flex-wrap gap-1"
+                >
+                  <span
+                    v-for="cf in appStore
+                      .formatExtraDataEntries(ticket.extra_data, ['device', 'ticket'])
+                      .filter((x) => x.showInTable)"
+                    :key="cf.key"
+                    class="px-1.5 py-0.5 rounded bg-purple-100/80 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 text-[10px] font-bold"
+                  >
+                    {{ cf.label }}: {{ cf.value }}
+                  </span>
                 </div>
                 <div
-                  v-if="t.parts && t.parts.length > 0"
+                  v-if="ticket.parts && ticket.parts.length > 0"
                   class="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold mt-0.5"
                 >
-                  🔧 قطع غيار مركبة: {{ t.parts.length }}
+                  🔧 {{ t('parts') }} مركبة: {{ ticket.parts.length }}
                 </div>
               </td>
 
               <td class="py-3.5 px-4">
                 <div class="inline-flex items-center gap-1 font-bold text-slate-700 dark:text-slate-300">
-                  <Home v-if="t.service_type === 'home_visit'" class="w-3.5 h-3.5 text-indigo-500" />
+                  <Home v-if="ticket.service_type === 'home_visit'" class="w-3.5 h-3.5 text-indigo-500" />
                   <Building2 v-else class="w-3.5 h-3.5 text-amber-500" />
-                  <span>{{ t.service_type === 'home_visit' ? 'زيارة منزلية' : 'بالورشة' }}</span>
+                  <span>{{ ticket.service_type === 'home_visit' ? 'زيارة منزلية' : 'بالورشة' }}</span>
                 </div>
                 <div class="text-[11px] text-slate-500 mt-0.5">
-                  الفني: <strong class="text-slate-800 dark:text-slate-200">{{ t.technician_name || 'لم يعين' }}</strong>
+                  {{ t('technician') }}: <strong class="text-slate-800 dark:text-slate-200">{{ ticket.technician_name || 'لم يعين' }}</strong>
                 </div>
               </td>
 
@@ -621,35 +899,60 @@ onMounted(async () => {
                 <span
                   :class="[
                     'px-2.5 py-1 rounded-full text-[11px] font-bold border',
-                    TICKET_STATUS_MAP[t.status]?.badgeClass
+                    TICKET_STATUS_MAP[ticket.status]?.badgeClass
                   ]"
                 >
-                  {{ TICKET_STATUS_MAP[t.status]?.label }}
+                  {{ TICKET_STATUS_MAP[ticket.status]?.label }}
                 </span>
+                <div
+                  v-if="ticket.external_vendor"
+                  class="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 mt-1"
+                >
+                  🏭 المعمل: {{ ticket.external_vendor }}
+                  <span v-if="ticket.external_expected_date">
+                    (متوقع: {{ ticket.external_expected_date }})
+                  </span>
+                </div>
+                <div
+                  v-if="ticket.loaner_serial_id && !ticket.loaner_returned_at"
+                  class="mt-1 flex items-center gap-1"
+                >
+                  <span class="px-2 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 text-[10px] font-bold">
+                    🎧 بديلة: {{ ticket.loaner_serial_no }}
+                  </span>
+                  <button
+                    type="button"
+                    @click="handleReturnLoaner(ticket)"
+                    title="استرداد السماعة البديلة للمخزن"
+                    class="px-1.5 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold cursor-pointer"
+                  >
+                    استرداد
+                  </button>
+                </div>
               </td>
 
               <td class="py-3.5 px-4">
                 <div class="font-black text-slate-900 dark:text-white">
-                  الإجمالي: {{ t.total_amount }} ج.م
+                  الإجمالي: {{ ticket.total_amount }} ج.م
                 </div>
                 <div class="text-[11px] text-emerald-600 font-bold">
-                  مدفوع: {{ t.paid_amount }} ج.م
+                  مدفوع: {{ ticket.paid_amount }} ج.م
                 </div>
                 <div
-                  v-if="t.remaining_amount > 0"
+                  v-if="ticket.remaining_amount > 0"
                   class="text-[11px] text-rose-600 font-bold"
                 >
-                  متبقي: {{ t.remaining_amount }} ج.م
+                  متبقي: {{ ticket.remaining_amount }} ج.م
                 </div>
               </td>
 
               <td class="py-3.5 px-4">
-                <div v-if="t.warranty_months > 0" class="font-bold text-emerald-700 dark:text-emerald-400">
-                  {{ t.warranty_months }} شهور
+                <div v-if="ticket.warranty_months > 0" class="font-bold text-emerald-700 dark:text-emerald-400">
+                  {{ ticket.warranty_months }} شهور
                 </div>
                 <div v-else class="text-slate-400">بدون ضمان</div>
-                <div v-if="t.warranty_end_date" class="text-[10px] text-slate-500">
-                  حتى {{ t.warranty_end_date }}
+                <div v-if="ticket.warranty_end_date" class="text-[10px] text-slate-500">
+                  حتى {{ ticket.warranty_end_date }}
                 </div>
               </td>
 
@@ -657,7 +960,7 @@ onMounted(async () => {
                 <div class="flex items-center gap-1.5">
                   <button
                     type="button"
-                    @click="appStore.openPrintModal(t, 'invoice_warranty', 'a4')"
+                    @click="appStore.openPrintModal(ticket, 'invoice_warranty', 'a4')"
                     class="px-2 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
                     title="طباعة فاتورة وشهادة ضمان A4"
                   >
@@ -666,7 +969,7 @@ onMounted(async () => {
                   </button>
                   <button
                     type="button"
-                    @click="appStore.openPrintModal(t, 'reception_receipt', 'thermal80')"
+                    @click="appStore.openPrintModal(ticket, 'reception_receipt', 'thermal80')"
                     class="px-2 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
                     title="طباعة إيصال حراري 80mm"
                   >
@@ -675,7 +978,7 @@ onMounted(async () => {
                   </button>
                   <button
                     type="button"
-                    @click="appStore.sendWhatsAppToCustomer(t)"
+                    @click="appStore.sendWhatsAppToCustomer(ticket)"
                     class="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 transition cursor-pointer"
                     title="إرسال واتساب للعميل"
                   >
@@ -683,7 +986,7 @@ onMounted(async () => {
                   </button>
                   <button
                     type="button"
-                    @click="openEditModal(t)"
+                    @click="openEditModal(ticket)"
                     class="p-1.5 rounded-lg bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-700 dark:bg-slate-800 dark:text-slate-300 transition cursor-pointer"
                     title="تعديل الطلب"
                   >
@@ -691,7 +994,7 @@ onMounted(async () => {
                   </button>
                   <button
                     type="button"
-                    @click="handleDeleteTicket(t)"
+                    @click="handleDeleteTicket(ticket)"
                     class="p-1.5 rounded-lg bg-slate-100 hover:bg-rose-100 text-slate-700 hover:text-rose-600 dark:bg-slate-800 dark:text-slate-300 transition cursor-pointer"
                     title="حذف الطلب"
                   >
@@ -752,6 +1055,33 @@ onMounted(async () => {
             {{ errorMsg }}
           </div>
 
+          <!-- Phase 3E: Quick Serial / Sales Invoice Lookup (Hearing Aids) -->
+          <div
+            v-if="appStore.businessType === 'hearing_aids'"
+            class="p-4 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 flex flex-wrap items-end gap-3"
+          >
+            <div class="flex-1 min-w-[240px]">
+              <label class="block font-bold text-indigo-800 dark:text-indigo-300 mb-1">
+                <Barcode class="w-4 h-4 inline ml-1" />
+                استعلام سريع بالسيريال نمبر (S/N) أو رقم فاتورة المبيعات (يكتشف الضمان والعميل تلقائياً):
+              </label>
+              <input
+                v-model="serialOrInvoiceQuery"
+                @keyup.enter="handleLookupSerialOrInvoice()"
+                type="text"
+                placeholder="امسح سيريال السماعة أو اكتب رقم فاتورة المبيعات مثل INV-2026-0001..."
+                class="w-full px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-700 font-mono font-bold"
+              />
+            </div>
+            <button
+              type="button"
+              @click="handleLookupSerialOrInvoice()"
+              class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold cursor-pointer"
+            >
+              بحث وجلب البيانات
+            </button>
+          </div>
+
           <!-- Automatic Active Warranty Alert if Customer has active warranty -->
           <div
             v-if="activeWarrantyAlert"
@@ -761,10 +1091,10 @@ onMounted(async () => {
               <ShieldAlert class="w-6 h-6 text-amber-600 shrink-0" />
               <div>
                 <div class="font-black text-sm">
-                  تنبيه ضمان تلقائي: هذا العميل لديه جهاز داخل فترة الضمان!
+                  تنبيه ضمان تلقائي: هذا العميل لديه {{ t('device') }} داخل فترة الضمان!
                 </div>
                 <div class="text-xs mt-0.5">
-                  طلب رقم <strong>{{ activeWarrantyAlert.ticket_number }}</strong> — جهاز ({{
+                  طلب رقم <strong>{{ activeWarrantyAlert.ticket_number }}</strong> — {{ t('device') }} ({{
                     activeWarrantyAlert.appliance_type
                   }}
                   {{ activeWarrantyAlert.brand }}) — الضمان ساري حتى
@@ -820,7 +1150,7 @@ onMounted(async () => {
                   "
                   @blur="hideCustomerSuggestionsDelayed"
                   type="text"
-                  placeholder="اكتب اسم العميل أو رقم الموبايل لاختياره تلقائياً مع عنوانه وأجهزته..."
+                  :placeholder="`اكتب اسم العميل أو رقم الموبايل لاختياره تلقائياً مع عنوانه و${t('devices')}...`"
                   class="w-full pr-10 pl-8 py-2 rounded-xl bg-blue-50/70 dark:bg-slate-900 border-2 border-blue-200 dark:border-blue-800 focus:border-blue-500 focus:outline-none font-bold"
                 />
                 <button
@@ -945,7 +1275,7 @@ onMounted(async () => {
             <!-- Customer Previous Appliances Quick Selector -->
             <div v-if="existingAppliances.length > 0" class="pt-2">
               <span class="font-bold text-blue-600 dark:text-blue-400 ml-2">
-                أجهزة العميل المسجلة سابقاً (اضغط للاختيار السريع):
+                {{ t('devices') }} المسجلة سابقاً للعميل (اضغط للاختيار السريع):
               </span>
               <div class="flex flex-wrap gap-2 mt-1.5">
                 <button
@@ -960,6 +1290,33 @@ onMounted(async () => {
                 </button>
               </div>
             </div>
+
+            <!-- Hearing Aids Patient Medical & Audiology Summary (Phase 4E) -->
+            <div
+              v-if="appStore.isHearingAidsProfile && hearingSummary?.latestTest"
+              class="p-3.5 rounded-2xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 flex flex-wrap items-center justify-between gap-3 text-xs"
+            >
+              <div>
+                <div class="font-black text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
+                  <Activity class="w-4 h-4 text-blue-600" />
+                  آخر فحص سمعي للمريض ({{ hearingSummary.latestTest.test_date }}):
+                  يمين PTA {{ hearingSummary.latestTest.pta_right ?? '—' }} dB ({{ hearingSummary.latestTest.loss_degree_right || 'طبيعي' }}) |
+                  يسار PTA {{ hearingSummary.latestTest.pta_left ?? '—' }} dB ({{ hearingSummary.latestTest.loss_degree_left || 'طبيعي' }})
+                </div>
+                <div v-if="hearingSummary.latestTest.recommended_product_name" class="text-slate-600 dark:text-slate-400 mt-0.5">
+                  السماعة الموصى بها: {{ hearingSummary.latestTest.recommended_product_name }}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                @click="previewAudiogramOpen = true"
+                class="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1 cursor-pointer"
+              >
+                <Eye class="w-3.5 h-3.5" />
+                معاينة الأوديوجرام
+              </button>
+            </div>
           </div>
 
           <!-- Section 2: Appliance & Service Details -->
@@ -967,26 +1324,26 @@ onMounted(async () => {
             class="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 space-y-3"
           >
             <h4 class="font-black text-slate-900 dark:text-white text-sm">
-              2. بيانات الجهاز الكهربائي وتفاصيل الخدمة
+              2. بيانات {{ t('device') }} وتفاصيل الخدمة
             </h4>
 
             <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
               <div>
-                <label class="block font-bold mb-1">نوع الجهاز *</label>
+                <label class="block font-bold mb-1">{{ t('deviceType') }} *</label>
                 <select
                   v-model="form.appliance_type"
                   class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
                 >
-                  <option v-for="t in APPLIANCE_TYPES" :key="t" :value="t">{{ t }}</option>
+                  <option v-for="tVal in availableDeviceTypes" :key="tVal" :value="tVal">{{ tVal }}</option>
                 </select>
               </div>
               <div>
-                <label class="block font-bold mb-1">الماركة (Brand) *</label>
+                <label class="block font-bold mb-1">{{ t('brand') }} *</label>
                 <select
                   v-model="form.brand"
                   class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
                 >
-                  <option v-for="b in APPLIANCE_BRANDS" :key="b" :value="b">{{ b }}</option>
+                  <option v-for="bVal in availableBrands" :key="bVal" :value="bVal">{{ bVal }}</option>
                 </select>
               </div>
               <div>
@@ -994,7 +1351,7 @@ onMounted(async () => {
                 <input
                   v-model="form.model"
                   type="text"
-                  placeholder="مثال: 8 كيلو انفرتر / 16 قدم"
+                  :placeholder="t('modelPlaceholder')"
                   class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700"
                 />
               </div>
@@ -1059,7 +1416,7 @@ onMounted(async () => {
                 <textarea
                   v-model="form.complaint"
                   rows="2"
-                  placeholder="مثال: الغسالة لا تصرف المياه وتصدر صوت عالي في العصر..."
+                  :placeholder="t('complaintPlaceholder')"
                   class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700"
                 ></textarea>
               </div>
@@ -1068,11 +1425,25 @@ onMounted(async () => {
                 <textarea
                   v-model="form.diagnosis"
                   rows="2"
-                  placeholder="مثال: تم الكشف وتغيير طلمبة الطرد وتنظيف الفلتر وتجربة الجهاز..."
+                  :placeholder="t('diagnosisPlaceholder')"
                   class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700"
                 ></textarea>
               </div>
             </div>
+
+            <!-- Dynamic Custom Fields for Device & Ticket -->
+            <DynamicFields
+              entity="device"
+              v-model="form.extra_data"
+              :title="`بيانات مخصصة لـ ${t('device')}`"
+              :columns="3"
+            />
+            <DynamicFields
+              entity="ticket"
+              v-model="form.extra_data"
+              :title="`بيانات مخصصة لـ ${t('ticket')}`"
+              :columns="3"
+            />
 
             <!-- Warranty Image & Fault Images Attachment -->
             <div
@@ -1093,7 +1464,7 @@ onMounted(async () => {
                     <div class="font-bold text-emerald-800 dark:text-emerald-300">
                       🛡️ صورة شهادة الضمان
                     </div>
-                    <div class="text-[10px] text-slate-500">تُحفظ أيضاً في سجل أجهزة العميل</div>
+                    <div class="text-[10px] text-slate-500">تُحفظ أيضاً في سجل {{ t('devices') }}</div>
                   </div>
                 </div>
                 <div class="flex items-center gap-1.5 shrink-0">
@@ -1127,7 +1498,7 @@ onMounted(async () => {
                 <div class="flex items-center justify-between">
                   <div>
                     <div class="font-bold text-amber-900 dark:text-amber-300">
-                      📷 صور العطل والجهاز ({{ form.fault_images.length }})
+                      📷 صور العطل و{{ t('device') }} ({{ form.fault_images.length }})
                     </div>
                     <div class="text-[10px] text-slate-500">قبل وبعد الصيانة</div>
                   </div>
@@ -1174,17 +1545,17 @@ onMounted(async () => {
             class="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 space-y-3"
           >
             <h4 class="font-black text-slate-900 dark:text-white text-sm">
-              3. قطع الغيار المنصرفة للطلب (تُخصم تلقائياً من المخزن وتُضاف للفاتورة)
+              3. {{ t('parts') }} المنصرفة للطلب (تُخصم تلقائياً من المخزن وتُضاف للفاتورة)
             </h4>
 
             <div class="flex flex-wrap items-end gap-2">
               <div class="flex-1 min-w-[240px]">
-                <label class="block font-bold mb-1">اختر قطعة غيار من المخزن</label>
+                <label class="block font-bold mb-1">اختر من {{ t('partsStore') }}</label>
                 <select
                   v-model="selectedPartId"
                   class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700"
                 >
-                  <option :value="null">-- اختر قطعة غيار لإضافتها --</option>
+                  <option :value="null">-- اختر صنفاً لإضافته --</option>
                   <option
                     v-for="p in spareParts"
                     :key="p.id"
@@ -1217,6 +1588,51 @@ onMounted(async () => {
               </button>
             </div>
 
+            <!-- Phase 3E: Consuming Products / Services from Products Catalog -->
+            <div
+              v-if="appStore.businessType === 'hearing_aids' && products.length > 0"
+              class="flex flex-wrap items-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-700"
+            >
+              <div class="flex-1 min-w-[240px]">
+                <label class="block font-bold text-indigo-700 dark:text-indigo-400 mb-1">
+                  أو اختر من أصناف السماعات والمستلزمات والخدمات:
+                </label>
+                <select
+                  v-model="selectedProductId"
+                  class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-700"
+                >
+                  <option :value="null">-- اختر صنفاً أو خدمة --</option>
+                  <option
+                    v-for="pr in products.filter((x) => !x.track_serial)"
+                    :key="pr.id"
+                    :value="pr.id"
+                    :disabled="pr.type !== 'service' && pr.qty <= 0"
+                  >
+                    [{{ pr.code }}] {{ pr.name }} — السعر: {{ pr.sale_price }} ج.م ({{
+                      pr.type === 'service' ? 'خدمة' : `المتاح: ${pr.qty}`
+                    }})
+                  </option>
+                </select>
+              </div>
+              <div class="w-24">
+                <label class="block font-bold mb-1">الكمية</label>
+                <input
+                  v-model.number="selectedProductQty"
+                  type="number"
+                  min="1"
+                  class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold text-center"
+                />
+              </div>
+              <button
+                type="button"
+                @click="addProductToTicket"
+                class="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer"
+              >
+                <PackagePlus class="w-4 h-4" />
+                إدراج الصنف / الخدمة
+              </button>
+            </div>
+
             <div
               v-if="form.parts.length > 0"
               class="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-900"
@@ -1225,7 +1641,7 @@ onMounted(async () => {
                 <thead class="bg-slate-100 dark:bg-slate-800 font-bold">
                   <tr>
                     <th class="py-2 px-3">الكود</th>
-                    <th class="py-2 px-3">اسم القطعة</th>
+                    <th class="py-2 px-3">اسم {{ t('part') }}</th>
                     <th class="py-2 px-3">الكمية</th>
                     <th class="py-2 px-3">سعر البيع للوحدة</th>
                     <th class="py-2 px-3">الإجمالي</th>
@@ -1261,6 +1677,137 @@ onMounted(async () => {
             </div>
           </div>
 
+          <!-- Phase 3E: External Lab / Agent Repair & Loaner Hearing Aid (Hearing Aids Mode) -->
+          <div
+            v-if="appStore.businessType === 'hearing_aids'"
+            class="grid grid-cols-1 md:grid-cols-2 gap-4"
+          >
+            <!-- External Lab Repair Box -->
+            <div
+              class="p-4 rounded-2xl bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-900/60 space-y-3"
+            >
+              <div class="flex items-center justify-between">
+                <h4 class="font-black text-indigo-900 dark:text-indigo-200 text-sm flex items-center gap-1.5">
+                  <Truck class="w-4 h-4 text-indigo-600" />
+                  صيانة خارجية (المعمل / الوكيل)
+                </h4>
+                <label class="flex items-center gap-1.5 font-bold cursor-pointer">
+                  <input
+                    type="checkbox"
+                    :checked="Boolean(form.is_external_repair)"
+                    @change="
+                      form.is_external_repair = ($event.target as HTMLInputElement).checked ? 1 : 0;
+                      if (form.is_external_repair && form.status === 'new') form.status = 'sent_to_lab'
+                    "
+                    class="rounded text-indigo-600"
+                  />
+                  إرسال لمعمل خارجي
+                </label>
+              </div>
+
+              <div
+                v-if="form.is_external_repair || form.status === 'sent_to_lab' || form.status === 'returned_from_lab'"
+                class="grid grid-cols-2 gap-2.5"
+              >
+                <div class="col-span-2">
+                  <label class="block font-bold mb-1">اسم الوكيل / المعمل الخارجي</label>
+                  <input
+                    v-model="form.external_vendor"
+                    type="text"
+                    placeholder="مثال: توكيل سيمنس / معمل القوالب..."
+                    class="w-full px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label class="block font-bold mb-1">تاريخ الإرسال</label>
+                  <input
+                    v-model="form.external_sent_date"
+                    type="date"
+                    class="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label class="block font-bold mb-1">تاريخ العودة المتوقع</label>
+                  <input
+                    v-model="form.external_expected_date"
+                    type="date"
+                    class="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700"
+                  />
+                </div>
+                <div>
+                  <label class="block font-bold mb-1">تكلفة المعمل على المركز (ج.م)</label>
+                  <input
+                    v-model.number="form.external_cost"
+                    type="number"
+                    min="0"
+                    class="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
+                  />
+                </div>
+                <div>
+                  <label class="block font-bold mb-1">رقم إيصال / تتبع الوكيل</label>
+                  <input
+                    v-model="form.external_tracking_no"
+                    type="text"
+                    class="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- Loaner Hearing Aid Box -->
+            <div
+              class="p-4 rounded-2xl bg-purple-50/50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-900/60 space-y-3"
+            >
+              <h4 class="font-black text-purple-900 dark:text-purple-200 text-sm flex items-center gap-1.5">
+                <Headphones class="w-4 h-4 text-purple-600" />
+                إعارة سماعة بديلة مؤقتة للعميل (Loaner)
+              </h4>
+
+              <div>
+                <label class="block font-bold mb-1">اختر سماعة بديلة متاحة بالمخزن</label>
+                <select
+                  v-model="form.loaner_serial_id"
+                  class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono"
+                >
+                  <option :value="null">-- بدون سماعة بديلة --</option>
+                  <option
+                    v-if="form.loaner_serial_id && form.loaner_serial_no"
+                    :value="form.loaner_serial_id"
+                  >
+                    [الحالية] {{ form.loaner_product_name }} — S/N: {{ form.loaner_serial_no }}
+                  </option>
+                  <option v-for="ls in availableLoanerSerials" :key="ls.id" :value="ls.id">
+                    {{ ls.product_name }} — S/N: {{ ls.serial_no }} ({{
+                      ls.condition === 'used' ? 'مستعملة' : 'جديدة'
+                    }})
+                  </option>
+                </select>
+              </div>
+
+              <div v-if="form.loaner_serial_id" class="flex items-center justify-between pt-1">
+                <span
+                  v-if="form.loaner_returned_at"
+                  class="px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 font-bold"
+                >
+                  ✅ تم استرداد السماعة البديلة ({{ form.loaner_returned_at.slice(0, 10) }})
+                </span>
+                <label v-else class="flex items-center gap-2 font-bold text-purple-800 dark:text-purple-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    :checked="Boolean(form.loaner_returned_at)"
+                    @change="
+                      form.loaner_returned_at = ($event.target as HTMLInputElement).checked
+                        ? new Date().toISOString().slice(0, 19).replace('T', ' ')
+                        : null
+                    "
+                    class="rounded"
+                  />
+                  تأكيد استرداد السماعة البديلة وإعادتها للمخزن
+                </label>
+              </div>
+            </div>
+          </div>
+
           <!-- Section 4: Financials & Warranty -->
           <div
             class="p-4 rounded-2xl bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/60 space-y-3"
@@ -1289,7 +1836,7 @@ onMounted(async () => {
                 />
               </div>
               <div>
-                <label class="block font-bold mb-1">إجمالي قطع الغيار</label>
+                <label class="block font-bold mb-1">إجمالي {{ t('parts') }}</label>
                 <input
                   :value="computedPartsTotal"
                   disabled
@@ -1398,6 +1945,34 @@ onMounted(async () => {
             حفظ وطباعة الإيصال / شهادة الضمان
           </button>
         </div>
+      </div>
+    </div>
+    <!-- Audiogram Chart Preview Modal for Ticket (Phase 4E) -->
+    <div
+      v-if="previewAudiogramOpen && hearingSummary?.latestTest"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-4"
+    >
+      <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-2xl p-6 space-y-4 text-xs">
+        <div class="flex items-center justify-between border-b pb-3">
+          <h3 class="font-black text-sm flex items-center gap-2">
+            <Activity class="w-4 h-4 text-blue-600" />
+            مخطط الأوديوجرام للمريض — فحص رقم {{ hearingSummary.latestTest.test_number }} ({{ hearingSummary.latestTest.test_date }})
+          </h3>
+          <button @click="previewAudiogramOpen = false" class="cursor-pointer"><X class="w-4 h-4" /></button>
+        </div>
+
+        <div class="flex justify-between items-center bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+          <div>
+            <span class="font-bold text-red-600">الأذن اليمنى: </span>
+            <span class="font-mono font-bold">PTA {{ hearingSummary.latestTest.pta_right ?? '—' }} dB</span> — {{ hearingSummary.latestTest.loss_degree_right || 'طبيعي' }}
+          </div>
+          <div>
+            <span class="font-bold text-blue-600">الأذن اليسرى: </span>
+            <span class="font-mono font-bold">PTA {{ hearingSummary.latestTest.pta_left ?? '—' }} dB</span> — {{ hearingSummary.latestTest.loss_degree_left || 'طبيعي' }}
+          </div>
+        </div>
+
+        <AudiogramChart :model-value="hearingSummary.latestTest.points || []" readonly compact />
       </div>
     </div>
   </div>

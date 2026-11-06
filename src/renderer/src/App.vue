@@ -2,16 +2,23 @@
 import { onMounted, onUnmounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
+import { useTerms } from '@renderer/composables/useTerms'
 import { USER_ROLE_LABELS } from '@renderer/constants/appliances'
 import PrintModal from '@renderer/components/PrintModal.vue'
 import UpdateModal from '@renderer/components/UpdateModal.vue'
+import BusinessSetupWizard from '@renderer/components/BusinessSetupWizard.vue'
 import jokerTechLogo from '@renderer/assets/joker-tech-logo.png'
 import {
   LayoutDashboard,
   Wrench,
   Users,
+  CalendarClock,
   UserCog,
   Package,
+  Boxes,
+  Truck,
+  ShoppingCart,
+  ShoppingBag,
   Wallet,
   PieChart,
   Settings,
@@ -30,80 +37,110 @@ import {
 const router = useRouter()
 const route = useRoute()
 const appStore = useAppStore()
+const { t } = useTerms()
 
 let unsubscribeUpdateAvailable: (() => void) | null = null
 
 const navItems = computed(() => {
   const role = appStore.currentUser?.role || 'tenant'
-  const items: Array<{ name: string; path: string; label: string; icon: unknown }> = [
-    { name: 'dashboard', path: '/dashboard', label: 'لوحة التحكم اليومية', icon: LayoutDashboard },
-    { name: 'tickets', path: '/tickets', label: 'بلاغات وطلبات الصيانة', icon: Wrench },
-    { name: 'customers', path: '/customers', label: 'العملاء وسجل الأجهزة', icon: Users }
-  ]
+  const activeModules = appStore.businessProfile?.modules || []
+  const items: Array<{ name: string; path: string; label: string; icon: unknown; module?: string }> = []
 
-  if (['super_admin', 'owner', 'tenant', 'receptionist', 'cashier'].includes(role)) {
-    items.push({
-      name: 'technicians',
-      path: '/technicians',
-      label: 'الفنيين والعمولات',
-      icon: UserCog
-    })
-  }
+  if (!appStore.isBusinessLocked && !appStore.needsBusinessSetup) {
+    items.push(
+      { name: 'dashboard', path: '/dashboard', label: 'لوحة التحكم اليومية', icon: LayoutDashboard, module: 'dashboard' },
+      { name: 'sales', path: '/sales', label: t('salesPage'), icon: ShoppingCart, module: 'sales' },
+      { name: 'tickets', path: '/tickets', label: t('ticketsPage'), icon: Wrench, module: 'tickets' },
+      { name: 'customers', path: '/customers', label: t('customersPage'), icon: Users, module: 'customers' },
+      { name: 'followups', path: '/followups', label: t('followupsPage') || 'المتابعات والقوالب', icon: CalendarClock, module: 'followups' }
+    )
 
-  if (appStore.canViewInventory) {
-    items.push({
-      name: 'inventory',
-      path: '/inventory',
-      label: 'المخزن وقطع الغيار',
-      icon: Package
-    })
-  }
+    if (['super_admin', 'owner', 'tenant', 'receptionist', 'cashier'].includes(role)) {
+      items.push({
+        name: 'technicians',
+        path: '/technicians',
+        label: t('technicians'),
+        icon: UserCog,
+        module: 'technicians'
+      })
+    }
 
-  if (appStore.canViewFinancials) {
-    items.push({
-      name: 'treasury',
-      path: '/treasury',
-      label: 'الخزينة والحسابات',
-      icon: Wallet
-    })
-    items.push({
-      name: 'reports',
-      path: '/reports',
-      label: 'التقارير المالية والمحاسبية',
-      icon: PieChart
-    })
-  }
+    if (appStore.canViewInventory) {
+      items.push({
+        name: 'products',
+        path: '/products',
+        label: t('productsPage'),
+        icon: Boxes,
+        module: 'products'
+      })
+      items.push({
+        name: 'purchases',
+        path: '/purchases',
+        label: t('purchasesPage'),
+        icon: ShoppingBag,
+        module: 'purchases'
+      })
+      items.push({
+        name: 'suppliers',
+        path: '/suppliers',
+        label: t('suppliersPage'),
+        icon: Truck,
+        module: 'suppliers'
+      })
+      items.push({
+        name: 'inventory',
+        path: '/inventory',
+        label: t('partsStore'),
+        icon: Package,
+        module: 'inventory'
+      })
+    }
 
-  if (appStore.isFullManager) {
-    items.push({
-      name: 'settings',
-      path: '/settings',
-      label: 'إعدادات المركز والطباعة',
-      icon: Settings
-    })
-  }
+    if (appStore.canViewFinancials) {
+      items.push({
+        name: 'treasury',
+        path: '/treasury',
+        label: 'الخزينة والحسابات',
+        icon: Wallet,
+        module: 'treasury'
+      })
+      items.push({
+        name: 'reports',
+        path: '/reports',
+        label: 'التقارير المالية والمحاسبية',
+        icon: PieChart,
+        module: 'reports'
+      })
+    }
 
-  if (appStore.canManageUsers) {
-    items.push({
-      name: 'super-admin',
-      path: '/super-admin',
-      label: appStore.isSuperAdmin
-        ? 'لوحة السوبر أدمن والتراخيص'
-        : 'إدارة الموظفين والصلاحيات',
-      icon: ShieldCheck
-    })
+    if (appStore.isFullManager) {
+      items.push({
+        name: 'settings',
+        path: '/settings',
+        label: 'إعدادات المركز والطباعة',
+        icon: Settings,
+        module: 'settings'
+      })
+    }
   }
 
   if (appStore.isSuperAdmin) {
     items.push({
-      name: 'system-control',
-      path: '/system-control',
-      label: 'إعدادات الشبكة والنظام (سوبر أدمن)',
-      icon: Server
+      name: 'program-settings',
+      path: '/program-settings',
+      label: 'إعدادات البرنامج (سوبر أدمن)',
+      icon: ShieldCheck
+    })
+  } else if (appStore.canManageUsers && !appStore.isBusinessLocked && !appStore.needsBusinessSetup) {
+    items.push({
+      name: 'super-admin',
+      path: '/super-admin',
+      label: 'إدارة الموظفين والصلاحيات',
+      icon: ShieldCheck
     })
   }
 
-  return items
+  return items.filter((item) => !item.module || activeModules.includes(item.module))
 })
 
 const primaryBrowserUrl = computed(() => {
@@ -180,12 +217,12 @@ onUnmounted(() => {
             <div
               class="w-11 h-11 rounded-2xl bg-white dark:bg-slate-100 border border-blue-200 dark:border-slate-700 flex items-center justify-center shadow-md shadow-blue-600/20 shrink-0 p-1.5"
             >
-              <img :src="jokerTechLogo" alt="صلحلي" class="w-full h-full object-contain" />
+              <img :src="jokerTechLogo" :alt="appStore.businessProfile.appName" class="w-full h-full object-contain" />
             </div>
             <div class="overflow-hidden">
               <div class="flex items-center gap-1.5">
                 <h2 class="font-black text-base text-slate-900 dark:text-white truncate">
-                  صلحلي
+                  {{ appStore.businessProfile.appName }}
                 </h2>
                 <span
                   class="px-1.5 py-0.5 rounded-md bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 font-mono text-[10px] font-bold shrink-0"
@@ -194,7 +231,7 @@ onUnmounted(() => {
                 </span>
               </div>
               <p class="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                إدارة صيانة الأجهزة الكهربائية
+                {{ appStore.businessProfile.loginSubtitle }}
               </p>
             </div>
           </div>
@@ -208,7 +245,7 @@ onUnmounted(() => {
               :class="[
                 'flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-bold transition',
                 route.path.startsWith(item.path)
-                  ? ['super-admin', 'system-control'].includes(item.name)
+                  ? ['super-admin', 'system-control', 'program-settings'].includes(item.name)
                     ? 'bg-purple-600 text-white shadow-md shadow-purple-600/25'
                     : 'bg-blue-600 text-white shadow-md shadow-blue-600/25'
                   : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -320,6 +357,52 @@ onUnmounted(() => {
 
       <!-- Main Viewport -->
       <main class="flex-1 overflow-y-auto p-6 space-y-4">
+        <!-- Tampered Signature Alert Banner -->
+        <div
+          v-if="appStore.isBusinessLocked"
+          class="no-print p-3.5 rounded-2xl bg-rose-600 text-white shadow-lg flex flex-wrap items-center justify-between gap-3 text-xs"
+        >
+          <div class="flex items-center gap-2.5">
+            <ShieldCheck class="w-5 h-5 text-amber-300" />
+            <div>
+              <span class="font-black">تنبيه أمان: تم رصد عدم تطابق في توقيع نشاط البرنامج!</span>
+              <span class="text-rose-100 mr-2">
+                تم تقييد بعض العمليات لحماية البيانات. يرجى من السوبر أدمن تأكيد النشاط لإلغاء القفل.
+              </span>
+            </div>
+          </div>
+          <router-link
+            v-if="appStore.isSuperAdmin"
+            to="/program-settings"
+            class="px-3.5 py-1.5 rounded-xl bg-white text-rose-900 hover:bg-rose-50 font-black transition cursor-pointer"
+          >
+            الانتقال لإعدادات البرنامج
+          </router-link>
+        </div>
+
+        <!-- First Run Initial Business Setup Banner -->
+        <div
+          v-if="appStore.needsBusinessSetup"
+          class="no-print p-3.5 rounded-2xl bg-gradient-to-l from-purple-600 to-indigo-600 text-white shadow-lg flex flex-wrap items-center justify-between gap-3 text-xs"
+        >
+          <div class="flex items-center gap-2.5">
+            <Sparkles class="w-5 h-5 text-amber-300" />
+            <div>
+              <span class="font-black">مرحباً بك في أول تشغيل للبرنامج!</span>
+              <span class="text-purple-100 mr-2">
+                يرجى تحديد نوع النشاط (صيانة الأجهزة أو مركز السماعات الطبية) لتهيئة النظام والقوائم.
+              </span>
+            </div>
+          </div>
+          <router-link
+            v-if="appStore.isSuperAdmin"
+            to="/program-settings"
+            class="px-3.5 py-1.5 rounded-xl bg-white text-purple-900 hover:bg-purple-50 font-black transition cursor-pointer"
+          >
+            تحديد نشاط البرنامج الآن
+          </router-link>
+        </div>
+
         <!-- 24-Hour Auto-Update Available Banner -->
         <div
           v-if="appStore.availableUpdate?.updateAvailable && !appStore.updateBannerDismissed"
@@ -331,7 +414,7 @@ onUnmounted(() => {
             </div>
             <div>
               <span class="font-black">
-                يتوفر إصدار جديد من برنامج صلحلي (v{{ appStore.availableUpdate.latestVersion }})!
+                يتوفر إصدار جديد من برنامج {{ appStore.appName }} (v{{ appStore.availableUpdate.latestVersion }})!
               </span>
               <span class="text-blue-100 mr-2">
                 تم اكتشاف التحديث تلقائياً — يمكنك التحميل والتثبيت الآن مع حفظ نسخة احتياطية كاملة لبياناتك.
@@ -358,9 +441,24 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <router-view />
+        <div
+          v-if="appStore.isBusinessLocked && !appStore.isSuperAdmin"
+          class="bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-800 rounded-2xl p-8 text-center max-w-xl mx-auto my-12 space-y-4 shadow-sm"
+        >
+          <ShieldCheck class="w-12 h-12 text-rose-600 mx-auto" />
+          <h2 class="text-lg font-black text-slate-900 dark:text-white">
+            تم قفل النظام مؤقتاً لحماية البيانات
+          </h2>
+          <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+            تم اكتشاف تعديل غير مصرح به في إعداد نشاط البرنامج بقاعدة البيانات. يرجى تسجيل الدخول بحساب السوبر أدمن لإعادة التحقق من النشاط وفتح القفل.
+          </p>
+        </div>
+        <router-view v-else />
       </main>
     </div>
+
+    <!-- First-Run Business Activity Setup Wizard -->
+    <BusinessSetupWizard />
 
     <!-- Global Dual Print Engine Modal (A4 / 80mm Thermal) -->
     <PrintModal />

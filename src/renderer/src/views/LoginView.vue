@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
+import { useTerms } from '@renderer/composables/useTerms'
 import { swalSuccess, swalError } from '@renderer/utils/swal'
 import jokerTechLogo from '@renderer/assets/joker-tech-logo.png'
 import {
@@ -30,17 +31,18 @@ const rememberMe = ref(true)
 const showPassword = ref(false)
 const errorMessage = ref('')
 const loading = ref(false)
+const { t } = useTerms()
 
-const features = [
+const features = computed(() => [
   {
     icon: Wrench,
-    title: 'إدارة بلاغات الصيانة والضمان',
-    desc: 'متابعة دقيقة لطلبات الصيانة بالورشة والزيارات المنزلية، مع طباعة فواتير A4 وإيصالات حرارية 80mm وإرسال إشعارات واتساب للعملاء.'
+    title: `إدارة ${t('ticketsPage')} والضمان`,
+    desc: 'متابعة دقيقة لطلبات الصيانة بالورشة والزيارات، مع طباعة فواتير A4 وإيصالات حرارية 80mm وإرسال إشعارات واتساب للعملاء.'
   },
   {
     icon: Package,
-    title: 'المخزن وقطع الغيار وعهدة الفنيين',
-    desc: 'رقابة شاملة على أرصدة قطع الغيار، تنبيهات النواقص، صرف واسترداد عهدة الفنيين، وحساب العمولات تلقائياً.'
+    title: `${t('partsStore')} وعهدة ${t('technicians')}`,
+    desc: `رقابة شاملة على أرصدة ${t('parts')}، تنبيهات النواقص، صرف واسترداد عهدة ${t('technicians')}، وحساب العمولات تلقائياً.`
   },
   {
     icon: Wallet,
@@ -52,7 +54,7 @@ const features = [
     title: 'العمل عبر المتصفح والشبكة المحلية (LAN)',
     desc: 'إمكانية فتح البرنامج على المتصفح والعمل من عدة أجهزة كمبيوتر أو هواتف داخل نفس الشبكة المحلية عبر عنوان الـ IP.'
   }
-]
+])
 
 const primaryLanUrl = computed(() => {
   const st = appStore.systemStatus
@@ -84,7 +86,8 @@ async function handleLogin(): Promise<void> {
       appStore.setSession(
         res.user,
         res.subscriptionStatus?.daysRemaining ?? null,
-        rememberMe.value
+        rememberMe.value,
+        res.token
       )
       await appStore.loadSettings()
       swalSuccess(`مرحباً بك، ${res.user.full_name}`)
@@ -97,7 +100,8 @@ async function handleLogin(): Promise<void> {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await appStore.loadBusiness()
   appStore.fetchVersion()
   appStore.fetchSystemStatus()
 })
@@ -140,11 +144,11 @@ onMounted(() => {
             <div
               class="w-16 h-16 rounded-2xl bg-white border-2 border-white/30 flex items-center justify-center shadow-xl p-2 shrink-0"
             >
-              <img :src="jokerTechLogo" alt="صلحلي" class="w-full h-full object-contain" />
+              <img :src="jokerTechLogo" :alt="appStore.businessProfile.appName" class="w-full h-full object-contain" />
             </div>
             <div>
               <div class="flex items-center gap-2.5">
-                <h1 class="text-2xl md:text-3xl font-black tracking-tight">برنامج صلحلي</h1>
+                <h1 class="text-2xl md:text-3xl font-black tracking-tight">نظام {{ appStore.businessProfile.appName }}</h1>
                 <span
                   class="px-2.5 py-0.5 rounded-full bg-blue-500/30 border border-blue-300/40 text-blue-100 font-mono text-xs font-bold"
                 >
@@ -152,7 +156,7 @@ onMounted(() => {
                 </span>
               </div>
               <p class="text-blue-200 text-xs md:text-sm font-bold mt-1">
-                المنظومة المتكاملة لإدارة مراكز صيانة الأجهزة الكهربائية والمنزلية
+                {{ appStore.businessProfile.loginSubtitle }}
               </p>
             </div>
           </div>
@@ -165,7 +169,7 @@ onMounted(() => {
               <Sparkles class="w-4 h-4" />
               <span>نبذة مختصرة عن النظام:</span>
             </div>
-            صُمم نظام <strong>صلحلي</strong> ليمنح مراكز الصيانة تحكماً كاملاً وسريعاً في دورة العمل اليومية؛ بدءاً من استقبال جهاز العميل وتسجيل الأعطال والضمان، مروراً بمتابعة الفنيين وصرف قطع الغيار من المخزن، وصولاً إلى ضبط الخزينة والتقارير المالية الدقيقة.
+            صُمم نظام <strong>{{ appStore.appName }}</strong> ليمنح المركز تحكماً كاملاً وسريعاً في دورة العمل اليومية؛ بدءاً من استقبال طلب العميل وتسجيل البيانات، مروراً بمتابعة {{ t('technicians') }} وصرف {{ t('parts') }} من المخزن، وصولاً إلى ضبط الخزينة والتقارير المالية الدقيقة.
           </div>
 
           <!-- Key Features Grid -->

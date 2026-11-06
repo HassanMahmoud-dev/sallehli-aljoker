@@ -40,7 +40,74 @@ import {
   createBackupToFile,
   restoreBackupFromFile,
   runAutoBackup,
-  getDatabasePath
+  getDatabasePath,
+  resolveSession,
+  logoutUser,
+  getBusinessState,
+  getEffectiveModules,
+  setLicensedModules,
+  setInitialBusinessType,
+  switchBusinessType,
+  isBusinessDataEmpty,
+  listLookupItems,
+  saveLookupItem,
+  deleteLookupItem,
+  reorderLookupItems,
+  listCustomFieldDefs,
+  saveCustomFieldDef,
+  deleteCustomFieldDef,
+  reorderCustomFieldDefs,
+  listProducts,
+  getProductByBarcode,
+  saveProduct,
+  deleteProduct,
+  listProductSerials,
+  addProductSerials,
+  updateProductSerialStatus,
+  deleteProductSerial,
+  adjustProductStock,
+  listSuppliers,
+  saveSupplier,
+  deleteSupplier,
+  getSupplierStatement,
+  paySupplier,
+  listPurchaseInvoices,
+  savePurchaseInvoice,
+  deletePurchaseInvoice,
+  listSalesInvoices,
+  saveSalesInvoice,
+  collectSalesInstallment,
+  deleteSalesInvoice,
+  listInvoiceReturns,
+  createSalesReturn,
+  createPurchaseReturn,
+  listProductExchanges,
+  processProductExchange,
+  lookupSerialOrInvoiceForTicket,
+  returnTicketLoaner,
+  getPatientProfileBundle,
+  listHearingTests,
+  saveHearingTest,
+  deleteHearingTest,
+  getLatestHearingTestSummary,
+  listFollowups,
+  saveFollowup,
+  completeFollowup,
+  deleteFollowup,
+  listEarmoldOrders,
+  saveEarmoldOrder,
+  updateEarmoldOrderStatus,
+  remakeEarmoldOrder,
+  deleteEarmoldOrder,
+  listImplants,
+  saveImplant,
+  deleteImplant,
+  saveImplantSession,
+  deleteImplantSession,
+  listPatientAttachments,
+  savePatientAttachment,
+  openOrReadPatientAttachment,
+  deletePatientAttachment
 } from './db'
 import {
   checkForOnlineUpdate,
@@ -56,6 +123,10 @@ import {
   stopLanServer,
   getSystemControlStatus
 } from './lanServer'
+import { checkChannelAccess } from './channelPolicy'
+import { createBackupTicket, type SessionInfo } from './session'
+import { getBusinessProfile } from '../shared/businessProfiles'
+import type { BusinessType } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -64,6 +135,9 @@ function createWindow(): void {
     ? join(__dirname, '../../resources/icon.ico')
     : undefined
 
+  const bState = getBusinessState()
+  const profile = getBusinessProfile(bState.type)
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 880,
@@ -71,7 +145,7 @@ function createWindow(): void {
     minHeight: 700,
     show: false,
     icon: iconFile,
-    title: `صلحلي v${app.getVersion()} - نظام إدارة مركز صيانة الأجهزة الكهربائية`,
+    title: `${profile.appName} v${app.getVersion()} - ${profile.windowTitle}`,
     autoHideMenuBar: true,
     webPreferences: {
       preload: existsSync(join(__dirname, '../preload/index.mjs'))
@@ -102,53 +176,114 @@ function createWindow(): void {
 function registerIpcHandlers(): void {
   const handlers: Record<string, (...args: any[]) => any> = {
     // Auth & Users
-    'auth:login': (payload) => loginUser(payload),
-    'auth:verifySession': (userId: number) => verifySession(userId),
+    'auth:login': (_ctx, payload) => loginUser(payload),
+    'auth:verifySession': (_ctx, userId: number) => verifySession(userId),
     'users:list': () => listUsers(),
-    'users:save': (data) => saveUser(data),
-    'users:delete': (id: number) => deleteUser(id),
+    'users:save': (_ctx, data) => saveUser(data),
+    'users:delete': (_ctx, id: number) => deleteUser(id),
 
     // Customers & Appliances
-    'customers:list': (search?: string) => listCustomers(search),
-    'customers:findByPhone': (phone: string) => findCustomerByPhone(phone),
-    'customers:save': (data) => saveCustomer(data),
-    'customers:delete': (id: number) => deleteCustomer(id),
-    'customers:appliances': (customerId: number) => getCustomerAppliances(customerId),
-    'customers:saveAppliance': (data) => saveCustomerAppliance(data),
-    'customers:deleteAppliance': (id: number) => deleteCustomerAppliance(id),
+    'customers:list': (_ctx, search?: string) => listCustomers(search),
+    'customers:findByPhone': (_ctx, phone: string) => findCustomerByPhone(phone),
+    'customers:save': (_ctx, data) => saveCustomer(data),
+    'customers:delete': (_ctx, id: number) => deleteCustomer(id),
+    'customers:appliances': (_ctx, customerId: number) => getCustomerAppliances(customerId),
+    'customers:saveAppliance': (_ctx, data) => saveCustomerAppliance(data),
+    'customers:deleteAppliance': (_ctx, id: number) => deleteCustomerAppliance(id),
 
     // Technicians
     'technicians:list': () => listTechnicians(),
-    'technicians:save': (data) => saveTechnician(data),
-    'technicians:delete': (id: number) => deleteTechnician(id),
+    'technicians:save': (_ctx, data) => saveTechnician(data),
+    'technicians:delete': (_ctx, id: number) => deleteTechnician(id),
 
     // Spare Parts & Inventory
-    'parts:list': (search?: string) => listSpareParts(search),
-    'parts:save': (data) => saveSparePart(data),
-    'parts:delete': (id: number) => deleteSparePart(id),
-    'inventory:movement': (payload) => recordInventoryMovement(payload),
+    'parts:list': (_ctx, search?: string) => listSpareParts(search),
+    'parts:save': (_ctx, data) => saveSparePart(data),
+    'parts:delete': (_ctx, id: number) => deleteSparePart(id),
+    'inventory:movement': (_ctx, payload) => recordInventoryMovement(payload),
     'inventory:list': () => listInventoryMovements(),
 
+    // Phase 3A: Products, Variants, Serials & Suppliers
+    'products:list': (_ctx, filters) => listProducts(filters),
+    'products:getByBarcode': (_ctx, barcode: string) => getProductByBarcode(barcode),
+    'products:save': (_ctx, data) => saveProduct(data),
+    'products:delete': (_ctx, id: number) => deleteProduct(id),
+    'products:serials:list': (_ctx, filters) => listProductSerials(filters),
+    'products:serials:add': (_ctx, payload) => addProductSerials(payload),
+    'products:serials:updateStatus': (_ctx, payload) => updateProductSerialStatus(payload),
+    'products:serials:delete': (_ctx, id: number) => deleteProductSerial(id),
+    'products:adjustStock': (_ctx, payload) => adjustProductStock(payload),
+    'suppliers:list': (_ctx, search?: string) => listSuppliers(search),
+    'suppliers:save': (_ctx, data) => saveSupplier(data),
+    'suppliers:delete': (_ctx, id: number) => deleteSupplier(id),
+    'suppliers:statement': (_ctx, supplierId: number) => getSupplierStatement(supplierId),
+    'suppliers:pay': (_ctx, payload) => paySupplier(payload),
+
+    // Phase 3B, 3C, 3D & 3E: Purchases, Sales, Returns, Exchanges & Ticket Lookups
+    'purchases:list': (_ctx, filters) => listPurchaseInvoices(filters),
+    'purchases:save': (_ctx, data) => savePurchaseInvoice(data),
+    'purchases:delete': (_ctx, id: number) => deletePurchaseInvoice(id),
+    'sales:list': (_ctx, filters) => listSalesInvoices(filters),
+    'sales:save': (_ctx, data) => saveSalesInvoice(data),
+    'sales:collectInstallment': (_ctx, payload) => collectSalesInstallment(payload),
+    'sales:delete': (_ctx, id: number) => deleteSalesInvoice(id),
+    'returns:list': (_ctx, returnType) => listInvoiceReturns(returnType),
+    'returns:sales:create': (_ctx, payload) => createSalesReturn(payload),
+    'returns:purchases:create': (_ctx, payload) => createPurchaseReturn(payload),
+    'exchanges:list': () => listProductExchanges(),
+    'exchanges:process': (_ctx, payload) => processProductExchange(payload),
+    'tickets:lookupSerialOrInvoice': (_ctx, query: string) =>
+      lookupSerialOrInvoiceForTicket(query),
+    'tickets:returnLoaner': (_ctx, ticketId: number) => returnTicketLoaner(ticketId),
+
+    // Phase 4: Patient Medical Profile, Hearing Tests, Followups, Earmolds, Implants & Attachments
+    'patients:profile': (_ctx, patientId: number) => getPatientProfileBundle(patientId),
+    'hearingTests:list': (_ctx, filters) => listHearingTests(filters),
+    'hearingTests:save': (_ctx, data) => saveHearingTest(data),
+    'hearingTests:delete': (_ctx, id: number) => deleteHearingTest(id),
+    'hearingTests:latestSummary': (_ctx, patientId: number) =>
+      getLatestHearingTestSummary(patientId),
+    'followups:list': (_ctx, filters) => listFollowups(filters),
+    'followups:save': (_ctx, data) => saveFollowup(data),
+    'followups:complete': (_ctx, payload) => completeFollowup(payload),
+    'followups:delete': (_ctx, id: number) => deleteFollowup(id),
+    'earmolds:list': (_ctx, filters) => listEarmoldOrders(filters),
+    'earmolds:save': (_ctx, data) => saveEarmoldOrder(data),
+    'earmolds:updateStatus': (_ctx, payload) => updateEarmoldOrderStatus(payload),
+    'earmolds:remake': (_ctx, payload) => remakeEarmoldOrder(payload),
+    'earmolds:delete': (_ctx, id: number) => deleteEarmoldOrder(id),
+    'implants:list': (_ctx, filters) => listImplants(filters),
+    'implants:save': (_ctx, data) => saveImplant(data),
+    'implants:delete': (_ctx, id: number) => deleteImplant(id),
+    'implants:sessions:save': (_ctx, data) => saveImplantSession(data),
+    'implants:sessions:delete': (_ctx, id: number) => deleteImplantSession(id),
+    'attachments:list': (_ctx, payload: { patientId: number; entityType?: string; entityId?: number }) =>
+      listPatientAttachments(payload.patientId, payload.entityType, payload.entityId),
+    'attachments:upload': (_ctx, payload) => savePatientAttachment(payload),
+    'attachments:open': (_ctx, payload: { id: number; openExternal?: boolean }) =>
+      openOrReadPatientAttachment(payload.id, payload.openExternal),
+    'attachments:delete': (_ctx, id: number) => deletePatientAttachment(id),
+
     // Maintenance Tickets
-    'tickets:list': (filters) => listTickets(filters),
-    'tickets:save': (data) => saveTicket(data),
-    'tickets:updateImages': (payload) => updateTicketImages(payload),
-    'tickets:delete': (id: number) => deleteTicket(id),
+    'tickets:list': (_ctx, filters) => listTickets(filters),
+    'tickets:save': (_ctx, data) => saveTicket(data),
+    'tickets:updateImages': (_ctx, payload) => updateTicketImages(payload),
+    'tickets:delete': (_ctx, id: number) => deleteTicket(id),
 
     // Treasury & Reports
     'treasury:list': () => listTreasuryTransactions(),
-    'treasury:add': (data) => addTreasuryTransaction(data),
-    'treasury:transfer': (payload) => transferTreasuryFunds(payload),
-    'treasury:collectReceivable': (payload) => collectTicketReceivable(payload),
-    'treasury:delete': (id: number) => deleteTreasuryTransaction(id),
-    'reports:financial': (payload?: { dateFrom?: string; dateTo?: string }) =>
+    'treasury:add': (_ctx, data) => addTreasuryTransaction(data),
+    'treasury:transfer': (_ctx, payload) => transferTreasuryFunds(payload),
+    'treasury:collectReceivable': (_ctx, payload) => collectTicketReceivable(payload),
+    'treasury:delete': (_ctx, id: number) => deleteTreasuryTransaction(id),
+    'reports:financial': (_ctx, payload?: { dateFrom?: string; dateTo?: string }) =>
       getFinancialReport(payload?.dateFrom, payload?.dateTo),
 
     // Dashboard & Settings
     'app:version': () => app.getVersion(),
     'dashboard:stats': () => getDashboardStats(),
     'settings:get': () => getSettings(),
-    'settings:save': (settings) => saveSettings(settings),
+    'settings:save': (_ctx, settings) => saveSettings(settings),
     'db:path': () => getDatabasePath(),
 
     // Backup & Restore & Auto-Backup
@@ -173,6 +308,9 @@ function registerIpcHandlers(): void {
       })
       if (canceled || filePaths.length === 0) return { success: false }
       restoreBackupFromFile(filePaths[0])
+      const bState = getBusinessState()
+      const p = getBusinessProfile(bState.type)
+      mainWindow?.setTitle(`${p.appName} v${app.getVersion()} - ${p.windowTitle}`)
       return { success: true, filePath: filePaths[0] }
     },
     'backup:chooseDir': async () => {
@@ -187,13 +325,13 @@ function registerIpcHandlers(): void {
     'backup:autoNow': () => runAutoBackup(),
 
     // External Links (e.g. WhatsApp / Browser)
-    'shell:openExternal': async (url: string) => {
+    'shell:openExternal': async (_ctx, url: string) => {
       await shell.openExternal(url)
     },
 
     // Application Updates (Online & Offline & 24h Auto Check)
-    'update:check': async (customUrl?: string) => checkForOnlineUpdate(customUrl),
-    'update:downloadAndInstall': async (downloadUrl: string) =>
+    'update:check': async (_ctx, customUrl?: string) => checkForOnlineUpdate(customUrl),
+    'update:downloadAndInstall': async (_ctx, downloadUrl: string) =>
       downloadAndInstallOnlineUpdate(downloadUrl, mainWindow),
     'update:cancelDownload': () => cancelOnlineUpdateDownload(mainWindow),
     'update:installLocal': async () => installUpdateFromLocalFile(mainWindow),
@@ -201,7 +339,7 @@ function registerIpcHandlers(): void {
 
     // Super Admin System Control (LAN & Browser Server + Windows Startup)
     'system:status': () => getSystemControlStatus(),
-    'system:setBrowserConfig': async (enabled: boolean) => {
+    'system:setBrowserConfig': async (_ctx, enabled: boolean) => {
       const updated = saveSettings({ browser_enabled: enabled ? 1 : 0 })
       const shouldRun = Boolean(updated.browser_enabled ?? 1) || Boolean(updated.lan_enabled ?? 1)
       if (shouldRun) {
@@ -211,7 +349,7 @@ function registerIpcHandlers(): void {
       }
       return getSystemControlStatus()
     },
-    'system:setLanConfig': async (payload: { enabled: boolean; port?: number }) => {
+    'system:setLanConfig': async (_ctx, payload: { enabled: boolean; port?: number }) => {
       const cleanPort = Math.max(1024, Math.min(65535, Number(payload.port || 4545)))
       const updated = saveSettings({
         lan_enabled: payload.enabled ? 1 : 0,
@@ -225,7 +363,7 @@ function registerIpcHandlers(): void {
       }
       return getSystemControlStatus()
     },
-    'system:setAutoStart': (enabled: boolean) => {
+    'system:setAutoStart': (_ctx, enabled: boolean) => {
       saveSettings({ auto_start_windows: enabled ? 1 : 0 })
       try {
         app.setLoginItemSettings({
@@ -236,14 +374,115 @@ function registerIpcHandlers(): void {
         // Ignore in dev environment if unsupported
       }
       return getSystemControlStatus()
-    }
+    },
+
+    // Auth Session Management
+    'auth:logout': (ctx: { token: string | null }) => logoutUser(ctx.token),
+
+    // Business Profile & System Setup (Super Admin)
+    'business:getPublic': () => getBusinessState(),
+    'business:get': () => getBusinessState(),
+    'business:setInitial': (_ctx: unknown, type: BusinessType) => {
+      const res = setInitialBusinessType(type)
+      const p = getBusinessProfile(res.type)
+      mainWindow?.setTitle(`${p.appName} v${app.getVersion()} - ${p.windowTitle}`)
+      return res
+    },
+    'business:checkSwitch': () => isBusinessDataEmpty(),
+    'business:switch': (
+      ctx: { session: SessionInfo | null },
+      payload: { type: BusinessType; password?: string }
+    ) => {
+      const res = switchBusinessType(payload, ctx.session?.userId || 1)
+      const p = getBusinessProfile(res.type)
+      mainWindow?.setTitle(`${p.appName} v${app.getVersion()} - ${p.windowTitle}`)
+      return res
+    },
+    'business:setLicensedModules': (
+      ctx: { session: SessionInfo | null },
+      modules: string[]
+    ) => setLicensedModules(modules, ctx.session?.userId || 1),
+
+    // Dynamic Lookups (Types & Brands)
+    'lookups:list': (_ctx: unknown, category?: string) => listLookupItems(category),
+    'lookups:save': (_ctx: unknown, data: any) => saveLookupItem(data),
+    'lookups:delete': (_ctx: unknown, id: number) => deleteLookupItem(id),
+    'lookups:reorder': (_ctx: unknown, items: Array<{ id: number; sort_order: number }>) =>
+      reorderLookupItems(items),
+
+    // Custom Fields Definitions
+    'customFields:list': (_ctx: unknown, entity?: any) => listCustomFieldDefs(entity),
+    'customFields:save': (_ctx: unknown, data: any) => saveCustomFieldDef(data),
+    'customFields:delete': (_ctx: unknown, id: number) => deleteCustomFieldDef(id),
+    'customFields:reorder': (_ctx: unknown, items: Array<{ id: number; sort_order: number }>) =>
+      reorderCustomFieldDefs(items),
+
+    // Backup Download Ticket
+    'backup:createTicket': (ctx: { token: string | null }) => createBackupTicket(ctx.token)
   }
+
+  const wrappedHandlers: Record<string, (...args: any[]) => any> = {}
 
   for (const [channel, fn] of Object.entries(handlers)) {
-    ipcMain.handle(channel, (_e, ...args) => fn(...args))
+    const wrapped = async (...rawArgs: any[]) => {
+      let token: string | null = null
+      let actualArgs = rawArgs
+
+      if (
+        rawArgs.length > 0 &&
+        typeof rawArgs[0] === 'object' &&
+        rawArgs[0] !== null &&
+        '_token' in rawArgs[0]
+      ) {
+        token = rawArgs[0]._token || null
+        actualArgs = rawArgs.slice(1)
+      }
+
+      const session = token ? resolveSession(token) : null
+      const effectiveModules = getEffectiveModules()
+      const access = checkChannelAccess(channel, session, effectiveModules)
+      if (!access.allowed) {
+        throw new Error(access.reason || 'غير مصرح بتنفيذ هذه العملية')
+      }
+
+      const bState = getBusinessState()
+      if (bState.locked) {
+        const allowedWhenLocked = new Set([
+          'auth:login',
+          'auth:verifySession',
+          'auth:logout',
+          'app:version',
+          'settings:get',
+          'business:getPublic',
+          'shell:openExternal',
+          'business:get',
+          'business:setInitial',
+          'business:checkSwitch',
+          'business:switch',
+          'backup:create',
+          'backup:restore',
+          'backup:createTicket',
+          'db:path',
+          'lookups:list',
+          'customFields:list',
+          'system:status',
+          'users:list'
+        ])
+        if (!allowedWhenLocked.has(channel)) {
+          throw new Error(
+            'BUSINESS_LOCKED: تم قفل النظام بسبب اكتشاف تلاعب غير مصرح به في إعداد النشاط. يرجى مراجعة السوبر أدمن.'
+          )
+        }
+      }
+
+      return fn({ session, token }, ...actualArgs)
+    }
+
+    ipcMain.handle(channel, (_e, ...args) => wrapped(...args))
+    wrappedHandlers[channel] = wrapped
   }
 
-  registerRpcHandlers(handlers)
+  registerRpcHandlers(wrappedHandlers)
 }
 
 app.whenReady().then(async () => {

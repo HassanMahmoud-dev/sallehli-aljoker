@@ -1,58 +1,9 @@
-export const APPLIANCE_TYPES = [
-  'غسالة أوتوماتيك',
-  'غسالة فوق أوتوماتيك',
-  'غسالة هاف أوتوماتيك',
-  'مجفف ملابس (دراير)',
-  'غسالة أطباق',
-  'ثلاجة نوفروست',
-  'ثلاجة ديفروست',
-  'ثلاجة دوبلكس / انفرتر',
-  'ديب فريزر رأسي (أدراج)',
-  'ديب فريزر أفقي (صندوق)',
-  'تكييف سبليت',
-  'تكييف شباك / كونسيلد',
-  'بوتاجاز غاز / بلت إن',
-  'سخان غاز',
-  'سخان كهرباء',
-  'ميكروويف / فرن كهربائي',
-  'مبرد مياه (كولديير)',
-  'جهاز كهربائي آخر'
-]
+import { APPLIANCES_PROFILE } from '@shared/businessProfiles'
 
-export const APPLIANCE_BRANDS = [
-  'LG (إل جي)',
-  'Samsung (سامسونج)',
-  'Toshiba (توشيبا)',
-  'Sharp (شارب)',
-  'Fresh (فريش)',
-  'Kiriazi (كريازي)',
-  'Zanussi (زانوسي)',
-  'Beko (بيكو)',
-  'Tornado (تورنيدو)',
-  'Unionaire (يونيون إير)',
-  'Carrier (كاريير)',
-  'Ariston (أريستون)',
-  'Indesit (إنديست)',
-  'White Point (وايت بوينت)',
-  'White Whale (وايت ويل)',
-  'Hoover (هوفر)',
-  'Olympic (أوليمبيك)',
-  'Universal (يونيفرسال)',
-  'Electrostar (إلكتروستار)',
-  'Passap (باساب)',
-  'أخرى'
-]
+export const APPLIANCE_TYPES = APPLIANCES_PROFILE.defaultDeviceTypes
+export const APPLIANCE_BRANDS = APPLIANCES_PROFILE.defaultBrands
+export const PART_CATEGORIES = APPLIANCES_PROFILE.defaultPartCategories
 
-export const PART_CATEGORIES = [
-  'غسالات',
-  'ثلاجات وديب فريزر',
-  'تكييفات',
-  'بوتاجازات وسخانات',
-  'كروت إلكترونية وحساسات',
-  'مواتير وكباسات',
-  'فريون وخامات تبريد',
-  'عام'
-]
 
 export const TICKET_STATUS_MAP: Record<
   string,
@@ -73,6 +24,14 @@ export const TICKET_STATUS_MAP: Record<
   waiting_parts: {
     label: 'بانتظار قطعة غيار / موافقة',
     badgeClass: 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300 border-orange-200 dark:border-orange-800'
+  },
+  sent_to_lab: {
+    label: 'أُرسلت للشركة / المعمل (صيانة خارجية)',
+    badgeClass: 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 border-purple-200 dark:border-purple-800'
+  },
+  returned_from_lab: {
+    label: 'عادت من الشركة / المعمل',
+    badgeClass: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800'
   },
   repaired: {
     label: 'تم الإصلاح (جاهز للتسليم)',
@@ -113,7 +72,7 @@ export const USER_ROLE_LABELS: Record<string, { label: string; desc: string; bad
   },
   receptionist: {
     label: 'موظف استقبال وخدمة عملاء',
-    desc: 'تسجيل البلاغات والعملاء والأجهزة بدون رؤية الخزينة والأرباح',
+    desc: 'تسجيل الطلبات والعملاء بدون رؤية الخزينة والأرباح',
     badge: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300'
   },
   cashier: {
@@ -122,8 +81,8 @@ export const USER_ROLE_LABELS: Record<string, { label: string; desc: string; bad
     badge: 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300'
   },
   storekeeper: {
-    label: 'أمين مخزن قطع الغيار',
-    desc: 'إدارة مخزن قطع الغيار وعهدة الفنيين وطلبات الصيانة',
+    label: 'أمين / مسؤول المخزن',
+    desc: 'إدارة المخزن والمستلزمات وعهدة الفنيين وطلبات الصيانة',
     badge: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300'
   }
 }

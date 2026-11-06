@@ -1,10 +1,13 @@
 import type { IElectronAPI } from '../../../preload/index.d'
 
+let currentSessionToken = ''
+
 async function invokeHttp(channel: string, ...args: unknown[]): Promise<any> {
+  const tokenArg = { _token: currentSessionToken }
   const res = await fetch('/api/rpc', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ channel, args })
+    body: JSON.stringify({ channel, token: currentSessionToken, args: [tokenArg, ...args] })
   })
   const data = await res.json()
   if (!res.ok || !data?.ok) {
@@ -17,8 +20,12 @@ export function ensureWebApiBridge(): void {
   if (typeof window === 'undefined' || window.api) return
 
   const webApi: IElectronAPI = {
+    setSessionToken: (token: string) => {
+      currentSessionToken = token
+    },
+    logout: () => invokeHttp('auth:logout'),
     login: (payload) => invokeHttp('auth:login', payload),
-    verifySession: (userId) => invokeHttp('auth:verifySession', userId),
+    verifySession: (identifier) => invokeHttp('auth:verifySession', identifier),
     listUsers: () => invokeHttp('users:list'),
     saveUser: (data) => invokeHttp('users:save', data),
     deleteUser: (id) => invokeHttp('users:delete', id),
@@ -41,6 +48,67 @@ export function ensureWebApiBridge(): void {
     recordInventoryMovement: (payload) => invokeHttp('inventory:movement', payload),
     listInventoryMovements: () => invokeHttp('inventory:list'),
 
+    listProducts: (filters) => invokeHttp('products:list', filters),
+    getProductByBarcode: (barcode) => invokeHttp('products:getByBarcode', barcode),
+    saveProduct: (data) => invokeHttp('products:save', data),
+    deleteProduct: (id) => invokeHttp('products:delete', id),
+    listProductSerials: (filters) => invokeHttp('products:serials:list', filters),
+    addProductSerials: (payload) => invokeHttp('products:serials:add', payload),
+    updateProductSerialStatus: (payload) => invokeHttp('products:serials:updateStatus', payload),
+    deleteProductSerial: (id) => invokeHttp('products:serials:delete', id),
+    adjustProductStock: (payload) => invokeHttp('products:adjustStock', payload),
+    listSuppliers: (search) => invokeHttp('suppliers:list', search),
+    saveSupplier: (data) => invokeHttp('suppliers:save', data),
+    deleteSupplier: (id) => invokeHttp('suppliers:delete', id),
+    getSupplierStatement: (supplierId) => invokeHttp('suppliers:statement', supplierId),
+    paySupplier: (payload) => invokeHttp('suppliers:pay', payload),
+
+    listPurchaseInvoices: (filters) => invokeHttp('purchases:list', filters),
+    savePurchaseInvoice: (data) => invokeHttp('purchases:save', data),
+    deletePurchaseInvoice: (id) => invokeHttp('purchases:delete', id),
+
+    listSalesInvoices: (filters) => invokeHttp('sales:list', filters),
+    saveSalesInvoice: (data) => invokeHttp('sales:save', data),
+    collectSalesInstallment: (payload) => invokeHttp('sales:collectInstallment', payload),
+    deleteSalesInvoice: (id) => invokeHttp('sales:delete', id),
+
+    listInvoiceReturns: (returnType) => invokeHttp('returns:list', returnType),
+    createSalesReturn: (payload) => invokeHttp('returns:sales:create', payload),
+    createPurchaseReturn: (payload) => invokeHttp('returns:purchases:create', payload),
+    listProductExchanges: () => invokeHttp('exchanges:list'),
+    processProductExchange: (payload) => invokeHttp('exchanges:process', payload),
+
+    lookupSerialOrInvoiceForTicket: (query) => invokeHttp('tickets:lookupSerialOrInvoice', query),
+    returnTicketLoaner: (ticketId) => invokeHttp('tickets:returnLoaner', ticketId),
+
+    getPatientProfileBundle: (patientId) => invokeHttp('patients:profile', patientId),
+    listHearingTests: (filters) => invokeHttp('hearingTests:list', filters),
+    saveHearingTest: (data) => invokeHttp('hearingTests:save', data),
+    deleteHearingTest: (id) => invokeHttp('hearingTests:delete', id),
+    getLatestHearingTestSummary: (patientId) => invokeHttp('hearingTests:latestSummary', patientId),
+
+    listFollowups: (filters) => invokeHttp('followups:list', filters),
+    saveFollowup: (data) => invokeHttp('followups:save', data),
+    completeFollowup: (payload) => invokeHttp('followups:complete', payload),
+    deleteFollowup: (id) => invokeHttp('followups:delete', id),
+
+    listEarmoldOrders: (filters) => invokeHttp('earmolds:list', filters),
+    saveEarmoldOrder: (data) => invokeHttp('earmolds:save', data),
+    updateEarmoldOrderStatus: (payload) => invokeHttp('earmolds:updateStatus', payload),
+    remakeEarmoldOrder: (payload) => invokeHttp('earmolds:remake', payload),
+    deleteEarmoldOrder: (id) => invokeHttp('earmolds:delete', id),
+
+    listImplants: (filters) => invokeHttp('implants:list', filters),
+    saveImplant: (data) => invokeHttp('implants:save', data),
+    deleteImplant: (id) => invokeHttp('implants:delete', id),
+    saveImplantSession: (data) => invokeHttp('implants:sessions:save', data),
+    deleteImplantSession: (id) => invokeHttp('implants:sessions:delete', id),
+
+    listPatientAttachments: (payload) => invokeHttp('attachments:list', payload),
+    uploadPatientAttachment: (payload) => invokeHttp('attachments:upload', payload),
+    openPatientAttachment: (payload) => invokeHttp('attachments:open', payload),
+    deletePatientAttachment: (id) => invokeHttp('attachments:delete', id),
+
     listTickets: (filters) => invokeHttp('tickets:list', filters),
     saveTicket: (data) => invokeHttp('tickets:save', data),
     updateTicketImages: (payload) => invokeHttp('tickets:updateImages', payload),
@@ -60,9 +128,15 @@ export function ensureWebApiBridge(): void {
     getDatabasePath: () => invokeHttp('db:path'),
 
     createBackup: async () => {
-      window.open('/api/backup/download', '_blank')
-      return { success: true, filePath: 'تم بدء تحميل النسخة الاحتياطية في المتصفح' }
+      try {
+        const ticket = await invokeHttp('backup:createTicket')
+        window.open(`/api/backup/download?ticket=${encodeURIComponent(ticket || '')}`, '_blank')
+        return { success: true, filePath: 'تم بدء تحميل النسخة الاحتياطية في المتصفح' }
+      } catch (e: any) {
+        throw new Error(e?.message || 'فشل طلب تصريح تحميل النسخة الاحتياطية')
+      }
     },
+    createBackupTicket: () => invokeHttp('backup:createTicket'),
     restoreBackup: () => invokeHttp('backup:restore'),
     chooseBackupDir: () => invokeHttp('backup:chooseDir'),
     runAutoBackupNow: () => invokeHttp('backup:autoNow'),
@@ -82,7 +156,23 @@ export function ensureWebApiBridge(): void {
     getSystemStatus: () => invokeHttp('system:status'),
     setBrowserConfig: (enabled) => invokeHttp('system:setBrowserConfig', enabled),
     setLanConfig: (payload) => invokeHttp('system:setLanConfig', payload),
-    setAutoStartWindows: (enabled) => invokeHttp('system:setAutoStart', enabled)
+    setAutoStartWindows: (enabled) => invokeHttp('system:setAutoStart', enabled),
+
+    // Business Profiles & Dynamic Lookups
+    getBusinessPublic: () => invokeHttp('business:getPublic'),
+    getBusiness: () => invokeHttp('business:get'),
+    setInitialBusiness: (type) => invokeHttp('business:setInitial', type),
+    checkBusinessSwitch: () => invokeHttp('business:checkSwitch'),
+    switchBusiness: (payload) => invokeHttp('business:switch', payload),
+    setLicensedModules: (modules) => invokeHttp('business:setLicensedModules', modules),
+    listLookups: (category) => invokeHttp('lookups:list', category),
+    saveLookup: (data) => invokeHttp('lookups:save', data),
+    deleteLookup: (id) => invokeHttp('lookups:delete', id),
+    reorderLookups: (items) => invokeHttp('lookups:reorder', items),
+    listCustomFields: (entity) => invokeHttp('customFields:list', entity),
+    saveCustomField: (data) => invokeHttp('customFields:save', data),
+    deleteCustomField: (id) => invokeHttp('customFields:delete', id),
+    reorderCustomFields: (items) => invokeHttp('customFields:reorder', items)
   }
 
   window.api = webApi

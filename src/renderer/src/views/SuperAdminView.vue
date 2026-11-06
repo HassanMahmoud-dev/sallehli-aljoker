@@ -231,7 +231,7 @@ onMounted(loadUsers)
       <div class="flex flex-wrap items-center gap-2.5">
         <router-link
           v-if="appStore.isSuperAdmin"
-          to="/system-control"
+          to="/program-settings?tab=system"
           class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600/40 hover:bg-purple-600/60 border border-purple-400/40 text-white font-black text-xs transition"
         >
           <span>إعدادات الشبكة والمتصفح والويندوز</span>
@@ -482,7 +482,7 @@ onMounted(loadUsers)
                 </option>
                 <option value="receptionist">موظف استقبال وخدمة عملاء</option>
                 <option value="cashier">كاشير / محاسب مالي</option>
-                <option value="storekeeper">أمين مخزن قطع الغيار</option>
+                <option value="storekeeper">مسؤول / أمين المخزن</option>
               </select>
             </div>
             <div>

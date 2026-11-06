@@ -3,6 +3,8 @@ import { plain } from '@renderer/utils/plain'
 import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { ref, onMounted } from 'vue'
 import { useAppStore } from '@renderer/stores/appStore'
+import LookupManager from '@renderer/components/LookupManager.vue'
+import CustomFieldManager from '@renderer/components/CustomFieldManager.vue'
 import jokerTechLogo from '@renderer/assets/joker-tech-logo.png'
 import type { CenterSettings } from '@shared/types'
 import {
@@ -237,6 +239,15 @@ onMounted(loadSettingsData)
               class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold"
             />
           </div>
+          <div v-if="appStore.businessType === 'hearing_aids'">
+            <label class="block font-bold mb-1">مهلة سياسة الاستبدال (بالأيام)</label>
+            <input
+              v-model.number="form.exchange_policy_days"
+              type="number"
+              min="0"
+              class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold"
+            />
+          </div>
         </div>
 
         <div>
@@ -432,12 +443,18 @@ onMounted(loadSettingsData)
                 تطوير: الجوكر تك (Al-Joker Tech)
               </div>
               <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                برنامج صلحلي — نظام إدارة مراكز صيانة الأجهزة الكهربائية والمنزلية.
+                {{ appStore.appName }} — {{ appStore.businessProfile.loginSubtitle }}
               </p>
             </div>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- Dynamic Lookups Manager (Device Types & Brands) -->
+    <LookupManager />
+
+    <!-- Dynamic Custom Fields Manager -->
+    <CustomFieldManager />
   </div>
 </template>

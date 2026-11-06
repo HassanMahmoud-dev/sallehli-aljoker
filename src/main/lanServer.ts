@@ -2,9 +2,10 @@ import http from 'http'
 import os from 'os'
 import { app } from 'electron'
 import { join, extname, normalize } from 'path'
-import { existsSync, createReadStream, statSync, unlinkSync } from 'fs'
+import { existsSync, createReadStream, statSync, unlinkSync, rmSync } from 'fs'
 import { is } from '@electron-toolkit/utils'
 import { getSettings, createBackupToFile } from './db'
+import { consumeBackupTicket } from './session'
 import type { SystemControlStatus } from '../shared/types'
 
 let server: http.Server | null = null
@@ -179,7 +180,12 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     try {
       const body = await readJsonBody(req)
       const channel = String(body?.channel || '')
-      const args = Array.isArray(body?.args) ? body.args : []
+      let args = Array.isArray(body?.args) ? body.args : []
+
+      // If token provided separately in body, ensure args[0] is { _token: token }
+      if (body?.token && (!args.length || typeof args[0] !== 'object' || !('_token' in (args[0] || {})))) {
+        args = [{ _token: body.token }, ...args]
+      }
 
       const handler = rpcHandlers[channel]
       if (!handler) {
@@ -199,9 +205,20 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     return
   }
 
-  // 2. Direct Backup Download for Browser Clients
+  // 2. Direct Backup Download for Browser Clients (Protected with single-use ticket)
   if (req.method === 'GET' && reqUrl === '/api/backup/download') {
     try {
+      const fullUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
+      const ticket = fullUrl.searchParams.get('ticket')
+
+      if (!consumeBackupTicket(ticket)) {
+        res.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(
+          '<div dir="rtl" style="font-family:sans-serif;text-align:center;padding:60px;"><h2>غير مصرح بتحميل النسخة الاحتياطية. يلزم صلاحية مدير وتذكرة أمان صالحة.</h2></div>'
+        )
+        return
+      }
+
       const dateStr = new Date().toISOString().slice(0, 10)
       const tempPath = join(app.getPath('temp'), `Sallehli-Backup-${Date.now()}.sqlite`)
       createBackupToFile(tempPath)
@@ -220,6 +237,14 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
           if (existsSync(tempPath)) unlinkSync(tempPath)
         } catch {
           // Ignore
+        }
+        try {
+          const companionDir = `${tempPath}.attachments`
+          if (existsSync(companionDir)) {
+            rmSync(companionDir, { recursive: true, force: true })
+          }
+        } catch {
+          // Ignore companion cleanup error
         }
       })
     } catch (err) {

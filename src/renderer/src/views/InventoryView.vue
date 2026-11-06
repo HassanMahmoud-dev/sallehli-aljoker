@@ -3,8 +3,8 @@ import { plain } from '@renderer/utils/plain'
 import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { ref, onMounted, watch } from 'vue'
 import type { SparePart, InventoryMovement, Technician } from '@shared/types'
-import { PART_CATEGORIES } from '@renderer/constants/appliances'
 import { useAppStore } from '@renderer/stores/appStore'
+import { useTerms } from '@renderer/composables/useTerms'
 import { compressImageFile } from '@renderer/utils/imageHelper'
 import {
   Package,
@@ -21,6 +21,7 @@ import {
 } from 'lucide-vue-next'
 
 const appStore = useAppStore()
+const { t } = useTerms()
 const parts = ref<SparePart[]>([])
 const movements = ref<InventoryMovement[]>([])
 const technicians = ref<Technician[]>([])
@@ -33,7 +34,7 @@ const moveModalOpen = ref(false)
 const partForm = ref<Partial<SparePart>>({
   code: '',
   name: '',
-  category: PART_CATEGORIES[0],
+  category: appStore.partCategories[0] || 'أخرى',
   brand: 'عام',
   purchase_price: 0,
   selling_price: 0,
@@ -87,7 +88,7 @@ function openCreatePartModal(): void {
   partForm.value = {
     code: `PT-${Math.floor(1000 + Math.random() * 9000)}`,
     name: '',
-    category: PART_CATEGORIES[0],
+    category: appStore.partCategories[0] || 'أخرى',
     brand: 'عام',
     purchase_price: 0,
     selling_price: 0,
@@ -119,7 +120,7 @@ function openMovementModal(p: SparePart, type: InventoryMovement['movement_type'
 
 async function handleSavePart(): Promise<void> {
   if (!partForm.value.name?.trim()) {
-    swalError('بيانات غير مكتملة', 'يرجى إدخال اسم قطعة الغيار')
+    swalError('بيانات غير مكتملة', `يرجى إدخال اسم ${t('part')}`)
     return
   }
   const isEdit = Boolean(partForm.value.id)
@@ -128,10 +129,10 @@ async function handleSavePart(): Promise<void> {
       await window.api.saveSparePart(plain(partForm.value))
       partModalOpen.value = false
       await loadData()
-    }, isEdit ? 'جاري حفظ تعديلات الصنف...' : 'جاري إضافة قطعة الغيار للمخزن...')
-    swalSuccess(isEdit ? 'تم حفظ تعديلات قطعة الغيار بنجاح' : 'تمت إضافة قطعة الغيار للمخزن بنجاح')
+    }, isEdit ? 'جاري حفظ تعديلات الصنف...' : `جاري إضافة ${t('part')} للمخزن...`)
+    swalSuccess(isEdit ? `تم حفظ تعديلات ${t('part')} بنجاح` : `تمت إضافة ${t('part')} للمخزن بنجاح`)
   } catch (err: unknown) {
-    swalError('تعذر حفظ قطعة الغيار', err instanceof Error ? err.message : '')
+    swalError(`تعذر حفظ ${t('part')}`, err instanceof Error ? err.message : '')
   }
 }
 
@@ -151,17 +152,17 @@ async function handleRecordMovement(): Promise<void> {
 async function handleDeletePart(p: SparePart): Promise<void> {
   const confirmed = await swalConfirm(
     `حذف الصنف (${p.name})؟`,
-    'هل أنت متأكد من حذف قطعة الغيار هذه من المخزن؟'
+    `هل أنت متأكد من حذف ${t('part')} هذه من المخزن؟`
   )
   if (!confirmed) return
   try {
     await appStore.withLoading(async () => {
       await window.api.deleteSparePart(p.id)
       await loadData()
-    }, 'جاري حذف قطعة الغيار...')
-    swalSuccess('تم حذف قطعة الغيار بنجاح')
+    }, `جاري حذف ${t('part')}...`)
+    swalSuccess(`تم حذف ${t('part')} بنجاح`)
   } catch {
-    swalError('لا يمكن الحذف', 'لا يمكن حذف قطعة غيار مستخدمة في طلبات صيانة سابقة')
+    swalError('لا يمكن الحذف', `لا يمكن حذف ${t('part')} مستخدمة في طلبات صيانة سابقة`)
   }
 }
 
@@ -185,10 +186,10 @@ onMounted(loadData)
       <div>
         <h1 class="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
           <Package class="w-5 h-5 text-blue-600" />
-          مخزن قطع الغيار وعهدة الفنيين
+          {{ t('partsStore') }} وعهدة الفنيين
         </h1>
         <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-          إدارة أرصدة وصور قطع الغيار، أسعار الشراء والبيع، تنبيهات النواقص، وصرف واستلام عهدة الفنيين
+          إدارة أرصدة وصور {{ t('parts') }}، أسعار الشراء والبيع، تنبيهات النواقص، وصرف واستلام عهدة الفنيين
         </p>
       </div>
 
@@ -226,7 +227,7 @@ onMounted(loadData)
           class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md cursor-pointer"
         >
           <PlusCircle class="w-4 h-4" />
-          إضافة قطعة غيار جديدة
+          إضافة {{ t('part') }} جديدة
         </button>
       </div>
     </div>
@@ -239,7 +240,7 @@ onMounted(loadData)
       <input
         v-model="searchQuery"
         type="text"
-        placeholder="بحث بكود القطعة، الاسم، التصنيف، أو الماركة..."
+        :placeholder="`بحث بكود ${t('part')}، الاسم، التصنيف، أو ${t('brand')}...`"
         class="w-full pr-10 pl-4 py-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
       />
     </div>
@@ -254,8 +255,8 @@ onMounted(loadData)
           <tr>
             <th class="py-3.5 px-4">الصورة</th>
             <th class="py-3.5 px-4">الكود</th>
-            <th class="py-3.5 px-4">اسم قطعة الغيار</th>
-            <th class="py-3.5 px-4">التصنيف والماركة</th>
+            <th class="py-3.5 px-4">اسم {{ t('part') }}</th>
+            <th class="py-3.5 px-4">التصنيف و{{ t('brand') }}</th>
             <th v-if="appStore.canViewPurchasePrices" class="py-3.5 px-4">سعر الشراء</th>
             <th class="py-3.5 px-4">سعر البيع للعميل</th>
             <th class="py-3.5 px-4">الرصيد المتاح</th>
@@ -274,7 +275,7 @@ onMounted(loadData)
                 v-if="p.image_base64"
                 @click="appStore.openImagePreview(p.image_base64, `${p.name} (${p.code})`)"
                 class="w-11 h-11 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition bg-white"
-                title="اضغط لتكبير صورة قطعة الغيار"
+                :title="'اضغط لتكبير صورة ' + t('part')"
               >
                 <img :src="p.image_base64" :alt="p.name" class="w-full h-full object-cover" />
               </div>
@@ -364,7 +365,7 @@ onMounted(loadData)
         <thead class="bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 font-bold">
           <tr>
             <th class="py-3.5 px-4">التاريخ</th>
-            <th class="py-3.5 px-4">قطعة الغيار</th>
+            <th class="py-3.5 px-4">{{ t('part') }}</th>
             <th class="py-3.5 px-4">نوع الحركة</th>
             <th class="py-3.5 px-4">الكمية</th>
             <th class="py-3.5 px-4">الفني المرتبط</th>
@@ -410,7 +411,7 @@ onMounted(loadData)
           class="px-6 py-4 bg-slate-100 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between"
         >
           <h3 class="font-bold text-sm">
-            {{ partForm.id ? 'تعديل بيانات قطعة الغيار' : 'إضافة قطعة غيار جديدة للمخزن' }}
+            {{ partForm.id ? `تعديل بيانات ${t('part')}` : `إضافة ${t('part')} جديدة للمخزن` }}
           </h3>
           <button @click="partModalOpen = false" class="cursor-pointer">
             <X class="w-4 h-4" />
@@ -425,7 +426,7 @@ onMounted(loadData)
             <div class="flex items-center gap-3">
               <div
                 v-if="partForm.image_base64"
-                @click="appStore.openImagePreview(partForm.image_base64, partForm.name || 'صورة قطعة الغيار')"
+                @click="appStore.openImagePreview(partForm.image_base64, partForm.name || ('صورة ' + t('part')))"
                 class="w-16 h-16 rounded-xl border border-blue-300 overflow-hidden bg-white cursor-pointer shrink-0"
               >
                 <img :src="partForm.image_base64" class="w-full h-full object-cover" />
@@ -437,9 +438,9 @@ onMounted(loadData)
                 <ImageIcon class="w-6 h-6" />
               </div>
               <div>
-                <div class="font-bold text-slate-900 dark:text-white">صورة قطعة الغيار</div>
+                <div class="font-bold text-slate-900 dark:text-white">صورة {{ t('part') }}</div>
                 <div class="text-[11px] text-slate-500">
-                  أرفق صورة واضحة للقطعة لسهولة التعرف عليها في المخزن
+                  أرفق صورة واضحة للصنف لسهولة التعرف عليه في المخزن
                 </div>
               </div>
             </div>
@@ -470,7 +471,7 @@ onMounted(loadData)
 
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block font-bold mb-1">كود القطعة *</label>
+              <label class="block font-bold mb-1">كود {{ t('part') }} *</label>
               <input
                 v-model="partForm.code"
                 required
@@ -484,18 +485,18 @@ onMounted(loadData)
                 v-model="partForm.category"
                 class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold"
               >
-                <option v-for="c in PART_CATEGORIES" :key="c" :value="c">{{ c }}</option>
+                <option v-for="c in appStore.partCategories" :key="c" :value="c">{{ c }}</option>
               </select>
             </div>
           </div>
 
           <div>
-            <label class="block font-bold mb-1">اسم وبيان قطعة الغيار *</label>
+            <label class="block font-bold mb-1">اسم وبيان {{ t('part') }} *</label>
             <input
               v-model="partForm.name"
               required
               type="text"
-              placeholder="مثال: طلمبة طرد غسالة أوتوماتيك إل جي أصلية"
+              :placeholder="t('partNamePlaceholder')"
               class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold"
             />
           </div>
@@ -605,7 +606,7 @@ onMounted(loadData)
               <option value="in">توريد وشراء جديد للمخزن (+)</option>
               <option value="custody_issue">صرف عهدة لفني (-)</option>
               <option value="custody_return">إرجاع عهدة سليمة من فني للمخزن (+)</option>
-              <option value="damaged">تسجيل قطعة تالفة / مرتجع تالف (-)</option>
+              <option value="damaged">تسجيل تالف / مرتجع تالف (-)</option>
             </select>
           </div>
 

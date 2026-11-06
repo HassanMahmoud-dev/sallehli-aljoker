@@ -4,10 +4,12 @@ import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { ref, onMounted } from 'vue'
 import type { Technician } from '@shared/types'
 import { useAppStore } from '@renderer/stores/appStore'
+import { useTerms } from '@renderer/composables/useTerms'
 import { compressImageFile } from '@renderer/utils/imageHelper'
 import { UserCog, UserPlus, Edit3, Trash2, Wallet, Upload, Camera, X } from 'lucide-vue-next'
 
 const appStore = useAppStore()
+const { t: term } = useTerms()
 const technicians = ref<Technician[]>([])
 const modalOpen = ref(false)
 const payoutModalOpen = ref(false)
@@ -18,7 +20,7 @@ const payoutNotes = ref('')
 const form = ref<Partial<Technician>>({
   name: '',
   phone: '',
-  specialty: 'غسالات أوتوماتيك وفوق أوتوماتيك',
+  specialty: term('specialtyDefault'),
   commission_rate: 30,
   base_salary: 0,
   is_active: 1,
@@ -42,7 +44,7 @@ function openCreateModal(): void {
   form.value = {
     name: '',
     phone: '',
-    specialty: 'غسالات أوتوماتيك وفوق أوتوماتيك',
+    specialty: term('specialtyDefault'),
     commission_rate: 30,
     base_salary: 0,
     is_active: 1,
@@ -61,13 +63,13 @@ function openPayoutModal(t: Technician): void {
   selectedTech.value = t
   const due = Math.max(0, (t.total_earned_commission || 0) - (t.total_paid_commission || 0))
   payoutAmount.value = Math.round(due)
-  payoutNotes.value = `صرف عمولة صيانة للفني: ${t.name}`
+  payoutNotes.value = `صرف عمولة لـ ${term('technician')}: ${t.name}`
   payoutModalOpen.value = true
 }
 
 async function handleSaveTechnician(): Promise<void> {
   if (!form.value.name?.trim() || !form.value.phone?.trim()) {
-    swalError('بيانات غير مكتملة', 'يرجى إدخال اسم الفني ورقم الهاتف')
+    swalError('بيانات غير مكتملة', `يرجى إدخال اسم ${term('technician')} ورقم الهاتف`)
     return
   }
   const isEdit = Boolean(form.value.id)
@@ -76,10 +78,10 @@ async function handleSaveTechnician(): Promise<void> {
       await window.api.saveTechnician(plain(form.value))
       modalOpen.value = false
       await loadTechnicians()
-    }, isEdit ? 'جاري حفظ تعديلات الفني...' : 'جاري إضافة الفني الجديد...')
-    swalSuccess(isEdit ? 'تم حفظ تعديلات بيانات الفني بنجاح' : 'تمت إضافة الفني الجديد بنجاح')
+    }, isEdit ? `جاري حفظ تعديلات ${term('technician')}...` : `جاري إضافة ${term('technician')} جديد...`)
+    swalSuccess(isEdit ? `تم حفظ تعديلات بيانات ${term('technician')} بنجاح` : `تمت إضافة ${term('technician')} بنجاح`)
   } catch (err: unknown) {
-    swalError('تعذر حفظ الفني', err instanceof Error ? err.message : '')
+    swalError(`تعذر حفظ ${term('technician')}`, err instanceof Error ? err.message : '')
   }
 }
 
@@ -89,35 +91,35 @@ async function handleConfirmPayout(): Promise<void> {
     await appStore.withLoading(async () => {
       await window.api.addTreasuryTransaction({
         transaction_type: 'tech_commission',
-        category: 'عمولات ويوميات فنيين',
+        category: 'عمولات ومستحقات',
         amount: payoutAmount.value,
         technician_id: selectedTech.value!.id,
         payment_method: 'cash',
-        description: payoutNotes.value || `صرف مستحقات الفني ${selectedTech.value!.name}`
+        description: payoutNotes.value || `صرف مستحقات ${term('technician')} ${selectedTech.value!.name}`
       })
       payoutModalOpen.value = false
       await loadTechnicians()
-    }, 'جاري صرف العمولة وتسجيلها بالخزينة...')
-    swalSuccess('تم صرف العمولة وتسجيلها بالخزينة بنجاح')
+    }, 'جاري صرف المستحقات وتسجيلها بالخزينة...')
+    swalSuccess('تم صرف المستحقات وتسجيلها بالخزينة بنجاح')
   } catch (err: unknown) {
-    swalError('تعذر صرف العمولة', err instanceof Error ? err.message : '')
+    swalError('تعذر صرف المستحقات', err instanceof Error ? err.message : '')
   }
 }
 
 async function handleDeleteTechnician(t: Technician): Promise<void> {
   const confirmed = await swalConfirm(
-    `حذف الفني (${t.name})؟`,
-    'هل أنت متأكد من حذف بيانات هذا الفني؟'
+    `حذف (${t.name})؟`,
+    `هل أنت متأكد من حذف بيانات هذا الـ ${term('technician')}؟`
   )
   if (!confirmed) return
   try {
     await appStore.withLoading(async () => {
       await window.api.deleteTechnician(t.id)
       await loadTechnicians()
-    }, 'جاري حذف الفني...')
-    swalSuccess('تم حذف الفني بنجاح')
+    }, `جاري حذف ${term('technician')}...`)
+    swalSuccess(`تم حذف ${term('technician')} بنجاح`)
   } catch (err: unknown) {
-    swalError('تعذر حذف الفني', err instanceof Error ? err.message : '')
+    swalError(`تعذر حذف ${term('technician')}`, err instanceof Error ? err.message : '')
   }
 }
 
@@ -133,10 +135,10 @@ onMounted(loadTechnicians)
       <div>
         <h1 class="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
           <UserCog class="w-5 h-5 text-blue-600" />
-          إدارة الفنيين، خطوط السير، ونسب العمولات
+          إدارة {{ term('technicians') }}، خطوط السير، ونسب العمولات
         </h1>
         <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-          ملف وصورة كل فني، متابعة الطلبات المفتوحة، عهدة قطع الغيار، وحساب وصرف نسب العمولات تلقائياً
+          ملف وصورة كل {{ term('technician') }}، متابعة الطلبات المفتوحة، عهدة {{ term('parts') }}، وحساب وصرف نسب العمولات تلقائياً
         </p>
       </div>
 
@@ -146,7 +148,7 @@ onMounted(loadTechnicians)
         class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md cursor-pointer"
       >
         <UserPlus class="w-4 h-4" />
-        إضافة فني جديد
+        إضافة {{ term('technician') }} جديد
       </button>
     </div>
 
@@ -165,7 +167,7 @@ onMounted(loadTechnicians)
                 v-if="tech.avatar_base64"
                 @click="appStore.openImagePreview(tech.avatar_base64, tech.name)"
                 class="w-14 h-14 rounded-2xl border-2 border-blue-500/40 overflow-hidden shrink-0 cursor-pointer shadow-xs hover:ring-2 hover:ring-blue-500 transition"
-                title="اضغط لتكبير صورة الفني"
+                :title="'اضغط لتكبير صورة ' + term('technician')"
               >
                 <img :src="tech.avatar_base64" :alt="tech.name" class="w-full h-full object-cover" />
               </div>
@@ -173,7 +175,7 @@ onMounted(loadTechnicians)
                 v-else
                 @click="openEditModal(tech)"
                 class="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 text-white flex flex-col items-center justify-center shrink-0 cursor-pointer shadow-xs"
-                title="اضغط لإضافة صورة للفني"
+                :title="'اضغط لإضافة صورة لـ ' + term('technician')"
               >
                 <span class="font-black text-lg leading-none">{{ tech.name.slice(0, 1) }}</span>
                 <Camera class="w-3 h-3 opacity-70 mt-0.5" />
@@ -210,9 +212,9 @@ onMounted(loadTechnicians)
               </span>
             </div>
             <div>
-              <span class="text-slate-500 block">عهدة قطع غيار</span>
+              <span class="text-slate-500 block">عهدة {{ term('parts') }}</span>
               <span class="font-black text-sm text-amber-600">
-                {{ tech.custody_parts_count || 0 }} قطعة
+                {{ tech.custody_parts_count || 0 }} {{ term('part') }}
               </span>
             </div>
             <div>
@@ -233,13 +235,13 @@ onMounted(loadTechnicians)
               <span class="font-bold">{{ Math.round(tech.total_earned_commission || 0) }} ج.م</span>
             </div>
             <div class="flex justify-between">
-              <span>تم صرفه للفني:</span>
+              <span>تم صرفه لـ {{ term('technician') }}:</span>
               <span class="font-bold">{{ Math.round(tech.total_paid_commission || 0) }} ج.م</span>
             </div>
             <div
               class="flex justify-between border-t border-emerald-200 dark:border-emerald-800 pt-1 font-black text-emerald-800 dark:text-emerald-300"
             >
-              <span>الرصيد المتبقي للفني:</span>
+              <span>الرصيد المتبقي لـ {{ term('technician') }}:</span>
               <span>
                 {{
                   Math.max(
@@ -270,7 +272,7 @@ onMounted(loadTechnicians)
               type="button"
               @click="openEditModal(tech)"
               class="p-1.5 rounded-lg bg-slate-100 hover:bg-blue-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 cursor-pointer"
-              title="تعديل بيانات وصورة الفني"
+              :title="'تعديل بيانات وصورة ' + term('technician')"
             >
               <Edit3 class="w-4 h-4" />
             </button>
@@ -299,7 +301,7 @@ onMounted(loadTechnicians)
           class="px-6 py-4 bg-slate-100 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between"
         >
           <h3 class="font-bold text-sm">
-            {{ form.id ? 'تعديل بيانات وصورة الفني' : 'إضافة فني صيانة جديد' }}
+            {{ form.id ? `تعديل بيانات وصورة ${term('technician')}` : `إضافة ${term('technician')} جديد` }}
           </h3>
           <button @click="modalOpen = false" class="cursor-pointer"><X class="w-4 h-4" /></button>
         </div>
@@ -312,7 +314,7 @@ onMounted(loadTechnicians)
             <div class="flex items-center gap-3">
               <div
                 v-if="form.avatar_base64"
-                @click="appStore.openImagePreview(form.avatar_base64, form.name || 'صورة الفني')"
+                @click="appStore.openImagePreview(form.avatar_base64, form.name || ('صورة ' + term('technician')))"
                 class="w-14 h-14 rounded-2xl border-2 border-blue-400 overflow-hidden cursor-pointer shrink-0"
               >
                 <img :src="form.avatar_base64" class="w-full h-full object-cover" />
@@ -324,8 +326,8 @@ onMounted(loadTechnicians)
                 <Camera class="w-6 h-6" />
               </div>
               <div>
-                <div class="font-bold text-slate-900 dark:text-white">الصورة الشخصية للفني</div>
-                <div class="text-[11px] text-slate-500">تظهر في بطاقة الفني وتقارير العمولات</div>
+                <div class="font-bold text-slate-900 dark:text-white">الصورة الشخصية لـ {{ term('technician') }}</div>
+                <div class="text-[11px] text-slate-500">تظهر في بطاقة {{ term('technician') }} وتقارير العمولات</div>
               </div>
             </div>
 
@@ -349,7 +351,7 @@ onMounted(loadTechnicians)
           </div>
 
           <div>
-            <label class="block font-bold mb-1">اسم الفني / المهندس *</label>
+            <label class="block font-bold mb-1">اسم {{ term('technician') }} *</label>
             <input
               v-model="form.name"
               required
@@ -371,7 +373,7 @@ onMounted(loadTechnicians)
             <input
               v-model="form.specialty"
               type="text"
-              placeholder="مثال: غسالات أوتوماتيك / ثلاجات وتكييف / كروت إلكترونية"
+              :placeholder="term('specialtyPlaceholder')"
               class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"
             />
           </div>
@@ -418,7 +420,7 @@ onMounted(loadTechnicians)
               type="submit"
               class="px-5 py-2 rounded-xl bg-blue-600 text-white font-bold cursor-pointer"
             >
-              حفظ الفني
+              حفظ {{ term('technician') }}
             </button>
           </div>
         </form>
@@ -436,7 +438,7 @@ onMounted(loadTechnicians)
         <div
           class="px-6 py-4 bg-slate-100 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between"
         >
-          <h3 class="font-bold text-sm">صرف عمولة / سلفة للفني: {{ selectedTech.name }}</h3>
+          <h3 class="font-bold text-sm">صرف عمولة / مستحقات لـ {{ term('technician') }}: {{ selectedTech.name }}</h3>
           <button @click="payoutModalOpen = false" class="cursor-pointer">
             <X class="w-4 h-4" />
           </button>

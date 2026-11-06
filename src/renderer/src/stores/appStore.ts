@@ -4,38 +4,160 @@ import type {
   User,
   CenterSettings,
   MaintenanceTicket,
+  SalesInvoice,
+  HearingTest,
+  EarmoldOrder,
   UpdateCheckResult,
-  SystemControlStatus
+  SystemControlStatus,
+  BusinessType,
+  BusinessState,
+  LookupItem,
+  CustomFieldEntity,
+  CustomFieldDef
 } from '@shared/types'
+import { getBusinessProfile, type BusinessProfile } from '@shared/businessProfiles'
 
 const REMEMBERED_SESSION_KEY = 'sallehli_remembered_session'
 
 function loadInitialRememberedSession(): {
   user: User | null
   daysRemaining: number | null
+  token: string | null
 } {
   try {
     const raw = localStorage.getItem(REMEMBERED_SESSION_KEY)
-    if (!raw) return { user: null, daysRemaining: null }
+    if (!raw) return { user: null, daysRemaining: null, token: null }
     const parsed = JSON.parse(raw)
     if (parsed && parsed.user && parsed.user.id && parsed.user.username) {
+      if (parsed.token && window.api?.setSessionToken) {
+        window.api.setSessionToken(parsed.token)
+      }
       return {
         user: parsed.user as User,
-        daysRemaining: parsed.daysRemaining ?? null
+        daysRemaining: parsed.daysRemaining ?? null,
+        token: parsed.token || null
       }
     }
   } catch {
     // Ignore corrupted storage
   }
-  return { user: null, daysRemaining: null }
+  return { user: null, daysRemaining: null, token: null }
 }
 
 export const useAppStore = defineStore('app', () => {
   const initialSession = loadInitialRememberedSession()
   const currentUser = ref<User | null>(initialSession.user)
+  const sessionToken = ref<string | null>(initialSession.token)
   const subscriptionDaysRemaining = ref<number | null>(initialSession.daysRemaining)
   const isDark = ref<boolean>(localStorage.getItem('sallehli_theme') === 'dark')
-  const appVersion = ref<string>('v1.1.5')
+  const appVersion = ref<string>('v1.2.0')
+
+  // Business Profile & System State
+  const businessState = ref<BusinessState>({
+    type: 'appliances',
+    locked: false,
+    needsSetup: false,
+    appName: 'صلحلي'
+  })
+
+  const businessType = computed<BusinessType>(() => businessState.value.type)
+  const isBusinessLocked = computed(() => businessState.value.locked)
+  const needsBusinessSetup = computed(() => businessState.value.needsSetup)
+  const businessProfile = computed<BusinessProfile>(() => {
+    const base = getBusinessProfile(businessType.value)
+    if (businessState.value.effectiveModules && businessState.value.effectiveModules.length > 0) {
+      return {
+        ...base,
+        modules: businessState.value.effectiveModules
+      }
+    }
+    return base
+  })
+  const appName = computed<string>(() => businessProfile.value.appName)
+
+  // Cached Dynamic Lookups (Types, Brands, Part Categories & Extra Lookups)
+  const lookups = ref<LookupItem[]>([])
+  const filterByCategory = (category: string): string[] =>
+    lookups.value
+      .filter((l) => l.category === category && l.is_active)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((l) => l.value)
+
+  const deviceTypes = computed(() => filterByCategory('device_type'))
+  const brands = computed(() => filterByCategory('brand'))
+  const partCategories = computed(() => {
+    const items = filterByCategory('part_category')
+    return items.length > 0 ? items : businessProfile.value.defaultPartCategories
+  })
+  const batterySizes = computed(() => filterByCategory('battery_size'))
+  const accessoryTypes = computed(() => filterByCategory('accessory_type'))
+  const earmoldTypes = computed(() => filterByCategory('earmold_type'))
+  const earmoldMaterials = computed(() => filterByCategory('earmold_material'))
+  const implantParts = computed(() => filterByCategory('implant_part'))
+
+  // Cached Dynamic Custom Field Definitions
+  const customFieldDefs = ref<CustomFieldDef[]>([])
+
+  function getActiveCustomFields(entity: CustomFieldEntity): CustomFieldDef[] {
+    return customFieldDefs.value
+      .filter((f) => f.entity === entity && f.is_active)
+      .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id)
+  }
+
+  function getTableCustomFields(entity: CustomFieldEntity): CustomFieldDef[] {
+    return customFieldDefs.value
+      .filter((f) => f.entity === entity && f.is_active && f.show_in_table)
+      .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id)
+  }
+
+  function validateCustomFields(
+    entity: CustomFieldEntity,
+    extraData?: Record<string, any>
+  ): { valid: boolean; missingLabel?: string } {
+    const active = getActiveCustomFields(entity)
+    const data = extraData || {}
+    for (const field of active) {
+      if (field.required) {
+        const val = data[field.key]
+        if (val === undefined || val === null || String(val).trim() === '') {
+          return { valid: false, missingLabel: field.label }
+        }
+      }
+    }
+    return { valid: true }
+  }
+
+  function formatExtraDataEntries(
+    extraData?: Record<string, any>,
+    entities?: CustomFieldEntity[]
+  ): Array<{ key: string; label: string; value: string; showInTable: boolean }> {
+    if (!extraData || typeof extraData !== 'object') return []
+    const allowedEntities = entities ? new Set(entities) : null
+    const defs = customFieldDefs.value
+      .filter((f) => f.is_active && (!allowedEntities || allowedEntities.has(f.entity)))
+      .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id)
+
+    const result: Array<{ key: string; label: string; value: string; showInTable: boolean }> = []
+    const seenKeys = new Set<string>()
+
+    for (const def of defs) {
+      if (seenKeys.has(def.key)) continue
+      const rawVal = extraData[def.key]
+      if (rawVal === undefined || rawVal === null || String(rawVal).trim() === '') continue
+      seenKeys.add(def.key)
+      let displayVal = String(rawVal)
+      if (def.type === 'boolean') {
+        displayVal = rawVal === true || rawVal === 1 || rawVal === '1' || rawVal === 'true' ? 'نعم' : 'لا'
+      }
+      result.push({
+        key: def.key,
+        label: def.label,
+        value: displayVal,
+        showInTable: Boolean(def.show_in_table)
+      })
+    }
+    return result
+  }
 
   // Global Action Loading State (Save / Edit / Delete / Login)
   const actionLoading = ref<boolean>(false)
@@ -86,8 +208,13 @@ export const useAppStore = defineStore('app', () => {
   // Print Modal State
   const printModalOpen = ref(false)
   const ticketToPrint = ref<MaintenanceTicket | null>(null)
+  const salesInvoiceToPrint = ref<SalesInvoice | null>(null)
+  const hearingTestToPrint = ref<HearingTest | null>(null)
+  const earmoldToPrint = ref<EarmoldOrder | null>(null)
   const activePrintFormat = ref<'a4' | 'thermal80'>('a4')
-  const activePrintDocType = ref<'invoice_warranty' | 'reception_receipt'>('invoice_warranty')
+  const activePrintDocType = ref<
+    'invoice_warranty' | 'reception_receipt' | 'sales_invoice' | 'hearing_test' | 'earmold_order'
+  >('invoice_warranty')
 
   // Update Modal & Auto-Update State
   const updateModalOpen = ref(false)
@@ -128,6 +255,9 @@ export const useAppStore = defineStore('app', () => {
   const canDeleteRecords = computed(() =>
     ['super_admin', 'owner', 'tenant'].includes(currentUser.value?.role || '')
   )
+  const canViewMedicalRecords = computed(() =>
+    ['super_admin', 'owner', 'tenant', 'receptionist'].includes(currentUser.value?.role || '')
+  )
 
   function applyTheme(): void {
     if (isDark.value) {
@@ -150,11 +280,48 @@ export const useAppStore = defineStore('app', () => {
         const ver = await window.api.getAppVersion()
         if (ver) {
           appVersion.value = ver.startsWith('v') ? ver : `v${ver}`
-          document.title = `صلحلي ${appVersion.value} - نظام إدارة مركز صيانة الأجهزة الكهربائية`
+          updateDocumentTitle()
         }
       }
     } catch {
       // Ignore
+    }
+  }
+
+  function updateDocumentTitle(): void {
+    const p = businessProfile.value
+    document.title = `${p.appName} ${appVersion.value} - ${p.windowTitle}`
+  }
+
+  async function loadBusiness(): Promise<void> {
+    try {
+      if (window.api?.getBusinessPublic) {
+        const state = await window.api.getBusinessPublic()
+        businessState.value = state
+        updateDocumentTitle()
+      }
+    } catch (e) {
+      console.error('Failed to load business state', e)
+    }
+  }
+
+  async function fetchLookups(): Promise<void> {
+    try {
+      if (window.api?.listLookups) {
+        lookups.value = await window.api.listLookups()
+      }
+    } catch (e) {
+      console.error('Failed to fetch lookups', e)
+    }
+  }
+
+  async function fetchCustomFields(): Promise<void> {
+    try {
+      if (window.api?.listCustomFields) {
+        customFieldDefs.value = await window.api.listCustomFields()
+      }
+    } catch (e) {
+      console.error('Failed to fetch custom fields', e)
     }
   }
 
@@ -175,19 +342,31 @@ export const useAppStore = defineStore('app', () => {
       activePrintFormat.value = data.default_print_format || 'a4'
       await fetchVersion()
       await fetchSystemStatus()
+      await loadBusiness()
+      await fetchLookups()
+      await fetchCustomFields()
     } catch (e) {
       console.error('Failed to load settings', e)
     }
   }
 
-  function setSession(user: User, daysRemaining: number | null, rememberMe = false): void {
+  function setSession(
+    user: User,
+    daysRemaining: number | null,
+    rememberMe = false,
+    token?: string | null
+  ): void {
     currentUser.value = user
     subscriptionDaysRemaining.value = daysRemaining
+    if (token) {
+      sessionToken.value = token
+      window.api?.setSessionToken?.(token)
+    }
 
     if (rememberMe) {
       localStorage.setItem(
         REMEMBERED_SESSION_KEY,
-        JSON.stringify({ user, daysRemaining })
+        JSON.stringify({ user, daysRemaining, token: sessionToken.value })
       )
     } else {
       localStorage.removeItem(REMEMBERED_SESSION_KEY)
@@ -195,15 +374,21 @@ export const useAppStore = defineStore('app', () => {
   }
 
   async function verifyRememberedSession(): Promise<boolean> {
-    if (!currentUser.value?.id) return false
+    const ident = sessionToken.value || currentUser.value?.id
+    if (!ident) return false
     try {
-      const res = await window.api.verifySession(currentUser.value.id)
+      const res = await window.api.verifySession(ident)
       if (!res.success || !res.user) {
         logout()
         return false
       }
       const isRemembered = Boolean(localStorage.getItem(REMEMBERED_SESSION_KEY))
-      setSession(res.user, res.subscriptionStatus?.daysRemaining ?? null, isRemembered)
+      setSession(
+        res.user,
+        res.subscriptionStatus?.daysRemaining ?? null,
+        isRemembered,
+        res.token || sessionToken.value
+      )
       await loadSettings()
       return true
     } catch {
@@ -212,8 +397,15 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function logout(): void {
+    try {
+      window.api?.logout?.()
+    } catch {
+      // Ignore
+    }
     currentUser.value = null
+    sessionToken.value = null
     subscriptionDaysRemaining.value = null
+    window.api?.setSessionToken?.('')
     localStorage.removeItem(REMEMBERED_SESSION_KEY)
   }
 
@@ -222,8 +414,47 @@ export const useAppStore = defineStore('app', () => {
     docType: 'invoice_warranty' | 'reception_receipt' = 'invoice_warranty',
     format?: 'a4' | 'thermal80'
   ): void {
+    salesInvoiceToPrint.value = null
+    hearingTestToPrint.value = null
+    earmoldToPrint.value = null
     ticketToPrint.value = ticket
     activePrintDocType.value = docType
+    activePrintFormat.value = format || settings.value.default_print_format || 'a4'
+    printModalOpen.value = true
+  }
+
+  function openSalesPrintModal(
+    invoice: SalesInvoice,
+    format?: 'a4' | 'thermal80'
+  ): void {
+    ticketToPrint.value = null
+    hearingTestToPrint.value = null
+    earmoldToPrint.value = null
+    salesInvoiceToPrint.value = invoice
+    activePrintDocType.value = 'sales_invoice'
+    activePrintFormat.value = format || settings.value.default_print_format || 'a4'
+    printModalOpen.value = true
+  }
+
+  function openHearingTestPrintModal(test: HearingTest): void {
+    ticketToPrint.value = null
+    salesInvoiceToPrint.value = null
+    earmoldToPrint.value = null
+    hearingTestToPrint.value = test
+    activePrintDocType.value = 'hearing_test'
+    activePrintFormat.value = 'a4'
+    printModalOpen.value = true
+  }
+
+  function openEarmoldPrintModal(
+    order: EarmoldOrder,
+    format?: 'a4' | 'thermal80'
+  ): void {
+    ticketToPrint.value = null
+    salesInvoiceToPrint.value = null
+    hearingTestToPrint.value = null
+    earmoldToPrint.value = order
+    activePrintDocType.value = 'earmold_order'
     activePrintFormat.value = format || settings.value.default_print_format || 'a4'
     printModalOpen.value = true
   }
@@ -231,6 +462,9 @@ export const useAppStore = defineStore('app', () => {
   function closePrintModal(): void {
     printModalOpen.value = false
     ticketToPrint.value = null
+    salesInvoiceToPrint.value = null
+    hearingTestToPrint.value = null
+    earmoldToPrint.value = null
   }
 
   function openUpdateModal(): void {
@@ -275,10 +509,11 @@ export const useAppStore = defineStore('app', () => {
         ? `\n🛡️ الضمان: ${ticket.warranty_months} شهور (ساري حتى ${ticket.warranty_end_date})`
         : ''
 
+    const terms = businessProfile.value.terms
     const message =
       `مرحباً بك أ/ ${ticket.customer_name} من *${settings.value.center_name}* 🔧\n` +
-      `📋 رقم طلب الصيانة: *${ticket.ticket_number}*\n` +
-      `🔌 الجهاز: ${ticket.appliance_type} (${ticket.brand})\n` +
+      `📋 رقم ${terms.ticket}: *${ticket.ticket_number}*\n` +
+      `🔌 ${terms.device}: ${ticket.appliance_type} (${ticket.brand})\n` +
       `📌 الإجمالي: ${ticket.total_amount} ج.م | المدفوع: ${ticket.paid_amount} ج.م | المتبقي: ${ticket.remaining_amount} ج.م` +
       warrantyLine +
       `\n📞 للاستفسار: ${settings.value.phone1}`
@@ -289,14 +524,41 @@ export const useAppStore = defineStore('app', () => {
 
   return {
     currentUser,
+    sessionToken,
     subscriptionDaysRemaining,
     isDark,
     appVersion,
+    businessState,
+    businessType,
+    isBusinessLocked,
+    needsBusinessSetup,
+    businessProfile,
+    appName,
+    lookups,
+    deviceTypes,
+    brands,
+    partCategories,
+    batterySizes,
+    accessoryTypes,
+    earmoldTypes,
+    earmoldMaterials,
+    implantParts,
+    customFieldDefs,
+    getActiveCustomFields,
+    getTableCustomFields,
+    validateCustomFields,
+    formatExtraDataEntries,
+    loadBusiness,
+    fetchLookups,
+    fetchCustomFields,
     actionLoading,
     actionLoadingText,
     settings,
     printModalOpen,
     ticketToPrint,
+    salesInvoiceToPrint,
+    hearingTestToPrint,
+    earmoldToPrint,
     activePrintFormat,
     activePrintDocType,
     updateModalOpen,
@@ -316,6 +578,7 @@ export const useAppStore = defineStore('app', () => {
     canViewInventory,
     canViewPurchasePrices,
     canDeleteRecords,
+    canViewMedicalRecords,
     startLoading,
     stopLoading,
     withLoading,
@@ -328,6 +591,9 @@ export const useAppStore = defineStore('app', () => {
     verifyRememberedSession,
     logout,
     openPrintModal,
+    openSalesPrintModal,
+    openHearingTestPrintModal,
+    openEarmoldPrintModal,
     closePrintModal,
     openUpdateModal,
     closeUpdateModal,

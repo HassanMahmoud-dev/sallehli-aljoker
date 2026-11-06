@@ -5,6 +5,7 @@ import { ref, computed, onMounted } from 'vue'
 import type { TreasuryTransaction, DashboardStats } from '@shared/types'
 import { PAYMENT_METHODS } from '@renderer/constants/appliances'
 import { useAppStore } from '@renderer/stores/appStore'
+import { useTerms } from '@renderer/composables/useTerms'
 import {
   Wallet,
   PlusCircle,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-vue-next'
 
 const appStore = useAppStore()
+const { t: term } = useTerms()
 const transactions = ref<TreasuryTransaction[]>([])
 const stats = ref<DashboardStats | null>(null)
 const modalOpen = ref(false)
@@ -240,7 +242,7 @@ onMounted(loadData)
           {{ stats.monthExpense + stats.monthTechCommissions }} ج.م
         </div>
         <div class="text-[11px] text-slate-500 mt-1">
-          منها عمولات فنيين: {{ stats.monthTechCommissions }} ج.م
+          منها عمولات {{ term('technicians') }}: {{ stats.monthTechCommissions }} ج.م
         </div>
       </div>
 
@@ -256,7 +258,7 @@ onMounted(loadData)
           {{ stats.monthNetProfit }} ج.م
         </div>
         <div class="text-[11px] text-slate-500 mt-1">
-          بعد خصم تكلفة شراء القطع ({{ stats.monthPartsCost }} ج.م)
+          بعد خصم تكلفة شراء {{ term('parts') }} ({{ stats.monthPartsCost }} ج.م)
         </div>
       </div>
     </div>
@@ -333,49 +335,86 @@ onMounted(loadData)
         </thead>
         <tbody class="divide-y divide-slate-200 dark:divide-slate-800">
           <tr
-            v-for="t in filteredTransactions"
-            :key="t.id"
+            v-for="tx in filteredTransactions"
+            :key="tx.id"
             class="hover:bg-slate-50 dark:hover:bg-slate-800/40"
           >
-            <td class="py-3.5 px-4 font-mono">{{ t.id }}</td>
-            <td class="py-3.5 px-4 text-slate-500 font-mono">{{ t.created_at }}</td>
+            <td class="py-3.5 px-4 font-mono">{{ tx.id }}</td>
+            <td class="py-3.5 px-4 text-slate-500 font-mono">{{ tx.created_at }}</td>
             <td class="py-3.5 px-4">
               <span
                 :class="[
                   'px-2.5 py-1 rounded-full text-[11px] font-bold',
-                  t.transaction_type === 'income'
+                  tx.transaction_type === 'income'
                     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                    : t.transaction_type === 'tech_commission'
+                    : tx.transaction_type === 'tech_commission'
                       ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
                       : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
                 ]"
               >
                 {{
-                  t.transaction_type === 'income'
+                  tx.transaction_type === 'income'
                     ? 'إيراد وتحصيل (+)'
-                    : t.transaction_type === 'tech_commission'
-                      ? 'عمولة فني (-)'
+                    : tx.transaction_type === 'tech_commission'
+                      ? `عمولة ${term('technician')} (-)`
                       : 'مصروفات (-)'
                 }}
               </span>
             </td>
-            <td class="py-3.5 px-4 font-bold">{{ t.category }}</td>
-            <td class="py-3.5 px-4 text-slate-600 dark:text-slate-300">{{ t.description }}</td>
+            <td class="py-3.5 px-4 font-bold">{{ tx.category }}</td>
+            <td class="py-3.5 px-4 text-slate-600 dark:text-slate-300">
+              <div>{{ tx.description }}</div>
+              <div
+                v-if="tx.ticket_number || tx.sales_invoice_number || tx.purchase_invoice_number || tx.supplier_name || tx.technician_name"
+                class="flex flex-wrap items-center gap-1.5 mt-1"
+              >
+                <span
+                  v-if="tx.ticket_number"
+                  class="px-2 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 font-mono text-[10px] font-bold"
+                >
+                  طلب: {{ tx.ticket_number }}
+                </span>
+                <span
+                  v-if="tx.sales_invoice_number"
+                  class="px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-mono text-[10px] font-bold"
+                >
+                  فاتورة بيع: {{ tx.sales_invoice_number }}
+                </span>
+                <span
+                  v-if="tx.purchase_invoice_number"
+                  class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-mono text-[10px] font-bold"
+                >
+                  فاتورة شراء: {{ tx.purchase_invoice_number }}
+                </span>
+                <span
+                  v-if="tx.supplier_name"
+                  class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 text-[10px] font-bold"
+                >
+                  مورد: {{ tx.supplier_name }}
+                </span>
+                <span
+                  v-if="tx.technician_name"
+                  class="px-2 py-0.5 rounded bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 text-[10px] font-bold"
+                >
+                  {{ term('technician') }}: {{ tx.technician_name }}
+                </span>
+              </div>
+            </td>
             <td class="py-3.5 px-4 font-bold">
-              {{ PAYMENT_METHODS[t.payment_method] || t.payment_method }}
+              {{ PAYMENT_METHODS[tx.payment_method] || tx.payment_method }}
             </td>
             <td
               :class="[
                 'py-3.5 px-4 font-black text-sm',
-                t.transaction_type === 'income' ? 'text-emerald-600' : 'text-rose-600'
+                tx.transaction_type === 'income' ? 'text-emerald-600' : 'text-rose-600'
               ]"
             >
-              {{ t.transaction_type === 'income' ? '+' : '-' }}{{ t.amount }} ج.م
+              {{ tx.transaction_type === 'income' ? '+' : '-' }}{{ tx.amount }} ج.م
             </td>
             <td v-if="appStore.canDeleteRecords" class="py-3.5 px-4">
               <button
                 type="button"
-                @click="handleDeleteTransaction(t.id)"
+                @click="handleDeleteTransaction(tx.id)"
                 class="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
               >
                 <Trash2 class="w-4 h-4" />
@@ -415,7 +454,7 @@ onMounted(loadData)
               v-model="form.category"
               required
               type="text"
-              placeholder="مثال: إيجار، كهرباء، انتقالات فنيين، بيع قطعة غيار..."
+              :placeholder="`مثال: إيجار، كهرباء، انتقالات ${term('technicians')}، بيع ${term('part')}...`"
               class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"
             />
           </div>
