@@ -1,5 +1,5 @@
 appId: com.sallehli.aljoker
-productName: صلحلي / أريتون - نظام الإدارة المتكامل
+productName: صلحلي - نظام الإدارة المتكامل
 compression: maximum
 electronLanguages:
   - ar
@@ -31,8 +31,8 @@ win:
         - x64
 nsis:
   artifactName: ${name}-v${version}-Setup-x64.${ext}
-  shortcutName: صلحلي - أريتون
-  uninstallDisplayName: صلحلي / أريتون v${version} - نظام الإدارة المتكامل
+  shortcutName: صلحلي
+  uninstallDisplayName: صلحلي v${version} - نظام الإدارة المتكامل
   createDesktopShortcut: always
   oneClick: false
   allowToChangeInstallationDirectory: true

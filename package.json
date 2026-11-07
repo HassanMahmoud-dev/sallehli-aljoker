@@ -1,7 +1,7 @@
 {
   "name": "sallehli",
   "version": "1.2.0",
-  "description": "صلحلي / أريتون - النظام الشامل لإدارة مراكز صيانة الأجهزة ومراكز السماعات الطبية",
+  "description": "صلحلي - النظام الشامل لإدارة مراكز صيانة الأجهزة ومراكز السماعات الطبية",
   "main": "./out/main/index.js",
   "author": "شركة الجوكر تك (Al-Joker Tech)",
   "homepage": "https://sallehli.local",

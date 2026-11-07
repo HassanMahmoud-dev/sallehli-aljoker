@@ -138,12 +138,12 @@ export const APPLIANCES_PROFILE: BusinessProfile = {
 
 export const HEARING_AIDS_PROFILE: BusinessProfile = {
   id: 'hearing_aids',
-  appName: 'أريتون',
-  windowTitle: 'أريتون - نظام إدارة مركز السماعات الطبية',
+  appName: 'صلحلي',
+  windowTitle: 'صلحلي - نظام إدارة مراكز وتوكيلات السماعات الطبية',
   loginSubtitle: 'نظام إدارة مراكز وتوكيلات السماعات الطبية',
-  centerNameDefault: 'مركز أريتون للسماعات الطبية',
+  centerNameDefault: 'مركز صلحلي للسماعات الطبية',
   centerSubtitleDefault: 'بيع وصيانة السماعات الطبية وفحوصات السمع وضبط الأجهزة',
-  receiptFooterDefault: 'شكراً لثقتكم في مركز أريتون للسماعات الطبية - نتمنى لكم دوام الصحة والعافية',
+  receiptFooterDefault: 'شكراً لثقتكم في مركز صلحلي للسماعات الطبية - نتمنى لكم دوام الصحة والعافية',
   terms: {
     device: 'سماعة / قوقعة',
     devices: 'السماعات والقواقع',
