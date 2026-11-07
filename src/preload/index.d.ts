@@ -15,6 +15,7 @@ import type {
   FinancialReportData,
   UpdateCheckResult,
   UpdateProgressPayload,
+  UpdateDownloadStatus,
   SystemControlStatus,
   BusinessType,
   BusinessState,
@@ -388,10 +389,17 @@ export interface IElectronAPI {
   openExternal: (url: string) => Promise<void>
 
   checkForUpdates: (customUrl?: string) => Promise<UpdateCheckResult>
+  startUpdateDownload: (
+    downloadUrl: string,
+    targetVersion?: string
+  ) => Promise<{ success: boolean; message: string }>
+  pauseUpdateDownload: () => Promise<{ success: boolean; message: string }>
+  cancelUpdateDownload: () => Promise<{ success: boolean; message: string }>
+  applyDownloadedUpdate: () => Promise<{ success: boolean; message: string; backupPath?: string }>
+  getUpdateDownloadStatus: () => Promise<UpdateDownloadStatus>
   downloadAndInstallUpdate: (
     downloadUrl: string
   ) => Promise<{ success: boolean; canceled?: boolean; message?: string; backupPath?: string }>
-  cancelUpdateDownload: () => Promise<{ success: boolean; message: string }>
   installLocalUpdate: () => Promise<{
     success: boolean
     canceled?: boolean

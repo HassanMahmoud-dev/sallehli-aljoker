@@ -374,9 +374,14 @@ const api = {
 
   // Application Updates (Online & Offline)
   checkForUpdates: (customUrl?: string) => invoke('update:check', customUrl),
+  startUpdateDownload: (downloadUrl: string, targetVersion?: string) =>
+    invoke('update:startDownload', downloadUrl, targetVersion),
+  pauseUpdateDownload: () => invoke('update:pauseDownload'),
+  cancelUpdateDownload: () => invoke('update:cancelDownload'),
+  applyDownloadedUpdate: () => invoke('update:applyDownloaded'),
+  getUpdateDownloadStatus: () => invoke('update:getDownloadStatus'),
   downloadAndInstallUpdate: (downloadUrl: string) =>
     invoke('update:downloadAndInstall', downloadUrl),
-  cancelUpdateDownload: () => invoke('update:cancelDownload'),
   installLocalUpdate: () => invoke('update:installLocal'),
   getAutoUpdateResult: () => invoke('update:getAutoResult'),
   onUpdateProgress: (callback: (payload: UpdateProgressPayload) => void) => {

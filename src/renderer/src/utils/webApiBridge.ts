@@ -145,9 +145,14 @@ export function ensureWebApiBridge(): void {
     },
 
     checkForUpdates: (customUrl) => invokeHttp('update:check', customUrl),
+    startUpdateDownload: (downloadUrl, targetVersion) =>
+      invokeHttp('update:startDownload', downloadUrl, targetVersion),
+    pauseUpdateDownload: () => invokeHttp('update:pauseDownload'),
+    cancelUpdateDownload: () => invokeHttp('update:cancelDownload'),
+    applyDownloadedUpdate: () => invokeHttp('update:applyDownloaded'),
+    getUpdateDownloadStatus: () => invokeHttp('update:getDownloadStatus'),
     downloadAndInstallUpdate: (downloadUrl) =>
       invokeHttp('update:downloadAndInstall', downloadUrl),
-    cancelUpdateDownload: () => invokeHttp('update:cancelDownload'),
     installLocalUpdate: () => invokeHttp('update:installLocal'),
     getAutoUpdateResult: () => invokeHttp('update:getAutoResult'),
     onUpdateProgress: () => () => {},

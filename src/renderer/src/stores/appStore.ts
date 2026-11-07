@@ -44,13 +44,38 @@ function loadInitialRememberedSession(): {
   return { user: null, daysRemaining: null, token: null }
 }
 
+export type ThemeMode = 'light' | 'dark' | 'system'
+
 export const useAppStore = defineStore('app', () => {
   const initialSession = loadInitialRememberedSession()
   const currentUser = ref<User | null>(initialSession.user)
   const sessionToken = ref<string | null>(initialSession.token)
   const subscriptionDaysRemaining = ref<number | null>(initialSession.daysRemaining)
-  const isDark = ref<boolean>(localStorage.getItem('sallehli_theme') === 'dark')
-  const appVersion = ref<string>('v1.2.0')
+
+  // 3-Mode Theme (Light / Dark / System)
+  const savedThemeMode = (localStorage.getItem('sallehli_theme_mode') as ThemeMode) ||
+    (localStorage.getItem('sallehli_theme') === 'dark' ? 'dark' : 'system')
+  const themeMode = ref<ThemeMode>(savedThemeMode)
+  const isDark = ref<boolean>(false)
+
+  const appVersion = ref<string>('v1.2.2')
+
+  // Background Update Downloader State
+  const updateDownloadState = ref<{
+    isDownloading: boolean
+    isPaused: boolean
+    isReadyToInstall: boolean
+    progress: UpdateProgressPayload | null
+    version?: string
+    notifiedCompletion?: boolean
+  }>({
+    isDownloading: false,
+    isPaused: false,
+    isReadyToInstall: false,
+    progress: null,
+    version: '',
+    notifiedCompletion: false
+  })
 
   // Business Profile & System State
   const businessState = ref<BusinessState>({
@@ -259,20 +284,96 @@ export const useAppStore = defineStore('app', () => {
     ['super_admin', 'owner', 'tenant', 'receptionist'].includes(currentUser.value?.role || '')
   )
 
+  function resolveIsDark(mode: ThemeMode): boolean {
+    if (mode === 'dark') return true
+    if (mode === 'light') return false
+    return typeof window !== 'undefined' &&
+      window.matchMedia &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches
+  }
+
   function applyTheme(): void {
-    if (isDark.value) {
+    const dark = resolveIsDark(themeMode.value)
+    isDark.value = dark
+    if (dark) {
       document.documentElement.classList.add('dark')
-      localStorage.setItem('sallehli_theme', 'dark')
     } else {
       document.documentElement.classList.remove('dark')
-      localStorage.setItem('sallehli_theme', 'light')
     }
+    localStorage.setItem('sallehli_theme_mode', themeMode.value)
+    localStorage.setItem('sallehli_theme', dark ? 'dark' : 'light')
+  }
+
+  function setThemeMode(mode: ThemeMode): void {
+    themeMode.value = mode
+    applyTheme()
   }
 
   function toggleTheme(): void {
-    isDark.value = !isDark.value
-    applyTheme()
+    // Cycles light -> dark -> system -> light
+    if (themeMode.value === 'light') {
+      setThemeMode('dark')
+    } else if (themeMode.value === 'dark') {
+      setThemeMode('system')
+    } else {
+      setThemeMode('light')
+    }
   }
+
+  function cycleTheme(): void {
+    toggleTheme()
+  }
+
+  // Listen to OS theme changes if system mode is active
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (themeMode.value === 'system') {
+        applyTheme()
+      }
+    })
+  }
+
+  async function syncUpdateDownloadStatus(): Promise<void> {
+    try {
+      if (window.api?.getUpdateDownloadStatus) {
+        const st = await window.api.getUpdateDownloadStatus()
+        updateDownloadState.value.isDownloading = st.isDownloading
+        updateDownloadState.value.isPaused = st.isPaused
+        updateDownloadState.value.isReadyToInstall = st.isReadyToInstall
+        if (st.progress) updateDownloadState.value.progress = st.progress
+        if (st.version) updateDownloadState.value.version = st.version
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  function setupUpdateListener(): void {
+    if (window.api?.onUpdateProgress) {
+      window.api.onUpdateProgress((payload) => {
+        updateDownloadState.value.progress = payload
+        if (payload.version) updateDownloadState.value.version = payload.version
+
+        if (payload.status === 'downloading') {
+          updateDownloadState.value.isDownloading = true
+          updateDownloadState.value.isPaused = false
+          updateDownloadState.value.isReadyToInstall = false
+        } else if (payload.status === 'paused') {
+          updateDownloadState.value.isDownloading = false
+          updateDownloadState.value.isPaused = true
+        } else if (payload.status === 'completed') {
+          updateDownloadState.value.isDownloading = false
+          updateDownloadState.value.isPaused = false
+          updateDownloadState.value.isReadyToInstall = true
+        } else if (payload.status === 'cancelled' || payload.status === 'error') {
+          updateDownloadState.value.isDownloading = false
+          updateDownloadState.value.isPaused = false
+          updateDownloadState.value.isReadyToInstall = false
+        }
+      })
+    }
+  }
+  setupUpdateListener()
 
   async function fetchVersion(): Promise<void> {
     try {
@@ -526,8 +627,11 @@ export const useAppStore = defineStore('app', () => {
     currentUser,
     sessionToken,
     subscriptionDaysRemaining,
+    themeMode,
     isDark,
     appVersion,
+    updateDownloadState,
+    syncUpdateDownloadStatus,
     businessState,
     businessType,
     isBusinessLocked,
@@ -584,6 +688,8 @@ export const useAppStore = defineStore('app', () => {
     withLoading,
     applyTheme,
     toggleTheme,
+    cycleTheme,
+    setThemeMode,
     fetchVersion,
     fetchSystemStatus,
     loadSettings,

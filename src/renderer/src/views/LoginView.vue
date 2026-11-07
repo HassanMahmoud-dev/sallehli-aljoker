@@ -2,24 +2,21 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
-import { useTerms } from '@renderer/composables/useTerms'
 import { swalSuccess, swalError } from '@renderer/utils/swal'
 import jokerTechLogo from '@renderer/assets/joker-tech-logo.png'
 import {
-  Wrench,
   Lock,
   User as UserIcon,
   Sun,
   Moon,
+  Monitor,
   ShieldAlert,
   CheckCircle2,
   Loader2,
-  Package,
-  Wallet,
   Globe,
   Eye,
   EyeOff,
-  Sparkles
+  ShieldCheck
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -31,30 +28,6 @@ const rememberMe = ref(true)
 const showPassword = ref(false)
 const errorMessage = ref('')
 const loading = ref(false)
-const { t } = useTerms()
-
-const features = computed(() => [
-  {
-    icon: Wrench,
-    title: `إدارة ${t('ticketsPage')} والضمان`,
-    desc: 'متابعة دقيقة لطلبات الصيانة بالورشة والزيارات، مع طباعة فواتير A4 وإيصالات حرارية 80mm وإرسال إشعارات واتساب للعملاء.'
-  },
-  {
-    icon: Package,
-    title: `${t('partsStore')} وعهدة ${t('technicians')}`,
-    desc: `رقابة شاملة على أرصدة ${t('parts')}، تنبيهات النواقص، صرف واسترداد عهدة ${t('technicians')}، وحساب العمولات تلقائياً.`
-  },
-  {
-    icon: Wallet,
-    title: 'الخزينة والتقارير المالية المحاسبية',
-    desc: 'إدارة متعددة الخزائن (كاش، فودافون كاش، إنستا باي، حساب بنكي) مع تقارير تفصيلية لصافي الأرباح والمصروفات والمديونيات.'
-  },
-  {
-    icon: Globe,
-    title: 'العمل عبر المتصفح والشبكة المحلية (LAN)',
-    desc: 'إمكانية فتح البرنامج على المتصفح والعمل من عدة أجهزة كمبيوتر أو هواتف داخل نفس الشبكة المحلية عبر عنوان الـ IP.'
-  }
-])
 
 const primaryLanUrl = computed(() => {
   const st = appStore.systemStatus
@@ -109,135 +82,131 @@ onMounted(async () => {
 
 <template>
   <div
-    class="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-100 via-blue-50/70 to-slate-200 dark:from-slate-950 dark:via-slate-900 dark:to-blue-950/40 p-4 md:p-8 relative"
+    class="min-h-screen flex flex-col items-center justify-between bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50/50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-4 md:p-6 text-slate-800 dark:text-slate-100 transition-colors duration-300 relative overflow-hidden"
   >
-    <!-- Theme Toggle Button -->
-    <button
-      type="button"
-      @click="appStore.toggleTheme"
-      class="fixed top-5 left-5 z-20 flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/90 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 shadow-sm hover:shadow-md transition cursor-pointer text-xs font-bold"
-    >
-      <Sun v-if="appStore.isDark" class="w-4 h-4 text-amber-400" />
-      <Moon v-else class="w-4 h-4 text-slate-700" />
-      <span>{{ appStore.isDark ? 'الوضع الفاتح' : 'الوضع الداكن' }}</span>
-    </button>
-
-    <!-- Main Split-Screen Container -->
+    <!-- Subtle Background Ambient Lights -->
     <div
-      class="w-full max-w-5xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl shadow-2xl overflow-hidden grid grid-cols-1 lg:grid-cols-12"
-    >
-      <!-- Right Side (RTL): Program Info & Features Showcase (7 cols) -->
-      <div
-        class="lg:col-span-7 bg-gradient-to-br from-blue-900 via-indigo-900 to-slate-950 text-white p-7 md:p-9 flex flex-col justify-between relative overflow-hidden"
-      >
-        <!-- Decorative Background Glows -->
+      class="w-96 h-96 rounded-full bg-blue-500/10 dark:bg-blue-600/10 blur-3xl absolute -top-24 -right-24 pointer-events-none"
+    ></div>
+    <div
+      class="w-96 h-96 rounded-full bg-indigo-500/10 dark:bg-indigo-600/10 blur-3xl absolute -bottom-24 -left-24 pointer-events-none"
+    ></div>
+
+    <!-- Top Navigation Bar: Theme Mode (3 Options) & LAN URL -->
+    <header class="w-full max-w-5xl flex items-center justify-between relative z-10 py-2">
+      <!-- LAN Address Badge if active -->
+      <div v-if="primaryLanUrl" class="flex items-center gap-2">
         <div
-          class="w-72 h-72 rounded-full bg-blue-500/20 blur-3xl absolute -top-20 -right-20 pointer-events-none"
-        ></div>
-        <div
-          class="w-72 h-72 rounded-full bg-indigo-500/20 blur-3xl absolute -bottom-24 -left-20 pointer-events-none"
-        ></div>
-
-        <div class="relative z-10 space-y-6">
-          <!-- Brand Header -->
-          <div class="flex items-center gap-4">
-            <div
-              class="w-16 h-16 rounded-2xl bg-white border-2 border-white/30 flex items-center justify-center shadow-xl p-2 shrink-0"
-            >
-              <img :src="jokerTechLogo" :alt="appStore.businessProfile.appName" class="w-full h-full object-contain" />
-            </div>
-            <div>
-              <div class="flex items-center gap-2.5">
-                <h1 class="text-2xl md:text-3xl font-black tracking-tight">نظام {{ appStore.businessProfile.appName }}</h1>
-                <span
-                  class="px-2.5 py-0.5 rounded-full bg-blue-500/30 border border-blue-300/40 text-blue-100 font-mono text-xs font-bold"
-                >
-                  {{ appStore.appVersion }}
-                </span>
-              </div>
-              <p class="text-blue-200 text-xs md:text-sm font-bold mt-1">
-                {{ appStore.businessProfile.loginSubtitle }}
-              </p>
-            </div>
-          </div>
-
-          <!-- Brief System Description -->
-          <div
-            class="p-4 rounded-2xl bg-white/10 border border-white/15 backdrop-blur-xs text-xs leading-relaxed text-blue-50"
-          >
-            <div class="flex items-center gap-1.5 font-black text-amber-300 mb-1">
-              <Sparkles class="w-4 h-4" />
-              <span>نبذة مختصرة عن النظام:</span>
-            </div>
-            صُمم نظام <strong>{{ appStore.appName }}</strong> ليمنح المركز تحكماً كاملاً وسريعاً في دورة العمل اليومية؛ بدءاً من استقبال طلب العميل وتسجيل البيانات، مروراً بمتابعة {{ t('technicians') }} وصرف {{ t('parts') }} من المخزن، وصولاً إلى ضبط الخزينة والتقارير المالية الدقيقة.
-          </div>
-
-          <!-- Key Features Grid -->
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div
-              v-for="(item, idx) in features"
-              :key="idx"
-              class="p-3.5 rounded-2xl bg-white/8 hover:bg-white/12 border border-white/10 transition space-y-1.5"
-            >
-              <div class="flex items-center gap-2">
-                <div
-                  class="w-8 h-8 rounded-xl bg-blue-500/25 border border-blue-400/30 flex items-center justify-center text-blue-200 shrink-0"
-                >
-                  <component :is="item.icon" class="w-4 h-4" />
-                </div>
-                <h3 class="font-black text-xs text-white">{{ item.title }}</h3>
-              </div>
-              <p class="text-[11px] text-blue-100/85 leading-relaxed">
-                {{ item.desc }}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <!-- Bottom Network / Status Bar -->
-        <div
-          class="relative z-10 mt-6 pt-4 border-t border-white/15 flex flex-wrap items-center justify-between gap-2 text-[11px] text-blue-200"
+          class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 font-mono text-xs text-emerald-600 dark:text-emerald-400 shadow-xs backdrop-blur-xs"
         >
-          <div class="flex items-center gap-2">
-            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>قاعدة بيانات محلية آمنة مع نسخ احتياطي تلقائي</span>
-          </div>
-          <div
-            v-if="primaryLanUrl"
-            class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 border border-white/15 font-mono text-[11px] text-emerald-300"
-          >
-            <Globe class="w-3.5 h-3.5" />
-            <span dir="ltr">{{ primaryLanUrl }}</span>
-          </div>
+          <Globe class="w-3.5 h-3.5" />
+          <span dir="ltr">{{ primaryLanUrl }}</span>
         </div>
       </div>
+      <div v-else></div>
 
-      <!-- Left Side (RTL): Login Form (5 cols) -->
-      <div class="lg:col-span-5 p-7 md:p-9 flex flex-col justify-center bg-white dark:bg-slate-900">
-        <form @submit.prevent="handleLogin" class="space-y-5">
-          <div>
-            <span
-              class="inline-block px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 font-bold text-[11px] mb-2"
+      <!-- 3-Mode Theme Selector (Light / Dark / System) -->
+      <div
+        class="flex items-center p-1 rounded-2xl bg-white/90 dark:bg-slate-800/90 border border-slate-200/80 dark:border-slate-700/80 shadow-xs backdrop-blur-xs text-xs font-bold"
+      >
+        <button
+          type="button"
+          @click="appStore.setThemeMode('light')"
+          :class="[
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all cursor-pointer',
+            appStore.themeMode === 'light'
+              ? 'bg-amber-50 text-amber-700 dark:bg-slate-700 dark:text-amber-400 shadow-xs font-black'
+              : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+          ]"
+          title="الوضع الفاتح"
+        >
+          <Sun class="w-3.5 h-3.5" />
+          <span class="hidden sm:inline">فاتح</span>
+        </button>
+
+        <button
+          type="button"
+          @click="appStore.setThemeMode('dark')"
+          :class="[
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all cursor-pointer',
+            appStore.themeMode === 'dark'
+              ? 'bg-indigo-50 text-indigo-700 dark:bg-slate-700 dark:text-indigo-300 shadow-xs font-black'
+              : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+          ]"
+          title="الوضع الداكن"
+        >
+          <Moon class="w-3.5 h-3.5" />
+          <span class="hidden sm:inline">داكن</span>
+        </button>
+
+        <button
+          type="button"
+          @click="appStore.setThemeMode('system')"
+          :class="[
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-xl transition-all cursor-pointer',
+            appStore.themeMode === 'system'
+              ? 'bg-blue-50 text-blue-700 dark:bg-slate-700 dark:text-blue-300 shadow-xs font-black'
+              : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+          ]"
+          title="تلقائي بحسب نظام التشغيل"
+        >
+          <Monitor class="w-3.5 h-3.5" />
+          <span class="hidden sm:inline">النظام</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Centered Login Card -->
+    <main class="w-full max-w-md my-auto relative z-10 py-6">
+      <div
+        class="bg-white/95 dark:bg-slate-900/95 border border-slate-200/90 dark:border-slate-800 rounded-3xl shadow-xl shadow-slate-200/50 dark:shadow-none p-8 md:p-9 space-y-6 backdrop-blur-md transition-all"
+      >
+        <!-- Logo & Brand Header -->
+        <div class="text-center space-y-3">
+          <!-- Logo Container -->
+          <div class="inline-flex relative">
+            <div
+              class="w-20 h-20 rounded-3xl bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-slate-800 dark:to-slate-800/80 border border-slate-200/80 dark:border-slate-700 flex items-center justify-center p-3.5 shadow-md shadow-blue-500/10 transition-transform hover:scale-105 duration-200"
             >
-              مرحباً بك مجدداً
-            </span>
-            <h2 class="text-xl font-black text-slate-900 dark:text-white">
-              تسجيل الدخول للنظام
-            </h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              أدخل بيانات حسابك للوصول إلى لوحة إدارة المركز
+              <img
+                :src="jokerTechLogo"
+                alt="لوجو صلحلي"
+                class="w-full h-full object-contain filter drop-shadow-xs"
+              />
+            </div>
+          </div>
+
+          <!-- Application Title & Version Badge -->
+          <div>
+            <div class="flex items-center justify-center gap-2.5">
+              <h1 class="text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+                صلحلي
+              </h1>
+              <span
+                class="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 font-mono text-xs font-black border border-blue-200 dark:border-blue-800/60"
+              >
+                {{ appStore.appVersion }}
+              </span>
+            </div>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">
+              {{ appStore.businessProfile.loginSubtitle || 'نظام الإدارة المتكامل لمراكز الصيانة والخدمات' }}
             </p>
           </div>
+        </div>
 
-          <div
-            v-if="errorMessage"
-            class="flex items-start gap-2.5 p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-bold"
-          >
-            <ShieldAlert class="w-5 h-5 shrink-0 text-rose-600 dark:text-rose-400" />
-            <span>{{ errorMessage }}</span>
-          </div>
+        <!-- Error Message Alert -->
+        <div
+          v-if="errorMessage"
+          class="flex items-start gap-2.5 p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-bold animate-shake"
+        >
+          <ShieldAlert class="w-4 h-4 shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
+          <span>{{ errorMessage }}</span>
+        </div>
 
-          <div class="space-y-1.5">
+        <!-- Login Form -->
+        <form @submit.prevent="handleLogin" class="space-y-4">
+          <!-- Username Input -->
+          <div class="space-y-1.5 text-right">
             <label class="block text-xs font-bold text-slate-700 dark:text-slate-300">
               اسم المستخدم
             </label>
@@ -249,13 +218,14 @@ onMounted(async () => {
                 v-model="username"
                 type="text"
                 autofocus
-                placeholder="مثال: admin"
-                class="w-full pr-10 pl-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/90 border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                placeholder="أدخل اسم المستخدم (مثال: admin)"
+                class="w-full pr-10 pl-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-300/80 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition"
               />
             </div>
           </div>
 
-          <div class="space-y-1.5">
+          <!-- Password Input -->
+          <div class="space-y-1.5 text-right">
             <label class="block text-xs font-bold text-slate-700 dark:text-slate-300">
               كلمة المرور
             </label>
@@ -267,13 +237,14 @@ onMounted(async () => {
                 v-model="password"
                 :type="showPassword ? 'text' : 'password'"
                 placeholder="••••••••"
-                class="w-full pr-10 pl-10 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/90 border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                class="w-full pr-10 pl-10 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-300/80 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition"
               />
               <button
                 type="button"
                 @click="showPassword = !showPassword"
-                class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer p-0.5"
                 tabindex="-1"
+                title="إظهار / إخفاء كلمة المرور"
               >
                 <EyeOff v-if="showPassword" class="w-4 h-4" />
                 <Eye v-else class="w-4 h-4" />
@@ -285,45 +256,52 @@ onMounted(async () => {
           <div class="flex items-center justify-between pt-1">
             <label
               for="rememberMeCheckbox"
-              class="flex items-center gap-2.5 cursor-pointer select-none text-xs font-bold text-slate-700 dark:text-slate-300"
+              class="flex items-center gap-2.5 cursor-pointer select-none text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200"
             >
               <input
                 id="rememberMeCheckbox"
                 v-model="rememberMe"
                 type="checkbox"
-                class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                class="w-4 h-4 rounded border-slate-300 dark:border-slate-700 text-blue-600 focus:ring-blue-500 cursor-pointer"
               />
-              <span>تذكرني (البقاء متصلاً عند إغلاق البرنامج)</span>
+              <span>تذكرني على هذا الجهاز</span>
             </label>
           </div>
 
+          <!-- Submit Button -->
           <button
             type="submit"
             :disabled="loading"
-            class="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-sm shadow-lg shadow-blue-600/25 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            class="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-black text-sm shadow-md shadow-blue-600/25 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
           >
             <Loader2 v-if="loading" class="w-4 h-4 animate-spin" />
             <CheckCircle2 v-else class="w-4 h-4" />
-            <span>{{ loading ? 'جاري تسجيل الدخول...' : 'دخول إلى لوحة الإدارة' }}</span>
+            <span>{{ loading ? 'جاري تسجيل الدخول...' : 'تسجيل الدخول' }}</span>
           </button>
-
-          <!-- Developer & Version Footer -->
-          <div
-            class="pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400"
-          >
-            <div class="flex items-center gap-1.5">
-              <img :src="jokerTechLogo" alt="الجوكر تك" class="w-4 h-4 object-contain" />
-              <span>
-                تطوير:
-                <strong class="text-slate-700 dark:text-slate-200">شركة الجوكر تك</strong>
-              </span>
-            </div>
-            <span>
-              الإصدار <strong class="font-mono">{{ appStore.appVersion }}</strong>
-            </span>
-          </div>
         </form>
+
+        <!-- Card Mini Footer: Security Badge -->
+        <div
+          class="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 font-medium"
+        >
+          <ShieldCheck class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+          <span>قاعدة بيانات محلية آمنة • نسخ احتياطي تلقائي</span>
+        </div>
       </div>
-    </div>
+    </main>
+
+    <!-- Bottom Page Footer: Company Copyright -->
+    <footer
+      class="w-full max-w-5xl flex items-center justify-center py-2 relative z-10 text-[11px] text-slate-500 dark:text-slate-400 font-medium"
+    >
+      <div class="flex items-center gap-2">
+        <img :src="jokerTechLogo" alt="الجوكر تك" class="w-4 h-4 object-contain opacity-80" />
+        <span>
+          تطوير: <strong class="text-slate-700 dark:text-slate-300 font-bold">شركة الجوكر تك (Al-Joker Tech)</strong>
+        </span>
+        <span class="text-slate-300 dark:text-slate-700">•</span>
+        <span>جميع الحقوق محفوظة</span>
+      </div>
+    </footer>
   </div>
 </template>

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, computed } from 'vue'
+import { onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
 import { useTerms } from '@renderer/composables/useTerms'
 import { USER_ROLE_LABELS } from '@renderer/constants/appliances'
+import { swalConfirm } from '@renderer/utils/swal'
 import PrintModal from '@renderer/components/PrintModal.vue'
 import UpdateModal from '@renderer/components/UpdateModal.vue'
 import BusinessSetupWizard from '@renderer/components/BusinessSetupWizard.vue'
@@ -28,10 +29,13 @@ import {
   Sparkles,
   Sun,
   Moon,
+  Monitor,
   LogOut,
   RefreshCw,
   Loader2,
-  X
+  X,
+  Pause,
+  CheckCircle2
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -154,10 +158,37 @@ function openInBrowser(): void {
   window.api.openExternal(primaryBrowserUrl.value)
 }
 
-function handleLogout(): void {
+async function handleLogout(): Promise<void> {
+  const confirmed = await swalConfirm(
+    'تأكيد تسجيل الخروج',
+    'هل أنت متأكد من رغبتك في تسجيل الخروج من النظام؟',
+    'نعم، خروج',
+    'إلغاء'
+  )
+  if (!confirmed) return
   appStore.logout()
   router.push('/login')
 }
+
+// Watch background update completion and notify user
+watch(
+  () => appStore.updateDownloadState.isReadyToInstall,
+  (ready) => {
+    if (ready && !appStore.updateDownloadState.notifiedCompletion && !appStore.updateModalOpen) {
+      appStore.updateDownloadState.notifiedCompletion = true
+      swalConfirm(
+        'اكتمل تحميل التحديث الجديد!',
+        'تم تحميل الإصدار الجديد بنجاح في الخلفية وهو جاهز للتثبيت الآن. هل تريد إغلاق البرنامج وبدء التثبيت؟',
+        'تثبيت التحديث وإعادة التشغيل',
+        'تأجيل للاحقاً'
+      ).then(async (confirmed) => {
+        if (confirmed) {
+          await window.api.applyDownloadedUpdate()
+        }
+      })
+    }
+  }
+)
 
 onMounted(async () => {
   appStore.applyTheme()
@@ -331,27 +362,64 @@ onUnmounted(() => {
             </span>
           </button>
 
-          <div class="flex items-center gap-2">
+          <!-- 3-Mode Theme Selector (Light / Dark / System) -->
+          <div class="flex items-center p-1 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/60 text-[10px] font-bold">
             <button
               type="button"
-              @click="appStore.toggleTheme"
-              class="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold transition cursor-pointer"
+              @click="appStore.setThemeMode('light')"
+              :class="[
+                'flex-1 flex items-center justify-center gap-1 py-1 rounded-lg transition cursor-pointer',
+                appStore.themeMode === 'light'
+                  ? 'bg-white dark:bg-slate-700 text-amber-600 dark:text-amber-400 shadow-xs'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              ]"
+              title="الوضع الفاتح"
             >
-              <Sun v-if="appStore.isDark" class="w-4 h-4 text-amber-400" />
-              <Moon v-else class="w-4 h-4 text-slate-700" />
-              <span>{{ appStore.isDark ? 'فاتح' : 'داكن' }}</span>
+              <Sun class="w-3 h-3" />
+              <span>فاتح</span>
             </button>
 
             <button
               type="button"
-              @click="handleLogout"
-              class="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 text-xs font-bold transition cursor-pointer"
-              title="تسجيل الخروج"
+              @click="appStore.setThemeMode('dark')"
+              :class="[
+                'flex-1 flex items-center justify-center gap-1 py-1 rounded-lg transition cursor-pointer',
+                appStore.themeMode === 'dark'
+                  ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              ]"
+              title="الوضع الداكن"
             >
-              <LogOut class="w-4 h-4" />
-              <span>خروج</span>
+              <Moon class="w-3 h-3" />
+              <span>داكن</span>
+            </button>
+
+            <button
+              type="button"
+              @click="appStore.setThemeMode('system')"
+              :class="[
+                'flex-1 flex items-center justify-center gap-1 py-1 rounded-lg transition cursor-pointer',
+                appStore.themeMode === 'system'
+                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              ]"
+              title="تلقائي بحسب نظام التشغيل"
+            >
+              <Monitor class="w-3 h-3" />
+              <span>النظام</span>
             </button>
           </div>
+
+          <!-- Logout Button -->
+          <button
+            type="button"
+            @click="handleLogout"
+            class="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 text-xs font-bold transition cursor-pointer"
+            title="تسجيل الخروج"
+          >
+            <LogOut class="w-4 h-4" />
+            <span>تسجيل الخروج</span>
+          </button>
         </div>
       </aside>
 
@@ -403,9 +471,87 @@ onUnmounted(() => {
           </router-link>
         </div>
 
+        <!-- Background Update Download in Progress Banner -->
+        <div
+          v-if="appStore.updateDownloadState.isDownloading"
+          class="no-print p-3.5 rounded-2xl bg-gradient-to-l from-blue-600 to-indigo-600 text-white shadow-lg flex flex-wrap items-center justify-between gap-3 text-xs"
+        >
+          <div class="flex items-center gap-2.5">
+            <RefreshCw class="w-4 h-4 text-blue-200 animate-spin" />
+            <div>
+              <span class="font-black">
+                جاري تحميل التحديث الجديد في الخلفية ({{ appStore.updateDownloadState.progress?.percent || 0 }}%)...
+              </span>
+              <span class="text-blue-100 mr-2 text-[11px]">
+                يمكنك متابعة العمل على البرنامج بحرية كاملة، وسنخبرك فور اكتمال التحميل.
+              </span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            @click="appStore.openUpdateModal"
+            class="px-3.5 py-1.5 rounded-xl bg-white text-blue-900 hover:bg-blue-50 font-black transition cursor-pointer shadow-xs"
+          >
+            عرض تفاصيل التحميل
+          </button>
+        </div>
+
+        <!-- Background Update Download Paused Banner -->
+        <div
+          v-else-if="appStore.updateDownloadState.isPaused"
+          class="no-print p-3.5 rounded-2xl bg-gradient-to-l from-amber-600 to-orange-600 text-white shadow-lg flex flex-wrap items-center justify-between gap-3 text-xs"
+        >
+          <div class="flex items-center gap-2.5">
+            <Pause class="w-4 h-4 text-amber-200" />
+            <div>
+              <span class="font-black">
+                تحميل التحديث متوقف مؤقتاً عند {{ appStore.updateDownloadState.progress?.percent || 0 }}%.
+              </span>
+              <span class="text-amber-100 mr-2 text-[11px]">
+                يمكنك استئناف التحميل في أي وقت.
+              </span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            @click="appStore.openUpdateModal"
+            class="px-3.5 py-1.5 rounded-xl bg-white text-amber-900 hover:bg-amber-50 font-black transition cursor-pointer shadow-xs"
+          >
+            استئناف التحميل
+          </button>
+        </div>
+
+        <!-- Downloaded Update Ready to Install Banner -->
+        <div
+          v-else-if="appStore.updateDownloadState.isReadyToInstall"
+          class="no-print p-3.5 rounded-2xl bg-gradient-to-l from-emerald-600 to-teal-600 text-white shadow-lg flex flex-wrap items-center justify-between gap-3 text-xs animate-pulse"
+        >
+          <div class="flex items-center gap-2.5">
+            <CheckCircle2 class="w-5 h-5 text-emerald-200" />
+            <div>
+              <span class="font-black">
+                اكتمل تحميل التحديث الجديد وهو جاهز للتثبيت!
+              </span>
+              <span class="text-emerald-100 mr-2 text-[11px]">
+                لن يتم تطبيق التحديث إلا عند ضغطك على زر التثبيت.
+              </span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            @click="appStore.openUpdateModal"
+            class="px-4 py-1.5 rounded-xl bg-white text-emerald-900 hover:bg-emerald-50 font-black transition cursor-pointer shadow-xs"
+          >
+            تثبيت التحديث الآن
+          </button>
+        </div>
+
         <!-- 24-Hour Auto-Update Available Banner -->
         <div
-          v-if="appStore.availableUpdate?.updateAvailable && !appStore.updateBannerDismissed"
+          v-else-if="appStore.availableUpdate?.updateAvailable && !appStore.updateBannerDismissed"
           class="no-print p-3.5 rounded-2xl bg-gradient-to-l from-indigo-600 via-blue-600 to-indigo-700 text-white shadow-lg flex flex-wrap items-center justify-between gap-3 text-xs"
         >
           <div class="flex items-center gap-2.5">

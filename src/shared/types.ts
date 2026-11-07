@@ -667,8 +667,19 @@ export interface UpdateProgressPayload {
   totalBytes: number
   speedBytesPerSec?: number
   remainingSeconds?: number | null
-  status: 'downloading' | 'completed' | 'cancelled' | 'error'
+  status: 'downloading' | 'paused' | 'completed' | 'cancelled' | 'error'
   message?: string
+  installerPath?: string
+  version?: string
+}
+
+export interface UpdateDownloadStatus {
+  isDownloading: boolean
+  isPaused: boolean
+  isReadyToInstall: boolean
+  progress: UpdateProgressPayload | null
+  installerPath?: string
+  version?: string
 }
 
 export interface DashboardStats {

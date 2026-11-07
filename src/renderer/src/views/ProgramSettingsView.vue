@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
 import { useTerms } from '@renderer/composables/useTerms'
@@ -50,8 +50,8 @@ const licensedModulesList = ref<string[]>([])
 const isSavingModules = ref(false)
 
 watch(
-  () => appStore.businessState.licensedModules,
-  (mods) => {
+  () => appStore.businessState?.licensedModules,
+  (mods?: string[]) => {
     licensedModulesList.value = mods ? [...mods] : []
   },
   { immediate: true }
@@ -227,7 +227,7 @@ onMounted(async () => {
           class="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 text-sm font-semibold"
         >
           <CheckCircle2 class="w-4 h-4 text-emerald-600" />
-          النشاط الحالي: {{ currentProfile.appName }}
+          النشاط الحالي: {{ currentProfile?.appName }}
         </div>
       </div>
     </div>
@@ -394,7 +394,7 @@ onMounted(async () => {
             <div>
               <h4 class="font-bold text-slate-900 dark:text-white">اعتماد النشاط الأولي</h4>
               <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                سيتم اعتماد "{{ BUSINESS_PROFILES[selectedBusinessType].appName }}" كنظام رئيسي لهذا الجهاز.
+                سيتم اعتماد "{{ BUSINESS_PROFILES[selectedBusinessType]?.appName }}" كنظام رئيسي لهذا الجهاز.
               </p>
             </div>
             <button
@@ -416,8 +416,8 @@ onMounted(async () => {
                 تبديل نشاط البرنامج
               </h4>
               <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                النشاط الحالي: <span class="font-semibold text-slate-700 dark:text-slate-200">{{ currentProfile.appName }}</span>
-                | النشاط المختار للتبديل: <span class="font-semibold text-purple-600">{{ BUSINESS_PROFILES[selectedBusinessType].appName }}</span>
+                النشاط الحالي: <span class="font-semibold text-slate-700 dark:text-slate-200">{{ currentProfile?.appName }}</span>
+                | النشاط المختار للتبديل: <span class="font-semibold text-purple-600">{{ BUSINESS_PROFILES[selectedBusinessType]?.appName }}</span>
               </p>
             </div>
 
@@ -525,7 +525,7 @@ onMounted(async () => {
             @click="toggleAddonModule('sales')"
             :class="[
               'p-3.5 rounded-xl border cursor-pointer transition-all flex items-start gap-3 select-none',
-              currentProfile.modules.includes('sales')
+              currentProfile?.modules?.includes('sales')
                 ? 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-700 opacity-75 cursor-default'
                 : licensedModulesList.includes('sales')
                 ? 'bg-indigo-50/70 dark:bg-indigo-900/20 border-indigo-300 dark:border-indigo-700'
@@ -534,10 +534,10 @@ onMounted(async () => {
           >
             <input
               type="checkbox"
-              :checked="currentProfile.modules.includes('sales') || licensedModulesList.includes('sales')"
-              :disabled="currentProfile.modules.includes('sales')"
+              :checked="currentProfile?.modules?.includes('sales') || licensedModulesList.includes('sales')"
+              :disabled="currentProfile?.modules?.includes('sales')"
               class="w-4 h-4 mt-0.5 text-indigo-600 rounded focus:ring-indigo-500 border-slate-300"
-              @click.stop="!currentProfile.modules.includes('sales') && toggleAddonModule('sales')"
+              @click.stop="!currentProfile?.modules?.includes('sales') && toggleAddonModule('sales')"
             />
             <div>
               <div class="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
@@ -545,7 +545,7 @@ onMounted(async () => {
                 المبيعات وفواتير نقاط البيع (POS)
               </div>
               <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                {{ currentProfile.modules.includes('sales') ? 'مفعلة تلقائياً ضمن نشاط المركز الحالي' : 'إمكانية إصدار فواتير بيع سريع وتقسيط ومرتجعات' }}
+                {{ currentProfile?.modules?.includes('sales') ? 'مفعلة تلقائياً ضمن نشاط المركز الحالي' : 'إمكانية إصدار فواتير بيع سريع وتقسيط ومرتجعات' }}
               </p>
             </div>
           </div>
@@ -555,7 +555,7 @@ onMounted(async () => {
             @click="toggleAddonModule('purchases')"
             :class="[
               'p-3.5 rounded-xl border cursor-pointer transition-all flex items-start gap-3 select-none',
-              currentProfile.modules.includes('purchases')
+              currentProfile?.modules?.includes('purchases')
                 ? 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-700 opacity-75 cursor-default'
                 : licensedModulesList.includes('purchases')
                 ? 'bg-indigo-50/70 dark:bg-indigo-900/20 border-indigo-300 dark:border-indigo-700'
@@ -564,10 +564,10 @@ onMounted(async () => {
           >
             <input
               type="checkbox"
-              :checked="currentProfile.modules.includes('purchases') || licensedModulesList.includes('purchases')"
-              :disabled="currentProfile.modules.includes('purchases')"
+              :checked="currentProfile?.modules?.includes('purchases') || licensedModulesList.includes('purchases')"
+              :disabled="currentProfile?.modules?.includes('purchases')"
               class="w-4 h-4 mt-0.5 text-indigo-600 rounded focus:ring-indigo-500 border-slate-300"
-              @click.stop="!currentProfile.modules.includes('purchases') && toggleAddonModule('purchases')"
+              @click.stop="!currentProfile?.modules?.includes('purchases') && toggleAddonModule('purchases')"
             />
             <div>
               <div class="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
@@ -575,7 +575,7 @@ onMounted(async () => {
                 المشتريات والموردين
               </div>
               <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                {{ currentProfile.modules.includes('purchases') ? 'مفعلة تلقائياً ضمن نشاط المركز الحالي' : 'فواتير المشتريات وحسابات الموردين والأقساط' }}
+                {{ currentProfile?.modules?.includes('purchases') ? 'مفعلة تلقائياً ضمن نشاط المركز الحالي' : 'فواتير المشتريات وحسابات الموردين والأقساط' }}
               </p>
             </div>
           </div>
@@ -585,7 +585,7 @@ onMounted(async () => {
             @click="toggleAddonModule('products')"
             :class="[
               'p-3.5 rounded-xl border cursor-pointer transition-all flex items-start gap-3 select-none',
-              currentProfile.modules.includes('products')
+              currentProfile?.modules?.includes('products')
                 ? 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-700 opacity-75 cursor-default'
                 : licensedModulesList.includes('products')
                 ? 'bg-indigo-50/70 dark:bg-indigo-900/20 border-indigo-300 dark:border-indigo-700'
@@ -594,10 +594,10 @@ onMounted(async () => {
           >
             <input
               type="checkbox"
-              :checked="currentProfile.modules.includes('products') || licensedModulesList.includes('products')"
-              :disabled="currentProfile.modules.includes('products')"
+              :checked="currentProfile?.modules?.includes('products') || licensedModulesList.includes('products')"
+              :disabled="currentProfile?.modules?.includes('products')"
               class="w-4 h-4 mt-0.5 text-indigo-600 rounded focus:ring-indigo-500 border-slate-300"
-              @click.stop="!currentProfile.modules.includes('products') && toggleAddonModule('products')"
+              @click.stop="!currentProfile?.modules?.includes('products') && toggleAddonModule('products')"
             />
             <div>
               <div class="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
@@ -605,7 +605,7 @@ onMounted(async () => {
                 المنتجات وسيريال الأجهزة
               </div>
               <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                {{ currentProfile.modules.includes('products') ? 'مفعلة تلقائياً ضمن نشاط المركز الحالي' : 'إدارة المنتجات والأصناف برقم باركود ورقم تسلسلي' }}
+                {{ currentProfile?.modules?.includes('products') ? 'مفعلة تلقائياً ضمن نشاط المركز الحالي' : 'إدارة المنتجات والأصناف برقم باركود ورقم تسلسلي' }}
               </p>
             </div>
           </div>
