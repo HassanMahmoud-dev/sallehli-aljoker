@@ -1,6 +1,7 @@
 import { getDb } from '../connection'
 import { createAppliancesTables } from '../appliances/tables'
 import { createHearingAidsTables } from '../hearing_aids/tables'
+import { migrateToActivityTables } from './migrations'
 import type { BusinessType } from '../../../shared/types'
 
 /**
@@ -135,6 +136,9 @@ export function createTables(businessType: BusinessType = 'appliances'): void {
   const db = getDb()
   // 1. إنشاء جداول النظام الأساسية المشتركة
   createSystemTables()
+
+  // 1.5 legacy
+  migrateToActivityTables(businessType)
 
   // 2. إنشاء الجداول المتخصصة وفقاً لنشاط المركز
   if (businessType === 'hearing_aids') {

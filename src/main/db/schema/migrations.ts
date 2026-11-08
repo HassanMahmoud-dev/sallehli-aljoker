@@ -19,12 +19,12 @@ export function ensureColumn(tableName: string, columnName: string, columnDef: s
  * ترحيل جدول قطع الغيار spare_parts تلقائياً للعملاء الحاليين:
  * elect_spare_parts للأجهزة الكهربائية و medicalmain_spare_parts للسماعات الطبية
  */
-export function migrateToActivityTables(): void {
+export function migrateToActivityTables(forcedType?: 'hearing_aids' | 'appliances'): void {
   const db = getDb()
   const bRow = db.prepare("SELECT value FROM settings WHERE key = 'business_type'").get() as
     | { value: string }
     | undefined
-  const businessType = bRow?.value === 'hearing_aids' ? 'hearing_aids' : 'appliances'
+  const businessType = forcedType ?? (bRow?.value === 'hearing_aids' ? 'hearing_aids' : 'appliances')
 
   const sparePartsMeta = db
     .prepare("SELECT type FROM sqlite_master WHERE name = 'spare_parts'")
