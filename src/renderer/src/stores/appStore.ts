@@ -259,32 +259,15 @@ export const useAppStore = defineStore('app', () => {
   const isAuthenticated = computed(() => !!currentUser.value)
   const isSuperAdmin = computed(() => currentUser.value?.role === 'super_admin')
   const isOwner = computed(() => currentUser.value?.role === 'owner')
-  const isTenant = computed(() => currentUser.value?.role === 'tenant')
 
-  // Role-Based Access Control (RBAC) computed flags
-  const isFullManager = computed(() =>
-    ['super_admin', 'owner', 'tenant'].includes(currentUser.value?.role || '')
-  )
-  const canManageUsers = computed(() =>
-    ['super_admin', 'owner', 'tenant'].includes(currentUser.value?.role || '')
-  )
-  const canViewFinancials = computed(() =>
-    ['super_admin', 'owner', 'tenant', 'cashier'].includes(currentUser.value?.role || '')
-  )
-  const canViewInventory = computed(() =>
-    ['super_admin', 'owner', 'tenant', 'storekeeper', 'cashier'].includes(
-      currentUser.value?.role || ''
-    )
-  )
-  const canViewPurchasePrices = computed(() =>
-    ['super_admin', 'owner', 'tenant', 'storekeeper'].includes(currentUser.value?.role || '')
-  )
-  const canDeleteRecords = computed(() =>
-    ['super_admin', 'owner', 'tenant'].includes(currentUser.value?.role || '')
-  )
-  const canViewMedicalRecords = computed(() =>
-    ['super_admin', 'owner', 'tenant', 'receptionist'].includes(currentUser.value?.role || '')
-  )
+  // Role-Based Access Control (RBAC): super_admin and owner both have full access
+  const isFullManager = computed(() => !!currentUser.value)
+  const canManageUsers = computed(() => currentUser.value?.role === 'super_admin')
+  const canViewFinancials = computed(() => !!currentUser.value)
+  const canViewInventory = computed(() => !!currentUser.value)
+  const canViewPurchasePrices = computed(() => !!currentUser.value)
+  const canDeleteRecords = computed(() => !!currentUser.value)
+  const canViewMedicalRecords = computed(() => !!currentUser.value)
 
   function resolveIsDark(mode: ThemeMode): boolean {
     if (mode === 'dark') return true

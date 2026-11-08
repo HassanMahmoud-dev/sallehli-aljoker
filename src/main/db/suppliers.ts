@@ -2,6 +2,7 @@ import { db, runTransaction } from './connection'
 import { roundMoney, parseJsonArray, parseJsonObject, stringifyExtraData, getLocalDateString, generateNextNumber } from './utils'
 import { normalizeProductRow, syncProductQtyFromChildren } from './products'
 import { isDemoDataHidden } from './demo'
+import { getBusinessState } from './business'
 import type { Supplier, SupplierPayment, SupplierStatement, SupplierStatementEntry, PurchaseInvoice, PurchaseItem } from '../../shared/types'
 import type { SessionInfo } from '../session'
 
@@ -19,7 +20,10 @@ export function listSuppliers(search = ''): Supplier[] {
       COALESCE((SELECT SUM(pi.total_amount) FROM purchase_invoices pi WHERE pi.supplier_id = s.id AND pi.status != 'cancelled'), 0) as total_purchases`
     : `, 0 as invoices_count, 0 as total_purchases`
 
-  const demoFilter = isDemoDataHidden() ? ' AND s.is_demo = 0' : ''
+  const bType = getBusinessState().type
+  const demoFilter = isDemoDataHidden()
+    ? ' AND s.is_demo = 0'
+    : ` AND (s.is_demo = 0 OR s.business_type = '${bType}' OR s.business_type IS NULL OR s.business_type = '')`
 
   return db
     .prepare(

@@ -1,10 +1,4 @@
-export type UserRole =
-  | 'super_admin'
-  | 'owner'
-  | 'tenant'
-  | 'receptionist'
-  | 'cashier'
-  | 'storekeeper'
+export type UserRole = 'super_admin' | 'owner'
 
 export interface User {
   id: number
@@ -13,8 +7,8 @@ export interface User {
   phone: string
   role: UserRole
   is_active: number // 1 or 0
-  subscription_start: string | null
-  subscription_end: string | null
+  subscription_start?: string | null
+  subscription_end?: string | null
   subscription_sig?: string | null
   notes: string
   created_at: string

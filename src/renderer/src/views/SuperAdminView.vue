@@ -9,7 +9,7 @@ import {
   UserPlus,
   Edit3,
   Trash2,
-  CalendarClock,
+  
   CheckCircle,
   XCircle,
   KeyRound
@@ -34,18 +34,14 @@ const form = ref<{
   phone: string
   role: UserRole
   is_active: number
-  subscription_start: string
-  subscription_end: string
   notes: string
 }>({
   username: '',
   password: '',
   full_name: '',
   phone: '',
-  role: 'tenant',
+  role: 'owner',
   is_active: 1,
-  subscription_start: new Date().toISOString().slice(0, 10),
-  subscription_end: '',
   notes: ''
 })
 
@@ -55,19 +51,13 @@ async function loadUsers(): Promise<void> {
 
 function openCreateModal(): void {
   errorMsg.value = ''
-  const today = new Date()
-  const nextMonth = new Date()
-  nextMonth.setMonth(nextMonth.getMonth() + 1)
-
   form.value = {
     username: '',
     password: '',
     full_name: '',
     phone: '',
-    role: appStore.isSuperAdmin ? 'tenant' : 'receptionist',
+    role: 'owner',
     is_active: 1,
-    subscription_start: today.toISOString().slice(0, 10),
-    subscription_end: nextMonth.toISOString().slice(0, 10),
     notes: ''
   }
   modalOpen.value = true
@@ -75,8 +65,8 @@ function openCreateModal(): void {
 
 function openEditModal(u: User): void {
   errorMsg.value = ''
-  if (!appStore.isSuperAdmin && ['super_admin', 'owner', 'tenant'].includes(u.role)) {
-    swalError('غير مصرح', 'لا يمكن تعديل حسابات الإدارة أو التراخيص إلا من خلال السوبر أدمن.')
+  if (!appStore.isSuperAdmin && ['super_admin', 'owner'].includes(u.role)) {
+    swalError('غير مصرح', 'لا يمكن تعديل حسابات الإدارة إلا من خلال السوبر أدمن.')
     return
   }
   form.value = {
@@ -87,46 +77,12 @@ function openEditModal(u: User): void {
     phone: u.phone || '',
     role: u.role,
     is_active: u.is_active,
-    subscription_start: u.subscription_start || new Date().toISOString().slice(0, 10),
-    subscription_end: u.subscription_end || '',
     notes: u.notes || ''
   }
   modalOpen.value = true
 }
 
-function setQuickSubscriptionMonths(months: number): void {
-  const start = form.value.subscription_start
-    ? new Date(form.value.subscription_start)
-    : new Date()
-  const end = new Date(start)
-  end.setMonth(end.getMonth() + months)
-  form.value.subscription_end = end.toISOString().slice(0, 10)
-}
 
-async function extendTenantSubscription(user: User, months: number): Promise<void> {
-  if (!appStore.isSuperAdmin) {
-    swalError('غير مصرح', 'تجديد الاشتراك متاح فقط لحساب السوبر أدمن.')
-    return
-  }
-  const baseDate =
-    user.subscription_end && new Date(user.subscription_end) > new Date()
-      ? new Date(user.subscription_end)
-      : new Date()
-  baseDate.setMonth(baseDate.getMonth() + months)
-  const newEnd = baseDate.toISOString().slice(0, 10)
-
-  await appStore.withLoading(async () => {
-    await window.api.saveUser({
-      ...user,
-      is_active: 1,
-      subscription_start: user.subscription_start || new Date().toISOString().slice(0, 10),
-      subscription_end: newEnd
-    })
-    successMsg.value = `تم تجديد اشتراك المستأجر (${user.full_name}) لمدة ${months} شهر حتى تاريخ ${newEnd}`
-    await loadUsers()
-  }, 'جاري تجديد فترة الاشتراك...')
-  swalSuccess(`تم تجديد اشتراك المستأجر (${user.full_name}) بنجاح`, `ساري حتى ${newEnd}`)
-}
 
 async function handleSaveUser(): Promise<void> {
   errorMsg.value = ''
@@ -140,20 +96,14 @@ async function handleSaveUser(): Promise<void> {
     swalError('بيانات غير مكتملة', errorMsg.value)
     return
   }
-  if (form.value.role === 'tenant' && !form.value.subscription_end) {
-    errorMsg.value = 'يرجى تحديد تاريخ انتهاء الاشتراك لحساب مستأجر البرنامج'
-    swalError('بيانات غير مكتملة', errorMsg.value)
-    return
-  }
+  
 
   try {
     const isEdit = Boolean(form.value.id)
     await appStore.withLoading(async () => {
       await window.api.saveUser({
         ...form.value,
-        subscription_start: form.value.role === 'tenant' ? form.value.subscription_start : null,
-        subscription_end: form.value.role === 'tenant' ? form.value.subscription_end : null
-      })
+              })
       modalOpen.value = false
       successMsg.value = 'تم حفظ بيانات المستخدم والصلاحية بنجاح'
       await loadUsers()
@@ -187,35 +137,7 @@ async function handleDeleteUser(user: User): Promise<void> {
   }
 }
 
-function getTenantDaysStatus(user: User): { text: string; color: string } {
-  if (user.role !== 'tenant') {
-    return { text: 'ترخيص دائم (غير محدد بمدة)', color: 'text-emerald-600 dark:text-emerald-400' }
-  }
-  if (!user.subscription_end) {
-    return { text: 'بدون تاريخ انتهاء', color: 'text-rose-600' }
-  }
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const end = new Date(user.subscription_end)
-  end.setHours(23, 59, 59, 999)
-  const days = Math.ceil((end.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-  if (days < 0) {
-    return {
-      text: `منتهي منذ ${Math.abs(days)} يوم (${user.subscription_end})`,
-      color: 'text-rose-600 dark:text-rose-400 font-bold'
-    }
-  }
-  if (days <= 7) {
-    return {
-      text: `متبقي ${days} أيام فقط (ينتهي ${user.subscription_end})`,
-      color: 'text-amber-600 dark:text-amber-400 font-bold'
-    }
-  }
-  return {
-    text: `ساري - متبقي ${days} يوم (ينتهي ${user.subscription_end})`,
-    color: 'text-blue-600 dark:text-blue-400 font-semibold'
-  }
-}
+
 
 onMounted(loadUsers)
 </script>
@@ -232,10 +154,10 @@ onMounted(loadUsers)
         </div>
         <div>
           <h1 class="text-xl font-black">
-            لوحة تحكم السوبر أدمن (إدارة التراخيص والمالكين والمستأجرين)
+            لوحة تحكم السوبر أدمن (إدارة المستخدمين والصلاحيات)
           </h1>
           <p class="text-xs text-purple-200 mt-1">
-            تحكم كامل في حسابات مالكي البرنامج (النسخ الدائمة) ومستأجري البرنامج (بنظام الاشتراك الشهري/السنوي)
+            إدارة حسابات مالكي البرنامج (صلاحية كاملة) والسوبر أدمن
           </p>
         </div>
       </div>
@@ -255,7 +177,7 @@ onMounted(loadUsers)
           class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white text-indigo-950 hover:bg-purple-50 font-black text-xs shadow-md transition cursor-pointer"
         >
           <UserPlus class="w-4 h-4" />
-          إضافة مستخدم / ترخيص جديد
+          إضافة مستخدم جديد
         </button>
       </div>
     </div>
@@ -295,10 +217,8 @@ onMounted(loadUsers)
               <th class="py-3.5 px-4">#</th>
               <th class="py-3.5 px-4">اسم المستخدم</th>
               <th class="py-3.5 px-4">الاسم الكامل</th>
-              <th class="py-3.5 px-4">نوع الصلاحية / الترخيص</th>
-              <th class="py-3.5 px-4">حالة الاشتراك والمدة</th>
+              <th class="py-3.5 px-4">نوع الصلاحية</th>
               <th class="py-3.5 px-4">الحالة</th>
-              <th class="py-3.5 px-4">تجديد سريع للمستأجر</th>
               <th class="py-3.5 px-4">إجراءات</th>
             </tr>
           </thead>
@@ -329,11 +249,6 @@ onMounted(loadUsers)
                 </span>
               </td>
               <td class="py-3.5 px-4">
-                <span :class="getTenantDaysStatus(u).color">
-                  {{ getTenantDaysStatus(u).text }}
-                </span>
-              </td>
-              <td class="py-3.5 px-4">
                 <span
                   v-if="u.is_active"
                   class="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold"
@@ -343,32 +258,6 @@ onMounted(loadUsers)
                 <span v-else class="inline-flex items-center gap-1 text-rose-600 font-bold">
                   <XCircle class="w-4 h-4" /> موقوف
                 </span>
-              </td>
-              <td class="py-3.5 px-4">
-                <div v-if="appStore.isSuperAdmin && u.role === 'tenant'" class="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    @click="extendTenantSubscription(u, 1)"
-                    class="px-2 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 font-bold text-[11px] transition cursor-pointer"
-                  >
-                    + شهر
-                  </button>
-                  <button
-                    type="button"
-                    @click="extendTenantSubscription(u, 6)"
-                    class="px-2 py-1 rounded-lg bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300 font-bold text-[11px] transition cursor-pointer"
-                  >
-                    + 6 شهور
-                  </button>
-                  <button
-                    type="button"
-                    @click="extendTenantSubscription(u, 12)"
-                    class="px-2 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300 font-bold text-[11px] transition cursor-pointer"
-                  >
-                    + سنة
-                  </button>
-                </div>
-                <span v-else class="text-slate-400">—</span>
               </td>
               <td class="py-3.5 px-4">
                 <div class="flex items-center gap-2">
@@ -410,7 +299,7 @@ onMounted(loadUsers)
         >
           <h3 class="font-bold text-base text-slate-900 dark:text-white flex items-center gap-2">
             <KeyRound class="w-5 h-5 text-purple-600" />
-            <span>{{ form.id ? 'تعديل حساب وصلاحية مستخدم' : 'إنشاء مستخدم وترخيص جديد' }}</span>
+            <span>{{ form.id ? 'تعديل حساب وصلاحية مستخدم' : 'إنشاء مستخدم جديد' }}</span>
           </h3>
           <button
             type="button"
@@ -477,24 +366,18 @@ onMounted(loadUsers)
 
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block font-bold mb-1">نوع الصلاحية والترخيص *</label>
+              <label class="block font-bold mb-1">نوع الصلاحية *</label>
               <select
                 v-model="form.role"
                 :disabled="form.username === 'admin'"
                 class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold"
               >
+                <option value="owner">
+                  مالك البرنامج (صلاحية كاملة)
+                </option>
                 <option v-if="appStore.isSuperAdmin" value="super_admin">
-                  سوبر أدمن (مالك البرنامج بالكامل)
+                  سوبر أدمن (مالك النظام بالكامل)
                 </option>
-                <option v-if="appStore.isSuperAdmin" value="owner">
-                  مستخدم مالك البرنامج (نسخة دائمة)
-                </option>
-                <option v-if="appStore.isSuperAdmin" value="tenant">
-                  مستخدم مستأجر البرنامج (اشتراك محدد)
-                </option>
-                <option value="receptionist">موظف استقبال وخدمة عملاء</option>
-                <option value="cashier">كاشير / محاسب مالي</option>
-                <option value="storekeeper">مسؤول / أمين المخزن</option>
               </select>
             </div>
             <div>
@@ -510,75 +393,12 @@ onMounted(loadUsers)
             </div>
           </div>
 
-          <!-- Subscription Dates for Tenant Role -->
-          <div
-            v-if="appStore.isSuperAdmin && form.role === 'tenant'"
-            class="p-4 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 space-y-3"
-          >
-            <div class="flex items-center justify-between">
-              <span class="font-bold text-amber-900 dark:text-amber-300 flex items-center gap-1.5">
-                <CalendarClock class="w-4 h-4" />
-                إعدادات فترة إيجار البرنامج للمستأجر
-              </span>
-              <div class="flex gap-1">
-                <button
-                  type="button"
-                  @click="setQuickSubscriptionMonths(1)"
-                  class="px-2 py-0.5 rounded bg-amber-200 dark:bg-amber-800 text-amber-900 dark:text-amber-100 font-bold cursor-pointer"
-                >
-                  شهر
-                </button>
-                <button
-                  type="button"
-                  @click="setQuickSubscriptionMonths(3)"
-                  class="px-2 py-0.5 rounded bg-amber-200 dark:bg-amber-800 text-amber-900 dark:text-amber-100 font-bold cursor-pointer"
-                >
-                  3 شهور
-                </button>
-                <button
-                  type="button"
-                  @click="setQuickSubscriptionMonths(6)"
-                  class="px-2 py-0.5 rounded bg-amber-200 dark:bg-amber-800 text-amber-900 dark:text-amber-100 font-bold cursor-pointer"
-                >
-                  6 شهور
-                </button>
-                <button
-                  type="button"
-                  @click="setQuickSubscriptionMonths(12)"
-                  class="px-2 py-0.5 rounded bg-amber-200 dark:bg-amber-800 text-amber-900 dark:text-amber-100 font-bold cursor-pointer"
-                >
-                  سنة
-                </button>
-              </div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="block font-bold mb-1">تاريخ بداية الاشتراك</label>
-                <input
-                  v-model="form.subscription_start"
-                  type="date"
-                  class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700"
-                />
-              </div>
-              <div>
-                <label class="block font-bold mb-1">تاريخ نهاية الاشتراك *</label>
-                <input
-                  v-model="form.subscription_end"
-                  type="date"
-                  required
-                  class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700"
-                />
-              </div>
-            </div>
-          </div>
-
           <div>
             <label class="block font-bold mb-1">ملاحظات</label>
             <input
               v-model="form.notes"
               type="text"
-              placeholder="ملاحظات إضافية عن الترخيص..."
+              placeholder="ملاحظات إضافية..."
               class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"
             />
           </div>
@@ -595,7 +415,7 @@ onMounted(loadUsers)
               type="submit"
               class="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold cursor-pointer"
             >
-              حفظ المستخدم والترخيص
+              حفظ بيانات المستخدم
             </button>
           </div>
         </form>

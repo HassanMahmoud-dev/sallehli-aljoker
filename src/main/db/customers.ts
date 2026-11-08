@@ -3,6 +3,7 @@ import { parseJsonObject, parseJsonArray, stringifyExtraData } from './utils'
 import type { Customer, CustomerAppliance, MaintenanceTicket } from '../../shared/types'
 import { normalizeTicketRow } from './tickets'
 import { isDemoDataHidden } from './demo'
+import { getBusinessState } from './business'
 
 export function normalizeCustomerRow(row: Record<string, unknown>): Customer {
   return {
@@ -24,7 +25,10 @@ export function normalizeApplianceRow(row: Record<string, unknown>): CustomerApp
 export function listCustomers(search = ''): Customer[] {
   const db = getDb()
   const q = `%${search.trim()}%`
-  const demoFilter = isDemoDataHidden() ? ' AND c.is_demo = 0' : ''
+  const bType = getBusinessState().type
+  const demoFilter = isDemoDataHidden()
+    ? ' AND c.is_demo = 0'
+    : ` AND (c.is_demo = 0 OR c.business_type = '${bType}' OR c.business_type IS NULL OR c.business_type = '')`
   const rows = db
     .prepare(
       `SELECT c.*,
@@ -50,7 +54,10 @@ export function findCustomerByPhone(phone: string): {
   const db = getDb()
   const clean = phone.trim()
   if (!clean) return { customer: null, appliances: [], previousTickets: [] }
-  const demoFilter = isDemoDataHidden() ? ' AND is_demo = 0' : ''
+  const bType = getBusinessState().type
+  const demoFilter = isDemoDataHidden()
+    ? ' AND is_demo = 0'
+    : ` AND (is_demo = 0 OR business_type = '${bType}' OR business_type IS NULL OR business_type = '')`
   const rawCustomer = db
     .prepare(`SELECT * FROM customers WHERE (phone = ? OR phone2 = ?)${demoFilter} LIMIT 1`)
     .get(clean, clean) as Record<string, unknown> | undefined

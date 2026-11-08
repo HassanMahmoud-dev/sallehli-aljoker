@@ -1,6 +1,7 @@
 import { db, runTransaction } from './connection'
 import { roundMoney, parseJsonObject, stringifyExtraData } from './utils'
 import { isDemoDataHidden } from './demo'
+import { getBusinessState } from './business'
 import type { Product, ProductVariant, ProductSerial, ProductType, SerialStatus, SerialCondition } from '../../shared/types'
 
 export function normalizeProductRow(row: Record<string, unknown>): Product {
@@ -54,8 +55,11 @@ export function listProducts(filters?: {
   if (filters?.activeOnly) {
     sql += ' AND p.is_active = 1'
   }
+  const bType = getBusinessState().type
   if (isDemoDataHidden()) {
     sql += ' AND p.is_demo = 0'
+  } else {
+    sql += ` AND (p.is_demo = 0 OR p.business_type = '${bType}' OR p.business_type IS NULL OR p.business_type = '')`
   }
 
   sql += ' ORDER BY p.id DESC'

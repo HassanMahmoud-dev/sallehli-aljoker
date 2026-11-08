@@ -1,10 +1,14 @@
 import { getDb } from './connection'
 import { isDemoDataHidden } from './demo'
+import { getBusinessState } from './business'
 import type { Technician } from '../../shared/types'
 
 export function listTechnicians(): Technician[] {
   const db = getDb()
-  const demoFilter = isDemoDataHidden() ? ' WHERE tech.is_demo = 0' : ''
+  const bType = getBusinessState().type
+  const demoFilter = isDemoDataHidden()
+    ? ' WHERE tech.is_demo = 0'
+    : ` WHERE (tech.is_demo = 0 OR tech.business_type = '${bType}' OR tech.business_type IS NULL OR tech.business_type = '')`
   return db
     .prepare(
       `SELECT tech.*,

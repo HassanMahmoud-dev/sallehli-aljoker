@@ -14,6 +14,7 @@ import { normalizeProductRow, syncProductQtyFromChildren } from './products'
 import { getSalesInvoiceById } from './sales'
 import { normalizeCustomerRow } from './customers'
 import { isDemoDataHidden } from './demo'
+import { getBusinessState } from './business'
 
 export function normalizeTicketRow(row: Record<string, unknown>): MaintenanceTicket {
   return {
@@ -134,8 +135,11 @@ export function listTickets(filters?: {
     params.push(filters.technician_id)
   }
 
+  const bType = getBusinessState().type
   if (isDemoDataHidden()) {
     sql += ' AND mt.is_demo = 0'
+  } else {
+    sql += ` AND (mt.is_demo = 0 OR mt.business_type = '${bType}' OR mt.business_type IS NULL OR mt.business_type = '')`
   }
 
   sql += ' ORDER BY mt.id DESC'

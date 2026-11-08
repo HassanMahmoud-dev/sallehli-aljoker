@@ -1,7 +1,7 @@
 import { getDb, runTransaction, getDefaultAutoBackupDir } from './connection'
 import { readSetting, writeSetting, createBackupToFile } from './settings'
 import { seedDefaults } from './schema/seeds'
-import { writeBusinessSignatures } from './business'
+import { writeBusinessSignatures, getBusinessState } from './business'
 import { hashPassword, signSubscription } from './crypto'
 import type { BusinessType } from '../../shared/types'
 import { existsSync, mkdirSync } from 'fs'
@@ -58,10 +58,13 @@ export interface DemoDataStatus {
 
 export function getDemoDataStatus(): DemoDataStatus {
   const db = getDb()
+  const activeType = getBusinessState().type
+  const sparePartsTable = activeType === 'hearing_aids' ? 'medicalmain_spare_parts' : 'elect_spare_parts'
+
   const tables = {
     customers: 'customers',
     tickets: 'maintenance_tickets',
-    spare_parts: 'elect_spare_parts',
+    spare_parts: sparePartsTable,
     products: 'products',
     suppliers: 'suppliers',
     sales: 'sales_invoices',
@@ -92,11 +95,21 @@ export function getDemoDataStatus(): DemoDataStatus {
   }
 
   let total = 0
+  let totalOverallDemo = 0
+
   for (const [key, table] of Object.entries(tables)) {
     try {
-      const row = db
-        .prepare(`SELECT COUNT(*) as cnt FROM ${table} WHERE is_demo = 1`)
-        .get() as { cnt: number } | undefined
+      let sql = `SELECT COUNT(*) as cnt FROM ${table} WHERE is_demo = 1`
+      if (['customers', 'tickets', 'technicians', 'treasury', 'products', 'suppliers', 'sales', 'purchases'].includes(key)) {
+        sql += ` AND (business_type = '${activeType}' OR business_type IS NULL OR business_type = '')`
+      } else if (['hearing_tests', 'earmold_orders', 'followups', 'implants'].includes(key)) {
+        if (activeType !== 'hearing_aids') {
+          counts[key] = 0
+          continue
+        }
+      }
+
+      const row = db.prepare(sql).get() as { cnt: number } | undefined
       const cnt = row?.cnt || 0
       counts[key] = cnt
       total += cnt
@@ -105,24 +118,21 @@ export function getDemoDataStatus(): DemoDataStatus {
     }
   }
 
-  // Also check medical spare parts if any
+  // Count overall demo data in database to verify existence
   try {
-    const rowMed = db
-      .prepare('SELECT COUNT(*) as cnt FROM medicalmain_spare_parts WHERE is_demo = 1')
-      .get() as { cnt: number } | undefined
-    if (rowMed?.cnt) {
-      counts.spare_parts += rowMed.cnt
-      total += rowMed.cnt
-    }
+    const custDemo = (db.prepare('SELECT COUNT(*) as cnt FROM customers WHERE is_demo = 1').get() as { cnt: number })?.cnt || 0
+    const partsDemo1 = (db.prepare('SELECT COUNT(*) as cnt FROM elect_spare_parts WHERE is_demo = 1').get() as { cnt: number })?.cnt || 0
+    const partsDemo2 = (db.prepare('SELECT COUNT(*) as cnt FROM medicalmain_spare_parts WHERE is_demo = 1').get() as { cnt: number })?.cnt || 0
+    totalOverallDemo = custDemo + partsDemo1 + partsDemo2 + total
   } catch {
-    // Ignore
+    totalOverallDemo = total
   }
 
   counts.total = total
 
   return {
     isDemoHidden: isDemoDataHidden(),
-    hasDemoData: total > 0,
+    hasDemoData: totalOverallDemo > 0,
     counts: counts as DemoDataStatus['counts']
   }
 }
@@ -172,7 +182,7 @@ export function removeDemoData(): { success: boolean; deletedCount: number; mess
     for (const sql of deleteStmts) {
       try {
         const info = db.prepare(sql).run()
-        deletedCount += info.changes || 0
+        deletedCount += Number(info.changes || 0)
       } catch {
         // Table or view might not exist in current profile
       }
@@ -213,14 +223,51 @@ export function seedDemoData(targetType?: BusinessType): {
   runTransaction(() => {
     db.exec('PRAGMA foreign_keys = OFF;')
 
+    // Ensure physical spare parts tables exist before inserting
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS elect_spare_parts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL,
+        brand TEXT DEFAULT 'عام',
+        purchase_price REAL NOT NULL DEFAULT 0,
+        selling_price REAL NOT NULL DEFAULT 0,
+        quantity INTEGER NOT NULL DEFAULT 0,
+        min_quantity INTEGER NOT NULL DEFAULT 3,
+        location TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        image_base64 TEXT DEFAULT '',
+        is_demo INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+      );
+
+      CREATE TABLE IF NOT EXISTS medicalmain_spare_parts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL,
+        brand TEXT DEFAULT 'عام',
+        purchase_price REAL NOT NULL DEFAULT 0,
+        selling_price REAL NOT NULL DEFAULT 0,
+        quantity INTEGER NOT NULL DEFAULT 0,
+        min_quantity INTEGER NOT NULL DEFAULT 3,
+        location TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        image_base64 TEXT DEFAULT '',
+        is_demo INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+      );
+    `)
+
     // ==========================================
     // 1. نشاط صيانة الأجهزة الكهربائية والمنزلية
     // ==========================================
     if (seedAppliances) {
       // 1.1 فنيين
       const insertTech = db.prepare(`
-        INSERT INTO technicians (name, phone, specialty, commission_rate, base_salary, is_active, notes, is_demo)
-        VALUES (?, ?, ?, ?, ?, 1, ?, 1)
+        INSERT INTO technicians (name, phone, specialty, commission_rate, base_salary, is_active, notes, is_demo, business_type)
+        VALUES (?, ?, ?, ?, ?, 1, ?, 1, 'appliances')
       `)
       const techApp1 = insertTech.run(
         'م. خالد إبراهيم (افتراضي)',
@@ -325,8 +372,8 @@ export function seedDemoData(targetType?: BusinessType): {
 
       // 1.3 عملاء وأجهزة كهربائية
       const insertCust = db.prepare(`
-        INSERT INTO customers (name, phone, phone2, area, address, notes, extra_data, is_demo)
-        VALUES (?, ?, ?, ?, ?, ?, '{}', 1)
+        INSERT INTO customers (name, phone, phone2, area, address, notes, extra_data, is_demo, business_type)
+        VALUES (?, ?, ?, ?, ?, ?, '{}', 1, 'appliances')
       `)
       const custApp1 = insertCust.run(
         'م. أحمد مصطفى السعيد (عميل عرض)',
@@ -395,7 +442,7 @@ export function seedDemoData(targetType?: BusinessType): {
           inspection_fee, labor_cost, parts_total, parts_cost_total, discount, total_amount,
           paid_amount, remaining_amount, payment_method, warranty_months, warranty_start_date,
           warranty_end_date, notes, extra_data, completed_at, delivered_at, commission_rate, commission_amount,
-          created_by_id, created_by_name, is_demo
+          created_by_id, created_by_name, is_demo, business_type
         ) VALUES (
           ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, ?, ?,
@@ -403,7 +450,7 @@ export function seedDemoData(targetType?: BusinessType): {
           ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?,
           ?, ?, '{}', ?, ?, ?, ?,
-          1, 'السوبر أدمن', 1
+          1, 'السوبر أدمن', 1, 'appliances'
         )
       `)
 
@@ -543,8 +590,8 @@ export function seedDemoData(targetType?: BusinessType): {
       const insertTreasury = db.prepare(`
         INSERT INTO treasury_transactions (
           transaction_type, category, amount, ticket_id, technician_id, payment_method,
-          description, created_by_id, created_by_name, is_demo
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'السوبر أدمن', 1)
+          description, created_by_id, created_by_name, is_demo, business_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'السوبر أدمن', 1, 'appliances')
       `)
 
       insertTreasury.run('income', 'صيانة أجهزة منزلية', 720, t1, null, 'cash', 'تحصيل قيمة صيانة تذكرة غسالة DEMO-T-2026-0001 (كشف + مصنعية + قطعة غيار)')
@@ -561,8 +608,8 @@ export function seedDemoData(targetType?: BusinessType): {
     if (seedHearingAids) {
       // 2.1 أخصائي سمعيات وفني معمل
       const insertTech = db.prepare(`
-        INSERT INTO technicians (name, phone, specialty, commission_rate, base_salary, is_active, notes, is_demo)
-        VALUES (?, ?, ?, ?, ?, 1, ?, 1)
+        INSERT INTO technicians (name, phone, specialty, commission_rate, base_salary, is_active, notes, is_demo, business_type)
+        VALUES (?, ?, ?, ?, ?, 1, ?, 1, 'hearing_aids')
       `)
       const doc1 = insertTech.run(
         'د. عمر فاروق (أخصائي عرض)',
@@ -584,8 +631,8 @@ export function seedDemoData(targetType?: BusinessType): {
 
       // 2.2 موردين وشركات طبية
       const insertSup = db.prepare(`
-        INSERT INTO suppliers (name, company_name, phone, phone2, address, supplier_type, balance, notes, is_active, is_demo)
-        VALUES (?, ?, ?, ?, ?, 'company', 0, ?, 1, 1)
+        INSERT INTO suppliers (name, company_name, phone, phone2, address, supplier_type, balance, notes, is_active, is_demo, business_type)
+        VALUES (?, ?, ?, ?, ?, 'company', 0, ?, 1, 1, 'hearing_aids')
       `)
       const sup1 = insertSup.run(
         'شركة النيل الدولية للسماعات الطبية',
@@ -610,11 +657,11 @@ export function seedDemoData(targetType?: BusinessType): {
         INSERT INTO products (
           code, barcode, name, type, sub_category, brand, model, compatible_with,
           track_serial, has_variants, unit_name, pack_name, pack_size, cost_price, sale_price,
-          pack_cost_price, pack_sale_price, qty, min_stock, warranty_months, notes, extra_data, is_active, is_demo
+          pack_cost_price, pack_sale_price, qty, min_stock, warranty_months, notes, extra_data, is_active, is_demo, business_type
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?, '{}', 1, 1
+          ?, ?, ?, ?, ?, ?, '{}', 1, 1, 'hearing_aids'
         )
       `)
 
@@ -785,10 +832,10 @@ export function seedDemoData(targetType?: BusinessType): {
       const insertPatient = db.prepare(`
         INSERT INTO customers (
           name, phone, phone2, area, address, notes, birth_date, gender, occupation,
-          referring_doctor, medical_complaint, medical_history, allergies, doctor_notes, extra_data, is_demo
+          referring_doctor, medical_complaint, medical_history, allergies, doctor_notes, extra_data, is_demo, business_type
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, '{}', 1
+          ?, ?, ?, ?, ?, '{}', 1, 'hearing_aids'
         )
       `)
 
@@ -899,12 +946,12 @@ export function seedDemoData(targetType?: BusinessType): {
         INSERT INTO sales_invoices (
           invoice_number, invoice_type, customer_id, customer_name, customer_phone,
           subtotal, discount, trade_in_credit, total_amount, paid_amount, remaining_amount,
-          returned_amount, payment_method, status, notes, extra_data, created_by_id, created_by_name, is_demo
+          returned_amount, payment_method, status, notes, extra_data, created_by_id, created_by_name, is_demo, business_type
         ) VALUES (
           'DEMO-INV-2026-0001', 'regular', ?, 'الحاج / فتحي عبد الرحمن السيد (مريض عرض)', '01012349988',
           19800, 0, 0, 19800, 19800, 0,
           0, 'cash', 'completed', 'تسليم سماعة فوناك للأذن اليمنى مع قالب سيليكون وشريطين بطاريات وهدية فلاتر شمع',
-          '{}', 1, 'السوبر أدمن', 1
+          '{}', 1, 'السوبر أدمن', 1, 'hearing_aids'
         )
       `)
       const saleId = insertSale.run(pat1).lastInsertRowid as number
@@ -984,7 +1031,7 @@ export function seedDemoData(targetType?: BusinessType): {
           inspection_fee, labor_cost, parts_total, parts_cost_total, discount, total_amount,
           paid_amount, remaining_amount, payment_method, warranty_months, warranty_start_date,
           warranty_end_date, notes, extra_data, completed_at, delivered_at, commission_rate, commission_amount,
-          created_by_id, created_by_name, is_demo
+          created_by_id, created_by_name, is_demo, business_type
         ) VALUES (
           'DEMO-MT-2026-0001', ?, 'أ. منى فاروق الشريف (مريضة عرض)', '01228899001', '',
           'المهندسين', '12 شارع شهاب - الدور الثاني', 'سماعة طبية داخل الأذن', 'Oticon', 'More 1 ITE', 'OT-DEMO-77112',
@@ -993,7 +1040,7 @@ export function seedDemoData(targetType?: BusinessType): {
           ?, '2026-11-05', 100, 250, 0, 0, 0, 350, 350, 0, 'cash', 3,
           '2026-11-05', '2027-02-05', 'تم التنظيف بجهاز الموجات فوق الصوتية والمجفف وتغيير الفلتر وفحص الميكروفون بنجاح.',
           '{}', '2026-11-05 16:00:00', '2026-11-05 17:30:00', 25, 87.5,
-          1, 'السوبر أدمن', 1
+          1, 'السوبر أدمن', 1, 'hearing_aids'
         )
       `)
       const medTicketId = insertMedTicket.run(pat3, techMed).lastInsertRowid as number
@@ -1002,8 +1049,8 @@ export function seedDemoData(targetType?: BusinessType): {
       const insertMedTreasury = db.prepare(`
         INSERT INTO treasury_transactions (
           transaction_type, category, amount, sales_invoice_id, ticket_id, technician_id,
-          payment_method, description, created_by_id, created_by_name, is_demo
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'السوبر أدمن', 1)
+          payment_method, description, created_by_id, created_by_name, is_demo, business_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'السوبر أدمن', 1, 'hearing_aids')
       `)
 
       insertMedTreasury.run('income', 'مبيعات سماعات طبية', 19800, saleId, null, null, 'cash', 'تحصيل مبيعات فاتورة DEMO-INV-2026-0001 سماعة فوناك للحاج فتحي عبد الرحمن')

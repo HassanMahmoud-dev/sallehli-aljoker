@@ -55,7 +55,7 @@ watch(
 let unsubscribeUpdateAvailable: (() => void) | null = null
 
 const navItems = computed(() => {
-  const role = appStore.currentUser?.role || 'tenant'
+  const role = appStore.currentUser?.role || 'owner'
   const activeModules = appStore.businessProfile?.modules || []
   const items: Array<{ name: string; path: string; label: string; icon: unknown; module?: string }> = []
 
@@ -68,7 +68,7 @@ const navItems = computed(() => {
       { name: 'followups', path: '/followups', label: t('followupsPage') || 'المتابعات والقوالب', icon: CalendarClock, module: 'followups' }
     )
 
-    if (['super_admin', 'owner', 'tenant', 'receptionist', 'cashier'].includes(role)) {
+    if (['super_admin', 'owner'].includes(role)) {
       items.push({
         name: 'technicians',
         path: '/technicians',
@@ -323,10 +323,10 @@ onUnmounted(() => {
               <span
                 :class="[
                   'inline-block px-2 py-0.5 rounded-full text-[10px] font-bold truncate',
-                  USER_ROLE_LABELS[appStore.currentUser?.role || 'tenant']?.badge
+                  USER_ROLE_LABELS[appStore.currentUser?.role || 'owner']?.badge
                 ]"
               >
-                {{ USER_ROLE_LABELS[appStore.currentUser?.role || 'tenant']?.label }}
+                {{ USER_ROLE_LABELS[appStore.currentUser?.role || 'owner']?.label }}
               </span>
               <span class="text-[11px] font-mono text-slate-400 shrink-0">
                 @{{ appStore.currentUser?.username }}

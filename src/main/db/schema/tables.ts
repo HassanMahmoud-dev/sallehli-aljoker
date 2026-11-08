@@ -16,7 +16,7 @@ export function createSystemTables(): void {
       password_hash TEXT NOT NULL,
       full_name TEXT NOT NULL,
       phone TEXT DEFAULT '',
-      role TEXT NOT NULL CHECK(role IN ('super_admin', 'owner', 'tenant', 'receptionist', 'cashier', 'storekeeper')),
+      role TEXT NOT NULL CHECK(role IN ('super_admin', 'owner')),
       is_active INTEGER NOT NULL DEFAULT 1,
       subscription_start TEXT DEFAULT NULL,
       subscription_end TEXT DEFAULT NULL,
@@ -133,28 +133,18 @@ export function createSystemTables(): void {
  * إنشاء الجداول المطلوبة بحسب النشاط المختار (أجهزة كهربائية أو سماعات طبية)
  */
 export function createTables(businessType: BusinessType = 'appliances'): void {
-  const db = getDb()
   // 1. إنشاء جداول النظام الأساسية المشتركة
   createSystemTables()
 
   // 1.5 legacy
   migrateToActivityTables(businessType)
 
-  // 2. إنشاء الجداول المتخصصة وفقاً لنشاط المركز
+  // 2. إنشاء الجداول المتخصصة وفقاً لنشاط المركز مع ضمان وجود جداول النشاطين دائماً
   if (businessType === 'hearing_aids') {
+    createAppliancesTables()
     createHearingAidsTables(false)
   } else {
+    createHearingAidsTables(true)
     createAppliancesTables()
-    // إذا كان هناك وحدات إضافية مرخصة لنشاط الأجهزة الكهربائية، نضمن إنشاء جداولها الحقيقية
-    try {
-      const licRow = db
-        .prepare("SELECT value FROM settings WHERE key = 'licensed_modules'")
-        .get() as { value?: string } | undefined
-      if (licRow?.value && licRow.value !== '[]') {
-        createHearingAidsTables(true)
-      }
-    } catch {
-      // Ignore
-    }
   }
 }

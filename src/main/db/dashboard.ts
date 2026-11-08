@@ -10,8 +10,13 @@ import type { DashboardStats, SparePart, SalesInvoice } from '../../shared/types
 export function getDashboardStats(): DashboardStats {
   const today = getLocalDateString()
   const monthPrefix = today.slice(0, 7) // YYYY-MM
-  const dFilter = isDemoDataHidden() ? ' AND is_demo = 0' : ''
-  const dMtWhere = isDemoDataHidden() ? ' WHERE mt.is_demo = 0' : ''
+  const bType = getBusinessState().type
+  const dFilter = isDemoDataHidden()
+    ? ' AND is_demo = 0'
+    : ` AND (is_demo = 0 OR business_type = '${bType}' OR business_type IS NULL OR business_type = '')`
+  const dMtWhere = isDemoDataHidden()
+    ? ' WHERE mt.is_demo = 0'
+    : ` WHERE (mt.is_demo = 0 OR mt.business_type = '${bType}' OR mt.business_type IS NULL OR mt.business_type = '')`
 
   const totalTicketsToday = (
     db

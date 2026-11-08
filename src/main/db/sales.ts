@@ -2,6 +2,7 @@ import { db, runTransaction } from './connection'
 import { roundMoney, parseJsonObject, stringifyExtraData, getLocalDateString, generateNextNumber } from './utils'
 import { normalizeProductRow, syncProductQtyFromChildren } from './products'
 import { isDemoDataHidden } from './demo'
+import { getBusinessState } from './business'
 import type { SalesInvoice, SalesItem, SalesPayment, ProductVariant, ProductSerial } from '../../shared/types'
 import type { SessionInfo } from '../session'
 
@@ -57,8 +58,11 @@ export function listSalesInvoices(filters?: {
   if (filters?.only_with_remaining) {
     sql += " AND si.remaining_amount > 0 AND si.status != 'cancelled'"
   }
+  const bType = getBusinessState().type
   if (isDemoDataHidden()) {
     sql += ' AND si.is_demo = 0'
+  } else {
+    sql += ` AND (si.is_demo = 0 OR si.business_type = '${bType}' OR si.business_type IS NULL OR si.business_type = '')`
   }
 
   sql += ' ORDER BY si.id DESC'

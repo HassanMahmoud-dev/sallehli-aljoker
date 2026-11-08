@@ -3,6 +3,7 @@ import { roundMoney, parseJsonObject, getLocalDateString } from './utils'
 import { normalizeTicketRow } from './tickets'
 import { listSuppliers } from './suppliers'
 import { isDemoDataHidden } from './demo'
+import { getBusinessState } from './business'
 import type {
   TreasuryTransaction,
   FinancialReportData,
@@ -13,7 +14,10 @@ import type {
 import type { SessionInfo } from '../session'
 
 export function listTreasuryTransactions(): TreasuryTransaction[] {
-  const demoFilter = isDemoDataHidden() ? ' WHERE tt.is_demo = 0' : ''
+  const bType = getBusinessState().type
+  const demoFilter = isDemoDataHidden()
+    ? ' WHERE tt.is_demo = 0'
+    : ` WHERE (tt.is_demo = 0 OR tt.business_type = '${bType}' OR tt.business_type IS NULL OR tt.business_type = '')`
   return db
     .prepare(
       `SELECT tt.*, mt.ticket_number, tech.name as technician_name, s.name as supplier_name,

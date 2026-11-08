@@ -33,41 +33,7 @@ export function writeBusinessSignatures(type: string): void {
 }
 
 export function getLicensedModules(): string[] {
-  try {
-    const rawModules = readSetting('licensed_modules')
-    const sig = readSetting('licensed_modules_sig')
-    if (!rawModules || !sig) return []
-    const parsed = parseJsonArray(rawModules)
-    if (!parsed || parsed.length === 0) return []
-    if (sig !== signLicensedModules(parsed)) {
-      console.warn('Tampered licensed_modules detected in settings; ignoring extra licensed modules.')
-      return []
-    }
-
-    const msig = readSetting('licensed_modules_msig')
-    if (msig) {
-      if (msig !== signLicensedModulesForMachine(parsed)) {
-        console.warn('licensed_modules belong to another machine; ignoring extra licensed modules.')
-        return []
-      }
-    } else {
-      // Databases created before machine binding: bind them to this device on first read.
-      writeSetting('licensed_modules_msig', signLicensedModulesForMachine(parsed))
-    }
-
-    const vendorToken = readSetting('vendor_license')
-    if (vendorToken) {
-      try {
-        verifyVendorLicense(vendorToken)
-      } catch (err) {
-        console.warn('Vendor license is no longer valid:', (err as Error).message)
-        return []
-      }
-    }
-    return parsed
-  } catch {
-    return []
-  }
+  return []
 }
 
 export function isBusinessDataEmpty(): {

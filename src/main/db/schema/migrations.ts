@@ -214,7 +214,7 @@ export function runMigrations(): void {
             password_hash TEXT NOT NULL,
             full_name TEXT NOT NULL,
             phone TEXT DEFAULT '',
-            role TEXT NOT NULL CHECK(role IN ('super_admin', 'owner', 'tenant', 'receptionist', 'cashier', 'storekeeper')),
+            role TEXT NOT NULL CHECK(role IN ('super_admin', 'owner')),
             is_active INTEGER NOT NULL DEFAULT 1,
             subscription_start TEXT DEFAULT NULL,
             subscription_end TEXT DEFAULT NULL,
@@ -281,7 +281,44 @@ export function runMigrations(): void {
 
     ensureColumn('product_serials', 'unit_cost', 'REAL DEFAULT NULL')
 
-    // 2f. Demo Data flags (is_demo INTEGER NOT NULL DEFAULT 0)
+    // Ensure physical spare parts tables exist for both activities
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS elect_spare_parts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL,
+        brand TEXT DEFAULT 'عام',
+        purchase_price REAL NOT NULL DEFAULT 0,
+        selling_price REAL NOT NULL DEFAULT 0,
+        quantity INTEGER NOT NULL DEFAULT 0,
+        min_quantity INTEGER NOT NULL DEFAULT 3,
+        location TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        image_base64 TEXT DEFAULT '',
+        is_demo INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+      );
+
+      CREATE TABLE IF NOT EXISTS medicalmain_spare_parts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL,
+        brand TEXT DEFAULT 'عام',
+        purchase_price REAL NOT NULL DEFAULT 0,
+        selling_price REAL NOT NULL DEFAULT 0,
+        quantity INTEGER NOT NULL DEFAULT 0,
+        min_quantity INTEGER NOT NULL DEFAULT 3,
+        location TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        image_base64 TEXT DEFAULT '',
+        is_demo INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+      );
+    `)
+
+    // 2f. Demo Data flags (is_demo INTEGER NOT NULL DEFAULT 0) & business_type partitioning
     const tablesWithDemo = [
       'customers',
       'customer_appliances',
@@ -304,6 +341,7 @@ export function runMigrations(): void {
       'sales_payments',
       'invoice_returns',
       'invoice_return_items',
+      'product_exchanges',
       'hearing_tests',
       'audiogram_points',
       'followups',
@@ -314,6 +352,50 @@ export function runMigrations(): void {
     ]
     for (const t of tablesWithDemo) {
       ensureColumn(t, 'is_demo', 'INTEGER NOT NULL DEFAULT 0')
+    }
+
+    // Activity separation columns for shared tables
+    ensureColumn('customers', 'business_type', "TEXT DEFAULT 'appliances'")
+    ensureColumn('maintenance_tickets', 'business_type', "TEXT DEFAULT 'appliances'")
+    ensureColumn('technicians', 'business_type', "TEXT DEFAULT 'appliances'")
+    ensureColumn('products', 'business_type', "TEXT DEFAULT 'hearing_aids'")
+    ensureColumn('suppliers', 'business_type', "TEXT DEFAULT 'hearing_aids'")
+    ensureColumn('sales_invoices', 'business_type', "TEXT DEFAULT 'hearing_aids'")
+    ensureColumn('purchase_invoices', 'business_type', "TEXT DEFAULT 'hearing_aids'")
+    ensureColumn('treasury_transactions', 'business_type', "TEXT DEFAULT 'appliances'")
+
+    // 2g. Migrate users table to strict super_admin & owner roles only
+    try {
+      db.exec("UPDATE users SET role = 'owner' WHERE role NOT IN ('super_admin', 'owner');")
+      const usersMeta = db
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'")
+        .get() as { sql?: string } | undefined
+      if (usersMeta?.sql && usersMeta.sql.includes('tenant')) {
+        runTransaction(() => {
+          db.exec(`
+            CREATE TABLE users_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              username TEXT NOT NULL UNIQUE,
+              password_hash TEXT NOT NULL,
+              full_name TEXT NOT NULL,
+              phone TEXT DEFAULT '',
+              role TEXT NOT NULL CHECK(role IN ('super_admin', 'owner')),
+              is_active INTEGER NOT NULL DEFAULT 1,
+              subscription_start TEXT DEFAULT NULL,
+              subscription_end TEXT DEFAULT NULL,
+              subscription_sig TEXT DEFAULT '',
+              notes TEXT DEFAULT '',
+              created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+            );
+            INSERT INTO users_new (id, username, password_hash, full_name, phone, role, is_active, subscription_start, subscription_end, subscription_sig, notes, created_at)
+            SELECT id, username, password_hash, full_name, phone, CASE WHEN role = 'super_admin' THEN 'super_admin' ELSE 'owner' END, is_active, subscription_start, subscription_end, subscription_sig, notes, created_at FROM users;
+            DROP TABLE users;
+            ALTER TABLE users_new RENAME TO users;
+          `)
+        })
+      }
+    } catch {
+      // Ignore if table schema is already updated
     }
 
     // 2e. Upgrade audiogram_points frequency CHECK constraint to support clinical intermediate frequencies
@@ -342,6 +424,44 @@ export function runMigrations(): void {
           ALTER TABLE audiogram_points_new RENAME TO audiogram_points;
         `)
       })
+    }
+
+    // 2h. Clean inventory_movements foreign keys (remove invalid view reference to spare_parts)
+    try {
+      const imMeta = db
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'inventory_movements'")
+        .get() as { sql?: string } | undefined
+      if (imMeta?.sql && imMeta.sql.includes('spare_parts')) {
+        runTransaction(() => {
+          db.exec(`
+            CREATE TABLE inventory_movements_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              part_id INTEGER DEFAULT NULL,
+              product_id INTEGER DEFAULT NULL,
+              variant_id INTEGER DEFAULT NULL,
+              serial_no TEXT DEFAULT '',
+              ref_type TEXT DEFAULT '',
+              ref_id INTEGER DEFAULT NULL,
+              technician_id INTEGER DEFAULT NULL,
+              ticket_id INTEGER DEFAULT NULL,
+              movement_type TEXT NOT NULL,
+              quantity INTEGER NOT NULL,
+              unit_cost REAL NOT NULL DEFAULT 0,
+              unit_price REAL NOT NULL DEFAULT 0,
+              notes TEXT DEFAULT '',
+              created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+              is_demo INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (ticket_id) REFERENCES maintenance_tickets(id) ON DELETE SET NULL
+            );
+            INSERT INTO inventory_movements_new (id, part_id, product_id, variant_id, serial_no, ref_type, ref_id, technician_id, ticket_id, movement_type, quantity, unit_cost, unit_price, notes, created_at, is_demo)
+            SELECT id, part_id, product_id, variant_id, serial_no, ref_type, ref_id, technician_id, ticket_id, movement_type, quantity, unit_cost, unit_price, notes, created_at, COALESCE(is_demo, 0) FROM inventory_movements;
+            DROP TABLE inventory_movements;
+            ALTER TABLE inventory_movements_new RENAME TO inventory_movements;
+          `)
+        })
+      }
+    } catch {
+      // Ignore if table schema is already updated
     }
 
     // 3. Backfill subscription signatures & hash any unhashed passwords

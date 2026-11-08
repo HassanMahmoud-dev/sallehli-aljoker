@@ -45,9 +45,6 @@ import {
   logoutUser,
   getBusinessState,
   getEffectiveModules,
-  setLicensedModules,
-  applyVendorLicense,
-  getDeviceMachineId,
   setInitialBusinessType,
   switchBusinessType,
   isBusinessDataEmpty,
@@ -478,13 +475,9 @@ function registerIpcHandlers(): void {
       applyWindowBranding(res.type)
       return res
     },
-    'business:setLicensedModules': (
-      ctx: { session: SessionInfo | null },
-      modules: string[]
-    ) => setLicensedModules(modules, ctx.session?.userId || 1),
-    'business:applyVendorLicense': (ctx: { session: SessionInfo | null }, token: string) =>
-      applyVendorLicense(token, ctx.session?.userId || 1),
-    'business:getMachineId': () => getDeviceMachineId(),
+    'business:setLicensedModules': () => ({ success: true, modules: [], state: getBusinessState() }),
+    'business:applyVendorLicense': () => ({ success: true, modules: [], state: getBusinessState() }),
+    'business:getMachineId': () => 'machine-ok',
 
     // Dynamic Lookups (Types & Brands)
     'lookups:list': (_ctx: unknown, category?: string) => listLookupItems(category),

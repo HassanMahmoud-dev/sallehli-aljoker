@@ -61,44 +61,6 @@ export function loginUser(payload: LoginPayload): AuthResponse {
     }
   }
 
-  // Verify digital signature of role & subscription_end to prevent SQLite tampering
-  const expectedSig = signSubscription(userRow.username, userRow.role, userRow.subscription_end)
-  if (userRow.subscription_sig && userRow.subscription_sig !== expectedSig) {
-    return {
-      success: false,
-      message:
-        'تم اكتشاف تلاعب غير مصرح به في بيانات الترخيص أو صلاحية الحساب. يرجى مراجعة السوبر أدمن.'
-    }
-  }
-
-  let isExpired = false
-  let daysRemaining: number | null = null
-
-  if (userRow.role === 'tenant') {
-    if (!userRow.subscription_end) {
-      return {
-        success: false,
-        message: 'لم يتم تحديد فترة اشتراك لهذا الحساب المستأجر. يرجى مراجعة السوبر أدمن.'
-      }
-    }
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const endDate = new Date(userRow.subscription_end)
-    endDate.setHours(23, 59, 59, 999)
-
-    const diffMs = endDate.getTime() - today.getTime()
-    daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
-
-    if (diffMs < 0) {
-      isExpired = true
-      return {
-        success: false,
-        message: `انتهت فترة اشتراك هذا الحساب بتاريخ (${userRow.subscription_end}). يرجى تجديد الاشتراك مع السوبر أدمن.`,
-        subscriptionStatus: { isExpired: true, daysRemaining: 0 }
-      }
-    }
-  }
-
   const { password_hash: _, subscription_sig: __, ...safeUser } = userRow
   const token = randomBytes(32).toString('hex')
   const now = new Date()
@@ -112,8 +74,7 @@ export function loginUser(payload: LoginPayload): AuthResponse {
   return {
     success: true,
     user: safeUser,
-    token,
-    subscriptionStatus: { isExpired, daysRemaining }
+    token
   }
 }
 
@@ -167,42 +128,6 @@ export function verifySession(identifier: string | number): AuthResponse {
     }
   }
 
-  const expectedSig = signSubscription(userRow.username, userRow.role, userRow.subscription_end)
-  if (userRow.subscription_sig && userRow.subscription_sig !== expectedSig) {
-    return {
-      success: false,
-      message: 'تم اكتشاف تلاعب غير مصرح به في بيانات الترخيص أو صلاحية الحساب.'
-    }
-  }
-
-  let isExpired = false
-  let daysRemaining: number | null = null
-
-  if (userRow.role === 'tenant') {
-    if (!userRow.subscription_end) {
-      return {
-        success: false,
-        message: 'لم يتم تحديد فترة اشتراك لهذا الحساب المستأجر.'
-      }
-    }
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const endDate = new Date(userRow.subscription_end)
-    endDate.setHours(23, 59, 59, 999)
-
-    const diffMs = endDate.getTime() - today.getTime()
-    daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
-
-    if (diffMs < 0) {
-      isExpired = true
-      return {
-        success: false,
-        message: `انتهت فترة إيجار البرنامج بتاريخ (${userRow.subscription_end}).`,
-        subscriptionStatus: { isExpired: true, daysRemaining: 0 }
-      }
-    }
-  }
-
   const { password_hash: _, subscription_sig: __, ...safeUser } = userRow
 
   createSessionInMemory(safeUser, sessionToken)
@@ -210,8 +135,7 @@ export function verifySession(identifier: string | number): AuthResponse {
   return {
     success: true,
     user: safeUser,
-    token: sessionToken,
-    subscriptionStatus: { isExpired, daysRemaining }
+    token: sessionToken
   }
 }
 
@@ -270,25 +194,12 @@ export function saveUser(
   const isSuperAdmin = callerSession?.role === 'super_admin'
 
   let username = data.username?.trim() || ''
-  let role: UserRole = data.role || 'tenant'
-  let subEnd: string | null = null
-  let subStart: string | null = null
+  let role: UserRole = data.role === 'super_admin' ? 'super_admin' : 'owner'
 
   if (data.id) {
     const existing = db
-      .prepare(
-        'SELECT id, username, role, is_active, subscription_start, subscription_end FROM users WHERE id = ?'
-      )
-      .get(data.id) as
-      | {
-          id: number
-          username: string
-          role: UserRole
-          is_active: number
-          subscription_start: string | null
-          subscription_end: string | null
-        }
-      | undefined
+      .prepare('SELECT id, username, role, is_active FROM users WHERE id = ?')
+      .get(data.id) as { id: number; username: string; role: UserRole; is_active: number } | undefined
 
     if (!existing) {
       throw new Error('المستخدم المطلوب تعديله غير موجود.')
@@ -302,34 +213,19 @@ export function saveUser(
       username = 'admin'
       role = 'super_admin'
     } else if (!isSuperAdmin) {
-      // Non-super admin cannot touch super_admin, owner, or tenant
-      if (['super_admin', 'owner', 'tenant'].includes(existing.role)) {
-        throw new Error(
-          'لا يمكنك تعديل حسابات الإدارة أو التراخيص؛ هذه الصلاحية محصورة بالسوبر أدمن فقط.'
-        )
+      if (callerSession?.userId !== existing.id) {
+        throw new Error('غير مصرح لك بتعديل بيانات المستخدمين الآخرين.')
       }
-      // Non-super admin cannot escalate any user's role to super_admin, owner, or tenant
-      if (['super_admin', 'owner', 'tenant'].includes(role)) {
-        throw new Error('غير مصرح لك بترقية المستخدمين إلى أدوار إدارية أو اشتراكات.')
-      }
-      // Non-super admin cannot modify subscriptions
-      subStart = existing.subscription_start
-      subEnd = existing.subscription_end
+      role = existing.role
     }
 
-    if (isSuperAdmin) {
-      subEnd = role === 'tenant' ? data.subscription_end || null : null
-      subStart = role === 'tenant' ? data.subscription_start || null : null
-    }
-
-    const sig = signSubscription(username, role, subEnd)
     const hasNewPassword = Boolean(data.password && data.password.trim() !== '')
 
     if (hasNewPassword) {
       const hashed = hashPassword(data.password!.trim())
       db.prepare(
         `UPDATE users SET username = ?, password_hash = ?, full_name = ?, phone = ?, role = ?,
-         is_active = ?, subscription_start = ?, subscription_end = ?, subscription_sig = ?, notes = ?
+         is_active = ?, notes = ?
          WHERE id = ?`
       ).run(
         username,
@@ -338,16 +234,13 @@ export function saveUser(
         data.phone || '',
         role,
         data.is_active ?? 1,
-        subStart,
-        subEnd,
-        sig,
         data.notes || '',
         data.id
       )
     } else {
       db.prepare(
         `UPDATE users SET username = ?, full_name = ?, phone = ?, role = ?,
-         is_active = ?, subscription_start = ?, subscription_end = ?, subscription_sig = ?, notes = ?
+         is_active = ?, notes = ?
          WHERE id = ?`
       ).run(
         username,
@@ -355,9 +248,6 @@ export function saveUser(
         data.phone || '',
         role,
         data.is_active ?? 1,
-        subStart,
-        subEnd,
-        sig,
         data.notes || '',
         data.id
       )
@@ -377,24 +267,20 @@ export function saveUser(
 
     return db
       .prepare(
-        'SELECT id, username, full_name, phone, role, is_active, subscription_start, subscription_end, notes, created_at FROM users WHERE id = ?'
+        'SELECT id, username, full_name, phone, role, is_active, notes, created_at FROM users WHERE id = ?'
       )
       .get(data.id) as User
   } else {
-    // New User Creation
-    if (!isSuperAdmin && ['super_admin', 'owner', 'tenant'].includes(role)) {
-      throw new Error('فقط السوبر أدمن يمكنه إنشاء حسابات مدراء أو تراخيص برمجية جديدة.')
+    // New User Creation: Super Admin only
+    if (!isSuperAdmin) {
+      throw new Error('فقط السوبر أدمن يمكنه إنشاء حسابات مستخدمين جديدة.')
     }
-
-    subEnd = role === 'tenant' ? data.subscription_end || null : null
-    subStart = role === 'tenant' ? data.subscription_start || null : null
-    const sig = signSubscription(username, role, subEnd)
 
     const hashed = hashPassword(data.password?.trim() || '1234')
     const info = db
       .prepare(
-        `INSERT INTO users (username, password_hash, full_name, phone, role, is_active, subscription_start, subscription_end, subscription_sig, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO users (username, password_hash, full_name, phone, role, is_active, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         username,
@@ -403,14 +289,11 @@ export function saveUser(
         data.phone || '',
         role,
         data.is_active ?? 1,
-        subStart,
-        subEnd,
-        sig,
         data.notes || ''
       )
     return db
       .prepare(
-        'SELECT id, username, full_name, phone, role, is_active, subscription_start, subscription_end, notes, created_at FROM users WHERE id = ?'
+        'SELECT id, username, full_name, phone, role, is_active, notes, created_at FROM users WHERE id = ?'
       )
       .get(Number(info.lastInsertRowid)) as User
   }

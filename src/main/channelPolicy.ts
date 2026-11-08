@@ -142,18 +142,15 @@ export const CHANNEL_PERMISSIONS: Record<string, ChannelPermission> = {
   'system:setBrowserConfig': 'super_admin',
   'system:setLanConfig': 'super_admin',
   'system:setAutoStart': 'super_admin',
-  'business:get': 'super_admin',
-  'business:setInitial': 'super_admin',
-  'business:checkSwitch': 'super_admin',
-  'business:switch': 'super_admin',
-  'business:setLicensedModules': 'super_admin',
-  'business:applyVendorLicense': 'super_admin',
-  'business:getMachineId': 'super_admin',
+  'business:get': 'owner',
+  'business:setInitial': 'owner',
+  'business:checkSwitch': 'owner',
+  'business:switch': 'owner',
   'db:reset': 'super_admin',
-  'demo:seed': 'super_admin',
-  'demo:remove': 'super_admin',
-  'demo:status': 'super_admin',
-  'demo:setHidden': 'super_admin'
+  'demo:seed': 'owner',
+  'demo:remove': 'owner',
+  'demo:status': 'owner',
+  'demo:setHidden': 'owner'
 }
 
 export const CHANNEL_REQUIRED_MODULE: Record<string, string> = {
@@ -240,37 +237,8 @@ export function isRoleAuthorized(role: UserRole, permission: ChannelPermission):
   if (role === 'super_admin') return true
   if (permission === 'public') return true
   if (permission === 'authenticated') return true
-
-  if (permission === 'manager') {
-    return role === 'owner' || role === 'tenant'
-  }
-
-  if (permission === 'medical') {
-    return role === 'owner' || role === 'tenant' || role === 'receptionist'
-  }
-
-  if (permission === 'financial') {
-    return role === 'owner' || role === 'tenant' || role === 'cashier'
-  }
-
-  if (permission === 'inventory') {
-    return role === 'owner' || role === 'tenant' || role === 'storekeeper' || role === 'cashier'
-  }
-
-  if (permission === 'sales_ops') {
-    return (
-      role === 'owner' ||
-      role === 'tenant' ||
-      role === 'cashier' ||
-      role === 'receptionist'
-    )
-  }
-
-  if (permission === 'super_admin') {
-    return false
-  }
-
-  return false
+  if (permission === 'super_admin') return false
+  return role === 'owner'
 }
 
 export function checkChannelAccess(
