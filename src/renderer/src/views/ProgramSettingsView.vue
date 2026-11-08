@@ -4,7 +4,8 @@ import { useRoute } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
 import { useTerms } from '@renderer/composables/useTerms'
 import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
-import type { BusinessType } from '@shared/types'
+import Swal from 'sweetalert2'
+import type { BusinessType, DemoDataStatus } from '@shared/types'
 import { BUSINESS_PROFILES } from '@shared/businessProfiles'
 import SuperAdminView from './SuperAdminView.vue'
 import SystemControlView from './SystemControlView.vue'
@@ -23,14 +24,19 @@ import {
   Wrench,
   Ear,
   ShoppingBag,
-  PackageCheck
+  PackageCheck,
+  Trash2,
+  Eye,
+  EyeOff,
+  RotateCcw,
+  HardDrive
 } from 'lucide-vue-next'
 
 const route = useRoute()
 const appStore = useAppStore()
 const { t } = useTerms()
 
-type ActiveTab = 'business' | 'users' | 'system'
+type ActiveTab = 'business' | 'users' | 'system' | 'database'
 const activeTab = ref<ActiveTab>((route.query.tab as ActiveTab) || 'business')
 
 // Business State Form
@@ -77,6 +83,42 @@ async function handleSaveLicensedModules(): Promise<void> {
     isSavingModules.value = false
   }
 }
+
+const machineId = ref('')
+const vendorLicenseToken = ref('')
+const isApplyingLicense = ref(false)
+
+async function loadMachineId(): Promise<void> {
+  try {
+    machineId.value = await window.api.getMachineId()
+  } catch {
+    machineId.value = ''
+  }
+}
+
+async function handleApplyVendorLicense(): Promise<void> {
+  const token = vendorLicenseToken.value.trim()
+  if (!token) {
+    swalError('الترخيص مطلوب', 'الصق نص ملف الترخيص الصادر من الشركة أولاً.')
+    return
+  }
+  try {
+    isApplyingLicense.value = true
+    const res = await window.api.applyVendorLicense(token)
+    appStore.businessState = res.state
+    vendorLicenseToken.value = ''
+    swalSuccess(
+      'تم تفعيل الترخيص بنجاح!',
+      `الوحدات المفعّلة: ${res.modules.join('، ') || 'لا يوجد'}${res.issuedTo ? ` — صادر إلى: ${res.issuedTo}` : ''}`
+    )
+  } catch (err: any) {
+    swalError('فشل تفعيل الترخيص', err?.message || 'تعذر التحقق من الترخيص.')
+  } finally {
+    isApplyingLicense.value = false
+  }
+}
+
+onMounted(loadMachineId)
 
 async function refreshBusinessData(): Promise<void> {
   await appStore.loadBusiness()
@@ -183,8 +225,163 @@ async function handleSwitchBusiness(): Promise<void> {
   }
 }
 
+
+// Demo Data & Database Reset State
+const demoStatus = ref<DemoDataStatus>({
+  isDemoHidden: false,
+  hasDemoData: false,
+  counts: {
+    customers: 0,
+    tickets: 0,
+    spare_parts: 0,
+    products: 0,
+    suppliers: 0,
+    sales: 0,
+    purchases: 0,
+    hearing_tests: 0,
+    earmold_orders: 0,
+    followups: 0,
+    implants: 0,
+    technicians: 0,
+    treasury: 0,
+    total: 0
+  }
+})
+const isLoadingDemo = ref(false)
+const isSeedingDemo = ref(false)
+const isRemovingDemo = ref(false)
+const isResettingDatabase = ref(false)
+
+async function loadDemoStatus(): Promise<void> {
+  try {
+    isLoadingDemo.value = true
+    if (window.api?.getDemoDataStatus) {
+      demoStatus.value = await window.api.getDemoDataStatus()
+    }
+  } catch (err) {
+    console.error('Failed to load demo status:', err)
+  } finally {
+    isLoadingDemo.value = false
+  }
+}
+
+async function handleToggleHideDemo(val: boolean): Promise<void> {
+  try {
+    await window.api.setHideDemoData(val)
+    demoStatus.value.isDemoHidden = val
+    swalSuccess(
+      val ? 'تم إخفاء البيانات الافتراضية' : 'تم إظهار البيانات الافتراضية',
+      val
+        ? 'تم حجب كافة سجلات العرض والتجربة من شاشات وتقارير البرنامج بنجاح.'
+        : 'تمت استعادة إظهار السجلات الافتراضية في كافة الشاشات بنجاح.'
+    )
+    await refreshBusinessData()
+  } catch (err: any) {
+    swalError('خطأ', err?.message || 'تعذر تعديل حالة إخفاء البيانات الافتراضية.')
+  }
+}
+
+async function handleSeedDemoData(): Promise<void> {
+  const confirmed = await swalConfirm(
+    'تأكيد إضافة البيانات الافتراضية للعرض',
+    'سيتم توليد وزرع بيانات نموذجية واقعية متكاملة لكل من نشاطي البرنامج (صيانة الأجهزة الكهربائية ومراكز السماعات الطبية: عملاء، بلاغات، منتجات، فحص سمع، فواتير، وخزينة) لتمكينك من تجربة وعرض كافة مزايا النظام. هل تريد الاستمرار؟'
+  )
+  if (!confirmed) return
+
+  try {
+    isSeedingDemo.value = true
+    await appStore.withLoading(async () => {
+      const res = await window.api.seedDemoData()
+      swalSuccess('تمت إضافة البيانات الافتراضية بنجاح!', res.message)
+      await loadDemoStatus()
+      await refreshBusinessData()
+    }, 'جاري توليد وزرع البيانات الافتراضية النموذجية...')
+  } catch (err: any) {
+    swalError('فشل إضافة البيانات الافتراضية', err?.message || 'حدث خطأ أثناء زرع البيانات.')
+  } finally {
+    isSeedingDemo.value = false
+  }
+}
+
+async function handleRemoveDemoData(): Promise<void> {
+  const confirmed = await swalConfirm(
+    'تأكيد إزالة البيانات الافتراضية نهائياً',
+    'سيتم حذف كافة سجلات العرض والتجربة الافتراضية من قاعدة البيانات بالكامل. بياناتك الحقيقية التي أدخلتها بنفسك ستبقى محفوظة بنسبة 100% ولن تتأثر إطلاقاً. هل تريد المتابعة؟'
+  )
+  if (!confirmed) return
+
+  try {
+    isRemovingDemo.value = true
+    await appStore.withLoading(async () => {
+      const res = await window.api.removeDemoData()
+      swalSuccess('تم تنظيف البيانات الافتراضية بنجاح!', res.message)
+      await loadDemoStatus()
+      await refreshBusinessData()
+    }, 'جاري إزالة البيانات الافتراضية من كافة الجداول...')
+  } catch (err: any) {
+    swalError('فشل حذف البيانات الافتراضية', err?.message || 'حدث خطأ أثناء تنظيف البيانات.')
+  } finally {
+    isRemovingDemo.value = false
+  }
+}
+
+async function handleFactoryReset(): Promise<void> {
+  const confirmed = await swalConfirm(
+    '⚠️ تحذير فائق الأهمية: إعادة ضبط البرنامج بالكامل',
+    'سيؤدي هذا الإجراء إلى حذف ومسح كافة بيانات قاعدة البيانات بالكامل (العملاء، الأجهزة، البلاغات، الفواتير، المخزون، الحسابات، الخزينة، والمستخدمين) واستعادة البرنامج لحالته الأولى كأول تشغيل (ضبط المصنع).\n\nسيتم أخذ نسخة احتياطية آمنة تلقائياً في مجلد النسخ الاحتياطية قبل التنفيذ. هل أنت متأكد تماماً من رغبتك في المتابعة؟'
+  )
+  if (!confirmed) return
+
+  // المرحلة الثانية: تأكيد بكتابة العبارة
+  const { value: typedText } = await Swal.fire({
+    title: 'تأكيد الحذف الشامل النهائي',
+    html: `
+      <div class="text-right space-y-2 text-sm text-slate-600 dark:text-slate-300">
+        <p>لتأكيد رغبتك في مسح كافة البيانات واستعادة ضبط المصنع، اكتب العبارة التالية بالضبط:</p>
+        <p class="font-bold text-rose-600 text-center text-base bg-rose-50 dark:bg-rose-950/40 p-2 rounded-lg border border-rose-200">
+          تأكيد ضبط المصنع
+        </p>
+      </div>
+    `,
+    input: 'text',
+    inputPlaceholder: 'اكتب: تأكيد ضبط المصنع',
+    showCancelButton: true,
+    confirmButtonText: 'تنفيذ مسح كافة البيانات وإعادة الضبط',
+    cancelButtonText: 'إلغاء وتراجع',
+    confirmButtonColor: '#e11d48',
+    inputValidator: (val) => {
+      if (val !== 'تأكيد ضبط المصنع') {
+        return 'العبارة غير مطابقة! يرجى كتابة: تأكيد ضبط المصنع'
+      }
+      return null
+    }
+  })
+
+  if (!typedText) return
+
+  try {
+    isResettingDatabase.value = true
+    await appStore.withLoading(async () => {
+      const res = await window.api.resetDatabase()
+      localStorage.removeItem('sallehli_remembered_session')
+      await Swal.fire({
+        icon: 'success',
+        title: 'تمت إعادة ضبط البرنامج بنجاح!',
+        text: 'تم استعادة ضبط المصنع بالكامل وأخذ نسخة احتياطية آمنة. سيتم إعادة تشغيل البرنامج الآن لتسجيل الدخول بحساب admin الافتراضي (كلمة المرور: 8520).',
+        confirmButtonText: 'إعادة تشغيل النظام الآن'
+      })
+      window.location.reload()
+    }, 'جاري أخذ نسخة احتياطية وإعادة ضبط البرنامج واستعادة ضبط المصنع...')
+  } catch (err: any) {
+    swalError('فشل إعادة ضبط البرنامج', err?.message || 'حدث خطأ أثناء تنفيذ عملية ضبط المصنع.')
+  } finally {
+    isResettingDatabase.value = false
+  }
+}
+
 onMounted(async () => {
   await refreshBusinessData()
+  await loadDemoStatus()
 })
 </script>
 
@@ -258,6 +455,19 @@ onMounted(async () => {
       >
         <Users class="w-4 h-4" />
         لوحة السوبر أدمن والتراخيص
+      </button>
+
+      <button
+        @click="activeTab = 'database'"
+        :class="[
+          'flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all',
+          activeTab === 'database'
+            ? 'bg-purple-600 text-white shadow-sm'
+            : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+        ]"
+      >
+        <Database class="w-4 h-4" />
+        إدارة البيانات وضبط المصنع
       </button>
 
       <button
@@ -519,6 +729,30 @@ onMounted(async () => {
           </button>
         </div>
 
+        <div class="rounded-xl border border-dashed border-indigo-300 dark:border-indigo-700 p-4 space-y-2">
+          <p class="text-sm font-semibold text-slate-800 dark:text-slate-100">
+            ترخيص الشركة (موقّع رقمياً Ed25519)
+          </p>
+          <p class="text-xs text-slate-500 dark:text-slate-400">
+            معرّف هذا الجهاز (أرسله للشركة لإصدار ترخيص مرتبط به):
+            <span class="font-mono select-all break-all" dir="ltr">{{ machineId || '—' }}</span>
+          </p>
+          <textarea
+            v-model="vendorLicenseToken"
+            rows="3"
+            dir="ltr"
+            placeholder="الصق نص الترخيص هنا"
+            class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 p-2 text-xs font-mono"
+          ></textarea>
+          <button
+            @click="handleApplyVendorLicense"
+            :disabled="isApplyingLicense"
+            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold"
+          >
+            تفعيل الترخيص
+          </button>
+        </div>
+
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-2">
           <!-- Sales & POS -->
           <div
@@ -622,6 +856,215 @@ onMounted(async () => {
     <div v-if="activeTab === 'system'">
       <SystemControlView />
     </div>
+
+    <!-- Tab 4: Database Management, Demo Data & Factory Reset -->
+    <div v-if="activeTab === 'database'" class="space-y-6">
+      <!-- Quick Info Banner -->
+      <div class="bg-gradient-to-r from-purple-500/10 via-indigo-500/10 to-blue-500/10 border border-purple-200 dark:border-purple-800/60 rounded-2xl p-6">
+        <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div class="flex items-start gap-4">
+            <div class="p-3 bg-purple-600 text-white rounded-xl shadow-sm shrink-0">
+              <HardDrive class="w-6 h-6" />
+            </div>
+            <div>
+              <h3 class="text-lg font-bold text-slate-900 dark:text-white">
+                إدارة قاعدة البيانات، بيانات العرض، وإعادة ضبط المصنع
+              </h3>
+              <p class="text-sm text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
+                تحكم في السجلات الافتراضية النموذجية للعرض والتجربة (إضافة، إخفاء، إزالة)، أو أعد ضبط البرنامج بالكامل للحالة الأصلية في حال الرغبة في البدء من الصفر.
+              </p>
+            </div>
+          </div>
+          <button
+            @click="loadDemoStatus"
+            :disabled="isLoadingDemo"
+            class="px-4 py-2 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2 shrink-0 self-start md:self-auto"
+          >
+            <RefreshCw :class="['w-3.5 h-3.5', isLoadingDemo ? 'animate-spin' : '']" />
+            تحديث الحالة
+          </button>
+        </div>
+      </div>
+
+      <!-- Section 1: Demo Data (البيانات الافتراضية للعرض) -->
+      <div class="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 shadow-sm space-y-6">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-700/60 pb-4">
+          <div class="flex items-center gap-3">
+            <div class="p-2.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-xl">
+              <Sparkles class="w-6 h-6" />
+            </div>
+            <div>
+              <h4 class="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                البيانات الافتراضية (بيانات العرض والتجربة)
+                <span
+                  v-if="demoStatus.hasDemoData"
+                  class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300"
+                >
+                  متوفرة ({{ demoStatus.counts.total }} سجل)
+                </span>
+                <span
+                  v-else
+                  class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+                >
+                  غير مثبتة
+                </span>
+              </h4>
+              <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                تساعدك في استعراض إمكانيات البرنامج وعرضها لعملائك أو الموظفين دون التأثير على إدخالاتك الفعلية.
+              </p>
+            </div>
+          </div>
+
+          <!-- Visibility Badge -->
+          <div v-if="demoStatus.hasDemoData">
+            <span
+              v-if="demoStatus.isDemoHidden"
+              class="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-slate-100 text-slate-700 dark:bg-slate-700/70 dark:text-slate-300 border border-slate-300 dark:border-slate-600"
+            >
+              <EyeOff class="w-3.5 h-3.5 text-slate-500" />
+              البيانات الافتراضية مخفية حالياً
+            </span>
+            <span
+              v-else
+              class="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800"
+            >
+              <Eye class="w-3.5 h-3.5 text-emerald-600" />
+              البيانات الافتراضية ظاهرة في الشاشات
+            </span>
+          </div>
+        </div>
+
+        <!-- Controls: Hide Toggle & Detailed Counts -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
+          <!-- Toggle Card -->
+          <div class="p-4 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-bold text-slate-900 dark:text-white block">
+                  إخفاء البيانات الافتراضية
+                </label>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  حجب السجلات الافتراضية مؤقتاً من القوائم
+                </p>
+              </div>
+              <button
+                type="button"
+                @click="handleToggleHideDemo(!demoStatus.isDemoHidden)"
+                :disabled="!demoStatus.hasDemoData"
+                :class="[
+                  'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed',
+                  demoStatus.isDemoHidden ? 'bg-purple-600' : 'bg-slate-300 dark:bg-slate-600'
+                ]"
+              >
+                <span
+                  :class="[
+                    'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                    demoStatus.isDemoHidden ? '-translate-x-5' : 'translate-x-0'
+                  ]"
+                />
+              </button>
+            </div>
+            <p class="text-[11px] text-slate-500 leading-relaxed border-t border-slate-200 dark:border-slate-700 pt-2">
+              عند التفعيل، لن تظهر أي من البيانات الافتراضية في شاشات البلاغات، العملاء، المنتجات، الفواتير، أو الخزينة كأنها غير موجودة، ويمكنك إعادة إظهارها في أي لحظة.
+            </p>
+          </div>
+
+          <!-- Counts Summary -->
+          <div class="lg:col-span-2">
+            <div class="text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">
+              تفاصيل السجلات الافتراضية المتوفرة:
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+              <div class="p-2.5 bg-slate-50 dark:bg-slate-900/40 rounded-lg border border-slate-200 dark:border-slate-700 text-center">
+                <span class="text-slate-500 block text-[11px]">العملاء والمرضى</span>
+                <span class="text-base font-bold text-slate-900 dark:text-white">{{ demoStatus.counts.customers }}</span>
+              </div>
+              <div class="p-2.5 bg-slate-50 dark:bg-slate-900/40 rounded-lg border border-slate-200 dark:border-slate-700 text-center">
+                <span class="text-slate-500 block text-[11px]">طلبات وبلاغات الصيانة</span>
+                <span class="text-base font-bold text-slate-900 dark:text-white">{{ demoStatus.counts.tickets }}</span>
+              </div>
+              <div class="p-2.5 bg-slate-50 dark:bg-slate-900/40 rounded-lg border border-slate-200 dark:border-slate-700 text-center">
+                <span class="text-slate-500 block text-[11px]">المنتجات والأصناف</span>
+                <span class="text-base font-bold text-slate-900 dark:text-white">{{ demoStatus.counts.products + demoStatus.counts.spare_parts }}</span>
+              </div>
+              <div class="p-2.5 bg-slate-50 dark:bg-slate-900/40 rounded-lg border border-slate-200 dark:border-slate-700 text-center">
+                <span class="text-slate-500 block text-[11px]">فواتير المبيعات</span>
+                <span class="text-base font-bold text-slate-900 dark:text-white">{{ demoStatus.counts.sales }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Demo Action Buttons -->
+        <div class="flex flex-wrap items-center justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-700/60">
+          <button
+            @click="handleRemoveDemoData"
+            :disabled="isRemovingDemo || !demoStatus.hasDemoData"
+            class="px-5 py-2.5 border border-rose-300 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-700 dark:text-rose-300 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-sm font-semibold transition-all flex items-center gap-2"
+          >
+            <RefreshCw v-if="isRemovingDemo" class="w-4 h-4 animate-spin" />
+            <Trash2 v-else class="w-4 h-4 text-rose-600" />
+            إزالة البيانات الافتراضية
+          </button>
+
+          <button
+            @click="handleSeedDemoData"
+            :disabled="isSeedingDemo"
+            class="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-xl text-sm font-semibold transition-all shadow-sm flex items-center gap-2"
+          >
+            <RefreshCw v-if="isSeedingDemo" class="w-4 h-4 animate-spin" />
+            <Sparkles v-else class="w-4 h-4" />
+            {{ demoStatus.hasDemoData ? 'إعادة توليد وتحديث البيانات الافتراضية' : 'إضافة البيانات الافتراضية للعرض' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Section 2: Complete Factory Reset (إعادة ضبط البرنامج بالكامل) -->
+      <div class="bg-rose-50/50 dark:bg-rose-950/20 rounded-2xl p-6 border-2 border-rose-200 dark:border-rose-900/60 shadow-sm space-y-4">
+        <div class="flex items-start gap-4">
+          <div class="p-3 bg-rose-600 text-white rounded-xl shadow-sm shrink-0">
+            <AlertTriangle class="w-7 h-7" />
+          </div>
+          <div class="space-y-1">
+            <h4 class="text-lg font-bold text-rose-900 dark:text-rose-200 flex items-center gap-2">
+              إعادة ضبط البرنامج بالكامل (استعادة ضبط المصنع)
+              <span class="text-xs px-2.5 py-0.5 rounded-full bg-rose-200 text-rose-800 dark:bg-rose-900/60 dark:text-rose-300 font-bold">
+                حذف شامل لقاعدة البيانات
+              </span>
+            </h4>
+            <p class="text-sm text-rose-700 dark:text-rose-300 leading-relaxed">
+              تقوم هذه الخاصية بمسح وحذف كافة البيانات التشغيلية وقاعدة البيانات بالكامل (العملاء، الأجهزة، بلاغات الصيانة، الفواتير، الأصناف، المخزون، الخزينة، والمستخدمين)، وإعادة البرنامج إلى وضعه الأصلي تماماً كأول تشغيل بعد التثبيت.
+            </p>
+          </div>
+        </div>
+
+        <div class="p-4 bg-white dark:bg-slate-900 rounded-xl border border-rose-200 dark:border-rose-900/50 space-y-2 text-xs text-slate-600 dark:text-slate-300">
+          <div class="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
+            <CheckCircle2 class="w-4 h-4 text-emerald-600" />
+            حماية تلقائية مدمجة:
+          </div>
+          <p class="text-slate-500 leading-relaxed">
+            سيقوم النظام تلقائياً بإنشاء نسخة احتياطية كاملة ومؤرخة وحفظها داخل مجلد النسخ الاحتياطية قبل مسح أي بيانات، لضمان عدم حدوث أي فقدان غير مقصود للبيانات.
+          </p>
+          <p class="text-slate-500">
+            بعد إعادة الضبط، سيتم إعادة تشغيل البرنامج ويمكنك الدخول بالحساب الافتراضي الرئيسي: اسم المستخدم <strong class="text-slate-800 dark:text-slate-100">admin</strong> وكلمة المرور <strong class="text-slate-800 dark:text-slate-100">8520</strong>.
+          </p>
+        </div>
+
+        <div class="flex justify-end pt-2">
+          <button
+            @click="handleFactoryReset"
+            :disabled="isResettingDatabase"
+            class="px-6 py-3 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl text-sm font-bold transition-all shadow-md hover:shadow-lg flex items-center gap-2"
+          >
+            <RefreshCw v-if="isResettingDatabase" class="w-4 h-4 animate-spin" />
+            <RotateCcw v-else class="w-4 h-4" />
+            إعادة ضبط البرنامج بالكامل (حذف قاعدة البيانات)
+          </button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 

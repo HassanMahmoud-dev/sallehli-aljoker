@@ -75,6 +75,10 @@ function openCreateModal(): void {
 
 function openEditModal(u: User): void {
   errorMsg.value = ''
+  if (!appStore.isSuperAdmin && ['super_admin', 'owner', 'tenant'].includes(u.role)) {
+    swalError('غير مصرح', 'لا يمكن تعديل حسابات الإدارة أو التراخيص إلا من خلال السوبر أدمن.')
+    return
+  }
   form.value = {
     id: u.id,
     username: u.username,
@@ -100,6 +104,10 @@ function setQuickSubscriptionMonths(months: number): void {
 }
 
 async function extendTenantSubscription(user: User, months: number): Promise<void> {
+  if (!appStore.isSuperAdmin) {
+    swalError('غير مصرح', 'تجديد الاشتراك متاح فقط لحساب السوبر أدمن.')
+    return
+  }
   const baseDate =
     user.subscription_end && new Date(user.subscription_end) > new Date()
       ? new Date(user.subscription_end)
@@ -158,6 +166,10 @@ async function handleSaveUser(): Promise<void> {
 }
 
 async function handleDeleteUser(user: User): Promise<void> {
+  if (!appStore.isSuperAdmin) {
+    swalError('غير مصرح', 'حذف المستخدمين متاح فقط لحساب السوبر أدمن.')
+    return
+  }
   if (user.username === 'admin') return
   const confirmed = await swalConfirm(
     `حذف المستخدم (${user.full_name})؟`,
@@ -333,7 +345,7 @@ onMounted(loadUsers)
                 </span>
               </td>
               <td class="py-3.5 px-4">
-                <div v-if="u.role === 'tenant'" class="flex items-center gap-1.5">
+                <div v-if="appStore.isSuperAdmin && u.role === 'tenant'" class="flex items-center gap-1.5">
                   <button
                     type="button"
                     @click="extendTenantSubscription(u, 1)"
@@ -500,7 +512,7 @@ onMounted(loadUsers)
 
           <!-- Subscription Dates for Tenant Role -->
           <div
-            v-if="form.role === 'tenant'"
+            v-if="appStore.isSuperAdmin && form.role === 'tenant'"
             class="p-4 rounded-xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 space-y-3"
           >
             <div class="flex items-center justify-between">

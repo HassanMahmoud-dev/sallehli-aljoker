@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -46,6 +46,8 @@ import {
   getBusinessState,
   getEffectiveModules,
   setLicensedModules,
+  applyVendorLicense,
+  getDeviceMachineId,
   setInitialBusinessType,
   switchBusinessType,
   isBusinessDataEmpty,
@@ -107,7 +109,12 @@ import {
   listPatientAttachments,
   savePatientAttachment,
   openOrReadPatientAttachment,
-  deletePatientAttachment
+  deletePatientAttachment,
+  resetDatabase,
+  seedDemoData,
+  removeDemoData,
+  getDemoDataStatus,
+  setDemoDataHidden
 } from './db'
 import {
   checkForOnlineUpdate,
@@ -134,12 +141,35 @@ import type { BusinessType } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
 
-function createWindow(): void {
-  const iconFile = existsSync(join(__dirname, '../../resources/icon.ico'))
-    ? join(__dirname, '../../resources/icon.ico')
-    : undefined
+function resolveSectorIcon(type: BusinessType): string | undefined {
+  const candidates =
+    type === 'hearing_aids'
+      ? ['icon-hearing_aids.ico', 'icon-hearing_aids.png', 'icon.ico']
+      : ['icon.ico', 'icon.png']
+  for (const name of candidates) {
+    const unpacked = join(__dirname, '../../resources', name).replace('app.asar', 'app.asar.unpacked')
+    if (existsSync(unpacked)) return unpacked
+    const full = join(__dirname, '../../resources', name)
+    if (existsSync(full)) return full
+  }
+  return undefined
+}
 
+/** Updates window title and window/taskbar icon to match the active business sector. */
+function applyWindowBranding(type: BusinessType): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const p = getBusinessProfile(type)
+  mainWindow.setTitle(`${p.appName} v${app.getVersion()} - ${p.windowTitle}`)
+  const iconPath = resolveSectorIcon(type)
+  if (iconPath) {
+    const img = nativeImage.createFromPath(iconPath)
+    if (!img.isEmpty()) mainWindow.setIcon(img)
+  }
+}
+
+function createWindow(): void {
   const bState = getBusinessState()
+  const iconFile = resolveSectorIcon(bState.type)
   const profile = getBusinessProfile(bState.type)
 
   mainWindow = new BrowserWindow({
@@ -183,12 +213,43 @@ function registerIpcHandlers(): void {
     'auth:login': (_ctx, payload) => loginUser(payload),
     'auth:verifySession': (_ctx, userId: number) => verifySession(userId),
     'users:list': () => listUsers(),
-    'users:save': (_ctx, data) => saveUser(data),
-    'users:delete': (_ctx, id: number) => deleteUser(id),
+    'users:save': (ctx, data) => saveUser(data, ctx.session),
+    'users:delete': (ctx, id: number) => deleteUser(id, ctx.session),
 
     // Customers & Appliances
-    'customers:list': (_ctx, search?: string) => listCustomers(search),
-    'customers:findByPhone': (_ctx, phone: string) => findCustomerByPhone(phone),
+    'customers:list': (ctx, search?: string) => {
+      const list = listCustomers(search)
+      const canSeeMedical = ['super_admin', 'owner', 'tenant', 'receptionist'].includes(
+        ctx.session?.role || ''
+      )
+      if (canSeeMedical) return list
+      return list.map((c) => ({
+        ...c,
+        birth_date: null,
+        referring_doctor: '',
+        medical_complaint: '',
+        medical_history: '',
+        allergies: '',
+        doctor_notes: ''
+      }))
+    },
+    'customers:findByPhone': (ctx, phone: string) => {
+      const c = findCustomerByPhone(phone)
+      if (!c) return null
+      const canSeeMedical = ['super_admin', 'owner', 'tenant', 'receptionist'].includes(
+        ctx.session?.role || ''
+      )
+      if (canSeeMedical) return c
+      return {
+        ...c,
+        birth_date: null,
+        referring_doctor: '',
+        medical_complaint: '',
+        medical_history: '',
+        allergies: '',
+        doctor_notes: ''
+      }
+    },
     'customers:save': (_ctx, data) => saveCustomer(data),
     'customers:delete': (_ctx, id: number) => deleteCustomer(id),
     'customers:appliances': (_ctx, customerId: number) => getCustomerAppliances(customerId),
@@ -208,7 +269,17 @@ function registerIpcHandlers(): void {
     'inventory:list': () => listInventoryMovements(),
 
     // Phase 3A: Products, Variants, Serials & Suppliers
-    'products:list': (_ctx, filters) => listProducts(filters),
+    'products:list': (ctx, filters) => {
+      const list = listProducts(filters)
+      const canSeeCost = ['super_admin', 'owner', 'tenant', 'storekeeper'].includes(
+        ctx.session?.role || ''
+      )
+      if (canSeeCost) return list
+      return list.map((p) => ({
+        ...p,
+        cost_price: 0
+      }))
+    },
     'products:getByBarcode': (_ctx, barcode: string) => getProductByBarcode(barcode),
     'products:save': (_ctx, data) => saveProduct(data),
     'products:delete': (_ctx, id: number) => deleteProduct(id),
@@ -221,19 +292,19 @@ function registerIpcHandlers(): void {
     'suppliers:save': (_ctx, data) => saveSupplier(data),
     'suppliers:delete': (_ctx, id: number) => deleteSupplier(id),
     'suppliers:statement': (_ctx, supplierId: number) => getSupplierStatement(supplierId),
-    'suppliers:pay': (_ctx, payload) => paySupplier(payload),
+    'suppliers:pay': (ctx, payload) => paySupplier(payload, ctx.session),
 
     // Phase 3B, 3C, 3D & 3E: Purchases, Sales, Returns, Exchanges & Ticket Lookups
     'purchases:list': (_ctx, filters) => listPurchaseInvoices(filters),
-    'purchases:save': (_ctx, data) => savePurchaseInvoice(data),
+    'purchases:save': (ctx, data) => savePurchaseInvoice(data, ctx.session),
     'purchases:delete': (_ctx, id: number) => deletePurchaseInvoice(id),
     'sales:list': (_ctx, filters) => listSalesInvoices(filters),
-    'sales:save': (_ctx, data) => saveSalesInvoice(data),
-    'sales:collectInstallment': (_ctx, payload) => collectSalesInstallment(payload),
+    'sales:save': (ctx, data) => saveSalesInvoice(data, ctx.session),
+    'sales:collectInstallment': (ctx, payload) => collectSalesInstallment(payload, ctx.session),
     'sales:delete': (_ctx, id: number) => deleteSalesInvoice(id),
     'returns:list': (_ctx, returnType) => listInvoiceReturns(returnType),
-    'returns:sales:create': (_ctx, payload) => createSalesReturn(payload),
-    'returns:purchases:create': (_ctx, payload) => createPurchaseReturn(payload),
+    'returns:sales:create': (ctx, payload) => createSalesReturn(payload, ctx.session),
+    'returns:purchases:create': (ctx, payload) => createPurchaseReturn(payload, ctx.session),
     'exchanges:list': () => listProductExchanges(),
     'exchanges:process': (_ctx, payload) => processProductExchange(payload),
     'tickets:lookupSerialOrInvoice': (_ctx, query: string) =>
@@ -270,13 +341,13 @@ function registerIpcHandlers(): void {
 
     // Maintenance Tickets
     'tickets:list': (_ctx, filters) => listTickets(filters),
-    'tickets:save': (_ctx, data) => saveTicket(data),
+    'tickets:save': (ctx, data) => saveTicket(data, ctx.session),
     'tickets:updateImages': (_ctx, payload) => updateTicketImages(payload),
     'tickets:delete': (_ctx, id: number) => deleteTicket(id),
 
     // Treasury & Reports
     'treasury:list': () => listTreasuryTransactions(),
-    'treasury:add': (_ctx, data) => addTreasuryTransaction(data),
+    'treasury:add': (ctx, data) => addTreasuryTransaction(data, ctx.session),
     'treasury:transfer': (_ctx, payload) => transferTreasuryFunds(payload),
     'treasury:collectReceivable': (_ctx, payload) => collectTicketReceivable(payload),
     'treasury:delete': (_ctx, id: number) => deleteTreasuryTransaction(id),
@@ -312,9 +383,7 @@ function registerIpcHandlers(): void {
       })
       if (canceled || filePaths.length === 0) return { success: false }
       restoreBackupFromFile(filePaths[0])
-      const bState = getBusinessState()
-      const p = getBusinessProfile(bState.type)
-      mainWindow?.setTitle(`${p.appName} v${app.getVersion()} - ${p.windowTitle}`)
+      applyWindowBranding(getBusinessState().type)
       return { success: true, filePath: filePaths[0] }
     },
     'backup:chooseDir': async () => {
@@ -330,7 +399,11 @@ function registerIpcHandlers(): void {
 
     // External Links (e.g. WhatsApp / Browser)
     'shell:openExternal': async (_ctx, url: string) => {
-      await shell.openExternal(url)
+      const cleanUrl = String(url || '').trim()
+      if (!/^https?:\/\//i.test(cleanUrl)) {
+        throw new Error('الرابط غير صالح؛ يسمح فقط بروابط http و https')
+      }
+      await shell.openExternal(cleanUrl)
     },
 
     // Application Updates (Online & Offline & 24h Auto Check)
@@ -393,8 +466,7 @@ function registerIpcHandlers(): void {
     'business:get': () => getBusinessState(),
     'business:setInitial': (_ctx: unknown, type: BusinessType) => {
       const res = setInitialBusinessType(type)
-      const p = getBusinessProfile(res.type)
-      mainWindow?.setTitle(`${p.appName} v${app.getVersion()} - ${p.windowTitle}`)
+      applyWindowBranding(res.type)
       return res
     },
     'business:checkSwitch': () => isBusinessDataEmpty(),
@@ -403,14 +475,16 @@ function registerIpcHandlers(): void {
       payload: { type: BusinessType; password?: string }
     ) => {
       const res = switchBusinessType(payload, ctx.session?.userId || 1)
-      const p = getBusinessProfile(res.type)
-      mainWindow?.setTitle(`${p.appName} v${app.getVersion()} - ${p.windowTitle}`)
+      applyWindowBranding(res.type)
       return res
     },
     'business:setLicensedModules': (
       ctx: { session: SessionInfo | null },
       modules: string[]
     ) => setLicensedModules(modules, ctx.session?.userId || 1),
+    'business:applyVendorLicense': (ctx: { session: SessionInfo | null }, token: string) =>
+      applyVendorLicense(token, ctx.session?.userId || 1),
+    'business:getMachineId': () => getDeviceMachineId(),
 
     // Dynamic Lookups (Types & Brands)
     'lookups:list': (_ctx: unknown, category?: string) => listLookupItems(category),
@@ -427,7 +501,14 @@ function registerIpcHandlers(): void {
       reorderCustomFieldDefs(items),
 
     // Backup Download Ticket
-    'backup:createTicket': (ctx: { token: string | null }) => createBackupTicket(ctx.token)
+    'backup:createTicket': (ctx: { token: string | null }) => createBackupTicket(ctx.token),
+
+    // Database Reset & Demo Data Management
+    'db:reset': () => resetDatabase(),
+    'demo:seed': (_ctx: unknown, targetType?: BusinessType) => seedDemoData(targetType),
+    'demo:remove': () => removeDemoData(),
+    'demo:status': () => getDemoDataStatus(),
+    'demo:setHidden': (_ctx: unknown, hidden: boolean) => setDemoDataHidden(hidden)
   }
 
   const wrappedHandlers: Record<string, (...args: any[]) => any> = {}
@@ -472,6 +553,7 @@ function registerIpcHandlers(): void {
           'backup:restore',
           'backup:createTicket',
           'db:path',
+          'db:reset',
           'lookups:list',
           'customFields:list',
           'system:status',
@@ -501,7 +583,13 @@ app.whenReady().then(async () => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  initDatabase()
+  try {
+    initDatabase()
+  } catch (err) {
+    dialog.showErrorBox('تعذر تشغيل قاعدة البيانات', (err as Error).message)
+    app.quit()
+    return
+  }
   registerIpcHandlers()
 
   const settings = getSettings()

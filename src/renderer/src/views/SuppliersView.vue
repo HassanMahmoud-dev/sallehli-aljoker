@@ -146,8 +146,9 @@ async function handlePaySupplier(): Promise<void> {
       await window.api.paySupplier(plain(payForm.value))
       payModalOpen.value = false
       await loadData()
-      if (statementModalOpen.value && activeStatement.value?.supplier.id === supplierToPay.value?.id) {
-        activeStatement.value = await window.api.getSupplierStatement(supplierToPay.value.id)
+      const paidSupplierId = supplierToPay.value?.id
+      if (paidSupplierId && statementModalOpen.value && activeStatement.value?.supplier.id === paidSupplierId) {
+        activeStatement.value = await window.api.getSupplierStatement(paidSupplierId)
       }
     }, 'جاري تسجيل دفعة السداد للمورد...')
     swalSuccess('تم تسجيل دفعة السداد وخصمها من رصيد المورد بنجاح')

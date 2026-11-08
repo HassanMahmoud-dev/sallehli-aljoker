@@ -543,8 +543,7 @@ async function handleRemakeEarmold(order: EarmoldOrder): Promise<void> {
   try {
     await window.api.remakeEarmoldOrder({
       id: order.id,
-      reason: 'عدم ملاءمة المقاس أو مشاكل Feedback في الصوت',
-      notes: 'إعادة تصنيع بناءً على طلب الأخصائي'
+      reason: 'عدم ملاءمة المقاس أو مشاكل Feedback في الصوت — إعادة تصنيع بناءً على طلب الأخصائي'
     })
     await loadData()
     swalSuccess('تم تسجيل إعادة التصنيع وإنشاء الطلب الجديد بنجاح')
@@ -629,16 +628,16 @@ async function handleSaveImplantSession(): Promise<void> {
       implant_id: implantSessionForm.value.implant_id,
       patient_id: implantSessionForm.value.patient_id,
       session_date: implantSessionForm.value.session_date,
-      session_type: implantSessionForm.value.session_type,
+      session_type: implantSessionForm.value.session_type as ImplantSession['session_type'],
       technician_id: implantSessionForm.value.technician_id,
       examiner_name: implantSessionForm.value.examiner_name,
       program_notes: implantSessionForm.value.program_notes,
       thresholds: {
-        strategy: implantSessionForm.value.strategy,
+        coding_strategy: implantSessionForm.value.strategy,
         impedance_status: implantSessionForm.value.impedance_status,
-        t_levels: implantSessionForm.value.t_levels_summary,
-        c_levels: implantSessionForm.value.c_levels_summary,
-        active_channels: implantSessionForm.value.active_channels
+        t_level_summary: implantSessionForm.value.t_levels_summary,
+        c_level_summary: implantSessionForm.value.c_levels_summary,
+        active_channels: String(implantSessionForm.value.active_channels)
       },
       next_due_date: implantSessionForm.value.next_due_date || undefined
     }

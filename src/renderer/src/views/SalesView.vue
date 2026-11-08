@@ -305,6 +305,7 @@ const detailedForm = ref<{
 })
 
 const selectedDetailedProdId = ref<number | null>(null)
+const paidAmountManuallyEdited = ref(false)
 
 const detailedSubtotal = computed(() =>
   detailedForm.value.items.reduce(
@@ -322,7 +323,11 @@ const detailedRemaining = computed(() =>
 )
 
 watch(detailedTotal, (newVal) => {
-  detailedForm.value.paid_amount = newVal
+  if (!paidAmountManuallyEdited.value) {
+    detailedForm.value.paid_amount = newVal
+  } else if (detailedForm.value.paid_amount > newVal) {
+    detailedForm.value.paid_amount = newVal
+  }
 })
 
 async function lookupCustomerByPhone(): Promise<void> {
@@ -490,6 +495,7 @@ async function handleSaveDetailedInvoice(shouldPrint = true): Promise<void> {
         recordInTreasury: true,
         items: []
       }
+      paidAmountManuallyEdited.value = false
       await loadAll()
       activeTab.value = 'invoices'
     }, 'جاري حفظ الفاتورة وتسجيل الضمان وملف العميل...')
@@ -1424,9 +1430,23 @@ onMounted(async () => {
           </div>
 
           <div>
-            <label class="block font-bold mb-1">المبلغ المدفوع مقدماً / الآن (ج.م)</label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block font-bold">المبلغ المدفوع مقدماً / الآن (ج.م)</label>
+              <button
+                v-if="paidAmountManuallyEdited && detailedForm.paid_amount !== detailedTotal"
+                type="button"
+                @click="
+                  paidAmountManuallyEdited = false;
+                  detailedForm.paid_amount = detailedTotal
+                "
+                class="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer"
+              >
+                سداد بالكامل
+              </button>
+            </div>
             <input
               v-model.number="detailedForm.paid_amount"
+              @input="paidAmountManuallyEdited = true"
               type="number"
               min="0"
               :max="detailedTotal"

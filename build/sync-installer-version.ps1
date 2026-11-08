@@ -3,12 +3,12 @@ Add-Type -AssemblyName System.Drawing
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $pkgPath = Join-Path $repoRoot "package.json"
 $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
-$versionText = "v$($pkg.version)"
+$versionText = if ($pkg.version -eq "1.0.0") { "v1.0" } else { "v$($pkg.version)" }
 
 $indexHtmlPath = Join-Path $repoRoot "src\renderer\index.html"
 if (Test-Path $indexHtmlPath) {
   $html = [System.IO.File]::ReadAllText($indexHtmlPath, [System.Text.Encoding]::UTF8)
-  $html = [regex]::Replace($html, 'v[0-9]+\.[0-9]+\.[0-9]+', $versionText)
+  $html = [regex]::Replace($html, 'v[0-9]+(\.[0-9]+)*', $versionText)
   [System.IO.File]::WriteAllText($indexHtmlPath, $html, (New-Object System.Text.UTF8Encoding $false))
 }
 

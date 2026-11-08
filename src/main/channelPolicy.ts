@@ -8,6 +8,7 @@ export type ChannelPermission =
   | 'manager'
   | 'financial'
   | 'inventory'
+  | 'sales_ops'
   | 'super_admin'
 
 export const CHANNEL_PERMISSIONS: Record<string, ChannelPermission> = {
@@ -17,9 +18,9 @@ export const CHANNEL_PERMISSIONS: Record<string, ChannelPermission> = {
   'app:version': 'public',
   'settings:get': 'public',
   'business:getPublic': 'public',
-  'shell:openExternal': 'public',
 
   // Authenticated (All logged-in staff)
+  'shell:openExternal': 'authenticated',
   'auth:logout': 'authenticated',
   'dashboard:stats': 'authenticated',
   'customers:list': 'authenticated',
@@ -39,28 +40,24 @@ export const CHANNEL_PERMISSIONS: Record<string, ChannelPermission> = {
   'products:getByBarcode': 'authenticated',
   'products:serials:list': 'authenticated',
   'suppliers:list': 'authenticated',
-  'suppliers:statement': 'authenticated',
-  'purchases:list': 'authenticated',
   'sales:list': 'authenticated',
-  'sales:save': 'authenticated',
-  'sales:collectInstallment': 'authenticated',
   'returns:list': 'authenticated',
   'exchanges:list': 'authenticated',
   'tickets:lookupSerialOrInvoice': 'authenticated',
   'tickets:returnLoaner': 'authenticated',
-  'hearingTests:latestSummary': 'authenticated',
-  'followups:list': 'authenticated',
-  'earmolds:list': 'authenticated',
-  'earmolds:save': 'authenticated',
-  'earmolds:updateStatus': 'authenticated',
-  'earmolds:remake': 'authenticated',
 
   // Medical (super_admin, owner, tenant, receptionist - Sensitive Audiology & Patient Medical Data)
   'patients:profile': 'medical',
   'hearingTests:list': 'medical',
   'hearingTests:save': 'medical',
+  'hearingTests:latestSummary': 'medical',
+  'followups:list': 'medical',
   'followups:save': 'medical',
   'followups:complete': 'medical',
+  'earmolds:list': 'medical',
+  'earmolds:save': 'medical',
+  'earmolds:updateStatus': 'medical',
+  'earmolds:remake': 'medical',
   'implants:list': 'medical',
   'implants:save': 'medical',
   'implants:sessions:save': 'medical',
@@ -109,8 +106,14 @@ export const CHANNEL_PERMISSIONS: Record<string, ChannelPermission> = {
   'treasury:transfer': 'financial',
   'treasury:collectReceivable': 'financial',
   'reports:financial': 'financial',
+  'suppliers:statement': 'financial',
+  'sales:collectInstallment': 'financial',
+
+  // Sales Operations (super_admin, owner, tenant, cashier, receptionist)
+  'sales:save': 'sales_ops',
 
   // Inventory (super_admin, owner, tenant, storekeeper, cashier)
+  'purchases:list': 'inventory',
   'parts:save': 'inventory',
   'inventory:movement': 'inventory',
   'products:save': 'inventory',
@@ -143,7 +146,14 @@ export const CHANNEL_PERMISSIONS: Record<string, ChannelPermission> = {
   'business:setInitial': 'super_admin',
   'business:checkSwitch': 'super_admin',
   'business:switch': 'super_admin',
-  'business:setLicensedModules': 'super_admin'
+  'business:setLicensedModules': 'super_admin',
+  'business:applyVendorLicense': 'super_admin',
+  'business:getMachineId': 'super_admin',
+  'db:reset': 'super_admin',
+  'demo:seed': 'super_admin',
+  'demo:remove': 'super_admin',
+  'demo:status': 'super_admin',
+  'demo:setHidden': 'super_admin'
 }
 
 export const CHANNEL_REQUIRED_MODULE: Record<string, string> = {
@@ -245,6 +255,15 @@ export function isRoleAuthorized(role: UserRole, permission: ChannelPermission):
 
   if (permission === 'inventory') {
     return role === 'owner' || role === 'tenant' || role === 'storekeeper' || role === 'cashier'
+  }
+
+  if (permission === 'sales_ops') {
+    return (
+      role === 'owner' ||
+      role === 'tenant' ||
+      role === 'cashier' ||
+      role === 'receptionist'
+    )
   }
 
   if (permission === 'super_admin') {

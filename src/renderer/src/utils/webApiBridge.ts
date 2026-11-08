@@ -170,6 +170,8 @@ export function ensureWebApiBridge(): void {
     checkBusinessSwitch: () => invokeHttp('business:checkSwitch'),
     switchBusiness: (payload) => invokeHttp('business:switch', payload),
     setLicensedModules: (modules) => invokeHttp('business:setLicensedModules', modules),
+  applyVendorLicense: (token) => invokeHttp('business:applyVendorLicense', token),
+  getMachineId: () => invokeHttp('business:getMachineId'),
     listLookups: (category) => invokeHttp('lookups:list', category),
     saveLookup: (data) => invokeHttp('lookups:save', data),
     deleteLookup: (id) => invokeHttp('lookups:delete', id),
@@ -177,7 +179,14 @@ export function ensureWebApiBridge(): void {
     listCustomFields: (entity) => invokeHttp('customFields:list', entity),
     saveCustomField: (data) => invokeHttp('customFields:save', data),
     deleteCustomField: (id) => invokeHttp('customFields:delete', id),
-    reorderCustomFields: (items) => invokeHttp('customFields:reorder', items)
+    reorderCustomFields: (items) => invokeHttp('customFields:reorder', items),
+
+    // Database Reset & Demo Data Management
+    resetDatabase: () => invokeHttp('db:reset'),
+    seedDemoData: (targetType) => invokeHttp('demo:seed', targetType),
+    removeDemoData: () => invokeHttp('demo:remove'),
+    getDemoDataStatus: () => invokeHttp('demo:status'),
+    setHideDemoData: (hidden) => invokeHttp('demo:setHidden', hidden)
   }
 
   window.api = webApi

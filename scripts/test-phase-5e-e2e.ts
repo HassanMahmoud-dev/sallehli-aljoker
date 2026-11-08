@@ -82,7 +82,11 @@ console.log('▶ SCENARIO 2: Fresh Installation -> Hearing Aids Profile Initiali
   assert.strictEqual(activeModules.includes('followups'), true, 'Followups/Audiology module active in hearing aids')
 
   const profile = getBusinessProfile('hearing_aids')
-  assert.strictEqual(profile.appName, 'أريتون', 'App name for hearing aids is أريتون')
+  assert.strictEqual(profile.appName, 'صلحلي', 'Unified app brand name is صلحلي')
+  assert.ok(
+    profile.windowTitle.includes('السماعات الطبية'),
+    'Hearing aids windowTitle identifies the hearing aids sector'
+  )
 
   testDb.close()
   unlinkSync(dbPath)
@@ -195,9 +199,18 @@ console.log('▶ SCENARIO 5: Tamper Detection & System Lockout Protection')
   const recoveredSig = (testDb.prepare('SELECT value FROM settings WHERE key = ?').get('business_type_sig') as any).value
   assert.strictEqual(recoveredSig === signBiz('hearing_aids'), true, 'Super Admin recovery clears lock')
 
+  // Machine-bound signature check: copying DB from Machine A to Machine B must trigger lock
+  const signBizMachine = (type: string, mId: string) =>
+    createHmac('sha256', BUSINESS_HMAC_SECRET).update(`biz|${type}|${mId}`).digest('hex')
+  const msigMachineA = signBizMachine('hearing_aids', 'machine-guid-aaaa')
+  testDb.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('business_type_msig', msigMachineA)
+  const storedMsig = (testDb.prepare('SELECT value FROM settings WHERE key = ?').get('business_type_msig') as any).value
+  assert.notStrictEqual(storedMsig, signBizMachine('hearing_aids', 'machine-guid-bbbb'), 'Copied DB detected on another machine')
+  assert.strictEqual(storedMsig, signBizMachine('hearing_aids', 'machine-guid-aaaa'), 'Original machine matches')
+
   testDb.close()
   unlinkSync(dbPath)
-  console.log('  ✓ S5 Passed: Tamper detection immediately locks system and super admin recovery clears lock.\n')
+  console.log('  ✓ S5 Passed: Tamper detection & machine-binding immediately lock system; super admin recovery clears lock.\n')
 }
 
 // -------------------------------------------------------------------
@@ -285,7 +298,14 @@ console.log('▶ SCENARIO 8: Terminology and Module Consistency in Both Sectors'
   assert.strictEqual(appliances.terms.warranty, 'ضمان الصيانة')
   assert.strictEqual(hearing.terms.warranty, 'الضمان')
 
-  console.log('  ✓ S8 Passed: Sector-specific terminology dictionaries confirmed isolated and complete.\n')
+  // Verify dynamic sector icon files exist for both profiles
+  const appliancesIcon = join(process.cwd(), 'resources', 'icon.ico')
+  const hearingIcon = join(process.cwd(), 'resources', 'icon-hearing_aids.ico')
+  assert.strictEqual(existsSync(appliancesIcon), true, 'Appliances sector icon.ico exists')
+  assert.strictEqual(existsSync(hearingIcon), true, 'Hearing aids sector icon-hearing_aids.ico exists')
+  assert.ok(readFileSync(hearingIcon).byteLength > 1000, 'Hearing aids sector ICO is valid & non-empty')
+
+  console.log('  ✓ S8 Passed: Sector-specific terminology dictionaries and icons confirmed isolated and complete.\n')
 }
 
 console.log('=====================================================================')

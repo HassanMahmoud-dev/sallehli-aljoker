@@ -116,6 +116,7 @@ export interface CustomerAppliance {
   brand: string
   model: string
   serial_number: string
+  purchase_date?: string | null
   notes: string
   last_warranty_end?: string | null
   last_ticket_number?: string | null
@@ -247,6 +248,7 @@ export interface ProductSerial {
   ear_side: string
   company_warranty_start: string | null
   company_warranty_end: string | null
+  unit_cost?: number | null
   customer_warranty_start: string | null
   customer_warranty_end: string | null
   notes: string
@@ -374,6 +376,8 @@ export interface PurchaseInvoice {
   payment_method: string
   status: 'completed' | 'partial_return' | 'returned' | 'cancelled'
   notes: string
+  created_by_id?: number | null
+  created_by_name?: string
   created_at: string
   items?: PurchaseItem[]
 }
@@ -432,6 +436,9 @@ export interface SalesInvoice {
   payment_method: string
   status: 'completed' | 'partial_return' | 'returned' | 'cancelled'
   parent_invoice_id: number | null
+  returned_amount?: number
+  created_by_id?: number | null
+  created_by_name?: string
   notes: string
   extra_data?: Record<string, any>
   created_at: string
@@ -468,6 +475,8 @@ export interface InvoiceReturn {
   balance_adjusted: number
   payment_method: string
   reason: string
+  created_by_id?: number | null
+  created_by_name?: string
   created_at: string
   items?: InvoiceReturnItem[]
 }
@@ -585,6 +594,10 @@ export interface MaintenanceTicket {
   warranty_image?: string
   fault_images?: string[]
   extra_data?: Record<string, any>
+  commission_rate?: number | null
+  commission_amount?: number | null
+  created_by_id?: number | null
+  created_by_name?: string
   notes: string
   completed_at: string | null
   delivered_at: string | null
@@ -1042,4 +1055,25 @@ export interface FinancialReportData {
   topAppliances: Array<{ appliance_type: string; count: number; revenue: number }>
   topBrands: Array<{ brand: string; count: number; revenue: number }>
   transactions: TreasuryTransaction[]
+}
+
+export interface DemoDataStatus {
+  isDemoHidden: boolean
+  hasDemoData: boolean
+  counts: {
+    customers: number
+    tickets: number
+    spare_parts: number
+    products: number
+    suppliers: number
+    sales: number
+    purchases: number
+    hearing_tests: number
+    earmold_orders: number
+    followups: number
+    implants: number
+    technicians: number
+    treasury: number
+    total: number
+  }
 }

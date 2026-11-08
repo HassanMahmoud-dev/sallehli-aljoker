@@ -8,8 +8,12 @@ directories:
   buildResources: build
   output: dist
 files:
-  - '!**/.vscode/*'
-  - '!src/*'
+  - '!**/.vscode/**'
+  - '!src/**'
+  - '!docs/**'
+  - '!scripts/**'
+  - '!**/*.pem'
+  - '!**/*.key'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json,*.tsbuildinfo}'
@@ -22,6 +26,7 @@ files:
   - '!node_modules/node-addon-api/**'
 asarUnpack:
   - '**/*.node'
+  - 'resources/**'
 win:
   executableName: Sallehli
   icon: build/icon.ico
@@ -30,9 +35,9 @@ win:
       arch:
         - x64
 nsis:
-  artifactName: ${name}-v${version}-Setup-x64.${ext}
+  artifactName: ${name}-v1.0-Setup-x64.${ext}
   shortcutName: صلحلي
-  uninstallDisplayName: صلحلي v${version} - نظام الإدارة المتكامل
+  uninstallDisplayName: صلحلي v1.0 - نظام الإدارة المتكامل
   createDesktopShortcut: always
   oneClick: false
   allowToChangeInstallationDirectory: true

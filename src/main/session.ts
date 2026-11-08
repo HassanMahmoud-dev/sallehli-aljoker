@@ -5,6 +5,7 @@ export interface SessionInfo {
   token: string
   userId: number
   username: string
+  full_name?: string
   role: UserRole
   createdAt: number
   lastActiveAt: number
@@ -26,6 +27,7 @@ export function createSessionInMemory(user: User, existingToken?: string): strin
     token,
     userId: user.id,
     username: user.username,
+    full_name: user.full_name,
     role: user.role,
     createdAt: now,
     lastActiveAt: now
@@ -49,6 +51,14 @@ export function getSessionFromMemory(token?: string | null): SessionInfo | null 
 export function removeSessionFromMemory(token?: string | null): void {
   if (!token) return
   sessions.delete(token)
+}
+
+export function invalidateUserSessionsInMemory(userId: number): void {
+  for (const [token, s] of sessions.entries()) {
+    if (s.userId === userId) {
+      sessions.delete(token)
+    }
+  }
 }
 
 export function createBackupTicket(token?: string | null): string | null {

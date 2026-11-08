@@ -46,7 +46,8 @@ import type {
   ImplantSession,
   AttachmentCategory,
   PatientAttachment,
-  PatientProfileBundle
+  PatientProfileBundle,
+  DemoDataStatus
 } from '../shared/types'
 
 export interface IElectronAPI {
@@ -425,6 +426,8 @@ export interface IElectronAPI {
   setLicensedModules: (
     modules: string[]
   ) => Promise<{ success: boolean; modules: string[]; state: BusinessState }>
+  applyVendorLicense: (token: string) => Promise<{ success: boolean; modules: string[]; issuedTo?: string; state: BusinessState }>
+  getMachineId: () => Promise<string>
   listLookups: (category?: string) => Promise<LookupItem[]>
   saveLookup: (data: Partial<LookupItem>) => Promise<LookupItem>
   deleteLookup: (id: number) => Promise<void>
@@ -433,6 +436,13 @@ export interface IElectronAPI {
   saveCustomField: (data: Partial<CustomFieldDef>) => Promise<CustomFieldDef>
   deleteCustomField: (id: number) => Promise<void>
   reorderCustomFields: (items: Array<{ id: number; sort_order: number }>) => Promise<void>
+
+  // Database Reset & Demo Data Management
+  resetDatabase: () => Promise<{ success: boolean; message: string; backupPath?: string }>
+  seedDemoData: (targetType?: BusinessType) => Promise<{ success: boolean; message: string; counts: Record<string, number> }>
+  removeDemoData: () => Promise<{ success: boolean; deletedCount: number; message: string }>
+  getDemoDataStatus: () => Promise<DemoDataStatus>
+  setHideDemoData: (hidden: boolean) => Promise<boolean>
 }
 
 declare global {

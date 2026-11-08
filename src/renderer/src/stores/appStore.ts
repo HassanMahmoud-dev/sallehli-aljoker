@@ -8,6 +8,7 @@ import type {
   HearingTest,
   EarmoldOrder,
   UpdateCheckResult,
+  UpdateProgressPayload,
   SystemControlStatus,
   BusinessType,
   BusinessState,
@@ -58,7 +59,7 @@ export const useAppStore = defineStore('app', () => {
   const themeMode = ref<ThemeMode>(savedThemeMode)
   const isDark = ref<boolean>(false)
 
-  const appVersion = ref<string>('v1.2.2')
+  const appVersion = ref<string>('v1.0')
 
   // Background Update Downloader State
   const updateDownloadState = ref<{
@@ -86,6 +87,7 @@ export const useAppStore = defineStore('app', () => {
   })
 
   const businessType = computed<BusinessType>(() => businessState.value.type)
+  const isHearingAidsProfile = computed(() => businessState.value.type === 'hearing_aids')
   const isBusinessLocked = computed(() => businessState.value.locked)
   const needsBusinessSetup = computed(() => businessState.value.needsSetup)
   const businessProfile = computed<BusinessProfile>(() => {
@@ -380,7 +382,7 @@ export const useAppStore = defineStore('app', () => {
       if (window.api?.getAppVersion) {
         const ver = await window.api.getAppVersion()
         if (ver) {
-          appVersion.value = ver.startsWith('v') ? ver : `v${ver}`
+          appVersion.value = ver === '1.0.0' ? 'v1.0' : (ver.startsWith('v') ? ver : `v${ver}`)
           updateDocumentTitle()
         }
       }
@@ -475,8 +477,11 @@ export const useAppStore = defineStore('app', () => {
   }
 
   async function verifyRememberedSession(): Promise<boolean> {
-    const ident = sessionToken.value || currentUser.value?.id
-    if (!ident) return false
+    const ident = sessionToken.value
+    if (!ident) {
+      logout()
+      return false
+    }
     try {
       const res = await window.api.verifySession(ident)
       if (!res.success || !res.user) {
@@ -634,6 +639,7 @@ export const useAppStore = defineStore('app', () => {
     syncUpdateDownloadStatus,
     businessState,
     businessType,
+    isHearingAidsProfile,
     isBusinessLocked,
     needsBusinessSetup,
     businessProfile,

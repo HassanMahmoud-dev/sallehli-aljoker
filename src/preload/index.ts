@@ -416,6 +416,8 @@ const api = {
     invoke('business:switch', payload),
   setLicensedModules: (modules: string[]) =>
     invoke('business:setLicensedModules', modules),
+  applyVendorLicense: (token: string) => invoke('business:applyVendorLicense', token),
+  getMachineId: () => invoke('business:getMachineId'),
   listLookups: (category?: string) => invoke('lookups:list', category),
   saveLookup: (data: Partial<LookupItem>) => invoke('lookups:save', data),
   deleteLookup: (id: number) => invoke('lookups:delete', id),
@@ -425,7 +427,14 @@ const api = {
   saveCustomField: (data: Partial<CustomFieldDef>) => invoke('customFields:save', data),
   deleteCustomField: (id: number) => invoke('customFields:delete', id),
   reorderCustomFields: (items: Array<{ id: number; sort_order: number }>) =>
-    invoke('customFields:reorder', items)
+    invoke('customFields:reorder', items),
+
+  // Database Reset & Demo Data Management
+  resetDatabase: () => invoke('db:reset'),
+  seedDemoData: (targetType?: BusinessType) => invoke('demo:seed', targetType),
+  removeDemoData: () => invoke('demo:remove'),
+  getDemoDataStatus: () => invoke('demo:status'),
+  setHideDemoData: (hidden: boolean) => invoke('demo:setHidden', hidden)
 }
 
 if (process.contextIsolated) {

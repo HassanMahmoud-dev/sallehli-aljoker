@@ -279,7 +279,8 @@ async function handleFileSelected(event: Event): Promise<void> {
         title: newAttachmentTitle.value.trim() || file.name,
         category: newAttachmentCategory.value,
         file_name: file.name,
-        file_data: dataUrl,
+        mime_type: file.type || 'application/octet-stream',
+        data_base64: dataUrl,
         notes: newAttachmentNotes.value.trim()
       })
       uploadAttachmentModalOpen.value = false
@@ -299,7 +300,7 @@ async function handleOpenAttachment(att: PatientAttachment): Promise<void> {
   try {
     const res = await window.api.openPatientAttachment({ id: att.id, openExternal: true })
     if (res.dataUrl) {
-      if (res.mimeType.startsWith('image/')) {
+      if ((res.attachment.mime_type || '').startsWith('image/')) {
         appStore.openImagePreview(res.dataUrl, att.title)
       } else {
         const w = window.open('')
@@ -1379,7 +1380,7 @@ onMounted(async () => {
                         {{ inv.invoice_number }}
                       </div>
                       <div class="text-[11px] text-slate-500">
-                        📅 {{ inv.invoice_date }} | بنود الفاتورة: {{ inv.items?.length || 0 }}
+                        📅 {{ inv.created_at }} | بنود الفاتورة: {{ inv.items?.length || 0 }}
                       </div>
                     </div>
 

@@ -86,8 +86,8 @@ function openCollectModal(ticket: MaintenanceTicket): void {
 function openSalesCollectModal(invoice: SalesInvoice): void {
   salesInvoiceToCollect.value = invoice
   ticketToCollect.value = null
-  collectAmount.value = invoice.remaining
-  collectMethod.value = invoice.payment_method || 'cash'
+  collectAmount.value = invoice.remaining_amount
+  collectMethod.value = (invoice.payment_method as typeof collectMethod.value) || 'cash'
   collectNotes.value = `تحصيل قسط فاتورة بيع ${invoice.invoice_number} - ${invoice.customer_name || ''}`
   collectModalOpen.value = true
 }
@@ -98,9 +98,9 @@ async function handleConfirmCollect(): Promise<void> {
     await appStore.withLoading(async () => {
       if (salesInvoiceToCollect.value) {
         await window.api.collectSalesInstallment({
-          invoiceId: salesInvoiceToCollect.value.id,
+          invoice_id: salesInvoiceToCollect.value.id,
           amount: collectAmount.value,
-          paymentMethod: collectMethod.value,
+          payment_method: collectMethod.value,
           notes: collectNotes.value
         })
       } else if (ticketToCollect.value) {
@@ -749,16 +749,16 @@ onMounted(loadReport)
                 <tr v-for="inv in report.salesReceivables || []" :key="inv.id">
                   <td class="py-3 px-4 font-mono font-bold text-indigo-600">
                     {{ inv.invoice_number }}
-                    <div class="text-[10px] text-slate-400">{{ inv.invoice_date }}</div>
+                    <div class="text-[10px] text-slate-400">{{ inv.created_at }}</div>
                   </td>
                   <td class="py-3 px-4">
                     <div class="font-bold">{{ inv.customer_name || 'عميل' }}</div>
                     <div class="font-mono text-slate-500">{{ inv.customer_phone }}</div>
                   </td>
-                  <td class="py-3 px-4 font-bold">{{ inv.net_total }} ج.م</td>
-                  <td class="py-3 px-4 text-emerald-600 font-bold">{{ inv.paid }} ج.م</td>
+                  <td class="py-3 px-4 font-bold">{{ inv.total_amount }} ج.م</td>
+                  <td class="py-3 px-4 text-emerald-600 font-bold">{{ inv.paid_amount }} ج.م</td>
                   <td class="py-3 px-4 font-black text-sm text-rose-600">
-                    {{ inv.remaining }} ج.م
+                    {{ inv.remaining_amount }} ج.م
                   </td>
                   <td class="py-3 px-4 no-print">
                     <button
@@ -944,7 +944,7 @@ onMounted(loadReport)
               {{
                 ticketToCollect
                   ? ticketToCollect.remaining_amount
-                  : salesInvoiceToCollect?.remaining || 0
+                  : salesInvoiceToCollect?.remaining_amount || 0
               }}
               ج.م) *
             </label>
@@ -955,7 +955,7 @@ onMounted(loadReport)
               :max="
                 ticketToCollect
                   ? ticketToCollect.remaining_amount
-                  : salesInvoiceToCollect?.remaining || 0
+                  : salesInvoiceToCollect?.remaining_amount || 0
               "
               required
               class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-black text-base"

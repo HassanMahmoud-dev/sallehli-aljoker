@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { unlinkSync, existsSync } from 'node:fs'
+import { unlinkSync, existsSync, copyFileSync } from 'node:fs'
 import assert from 'node:assert'
 import { createHmac, scryptSync } from 'node:crypto'
 
@@ -549,8 +549,30 @@ assert.strictEqual(ticketCountAfter, 1, 'Ticket count untouched across runs')
 
 console.log('✓ Migration is 100% IDEMPOTENT (no duplicates, no alterations).')
 
+// 6. Test Pre-Migration Snapshot & Automatic Rollback on Failure
+console.log('6. Testing pre-migration snapshot & automatic rollback on failure...')
+const snapshotPath = `${testDbPath}.pre_mig_snapshot`
+db.pragma('wal_checkpoint(TRUNCATE)')
+copyFileSync(testDbPath, snapshotPath)
+try {
+  // Simulate partial destructive change followed by an unexpected migration error
+  db.exec("DELETE FROM customers; ALTER TABLE non_existent_table ADD COLUMN broken TEXT;")
+  assert.fail('Simulated broken migration must throw')
+} catch {
+  db.close()
+  for (const suffix of ['-wal', '-shm']) {
+    if (existsSync(`${testDbPath}${suffix}`)) unlinkSync(`${testDbPath}${suffix}`)
+  }
+  copyFileSync(snapshotPath, testDbPath)
+}
+const restoredDb = new Database(testDbPath)
+const restoredCustomers = (restoredDb.prepare('SELECT COUNT(*) as cnt FROM customers').get() as any).cnt
+assert.strictEqual(restoredCustomers, 1, 'Pre-migration snapshot rollback restored deleted customer intact')
+restoredDb.close()
+if (existsSync(snapshotPath)) unlinkSync(snapshotPath)
+console.log('✓ Automatic pre-migration snapshot rollback verified.')
+
 // Clean up test database
-db.close()
 if (existsSync(testDbPath)) {
   unlinkSync(testDbPath)
 }

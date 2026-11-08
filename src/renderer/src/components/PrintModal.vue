@@ -347,7 +347,7 @@ function triggerPrint(): void {
             v-else
             id="printable-area"
             dir="rtl"
-            class="bg-white text-black w-[80mm] p-3.5 rounded-lg shadow-lg border border-slate-300 text-xs font-sans"
+            class="print-thermal-80 bg-white text-black w-[80mm] p-3.5 rounded-lg shadow-lg border border-slate-300 text-xs font-sans"
           >
             <div class="text-center border-b border-dashed border-black pb-2 mb-2">
               <img
@@ -669,7 +669,7 @@ function triggerPrint(): void {
           v-else-if="ticket"
           id="printable-area"
           dir="rtl"
-          class="bg-white text-black w-[80mm] p-3.5 rounded-lg shadow-lg border border-slate-300 text-xs font-sans"
+          class="print-thermal-80 bg-white text-black w-[80mm] p-3.5 rounded-lg shadow-lg border border-slate-300 text-xs font-sans"
         >
           <!-- Center Header -->
           <div class="text-center border-b border-dashed border-black pb-2 mb-2">

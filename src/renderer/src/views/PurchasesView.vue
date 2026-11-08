@@ -1072,7 +1072,7 @@ onMounted(() => {
                 </td>
                 <td class="p-2.5">
                   {{ it.quantity }} {{ it.unit === 'pack' ? 'عبوة' : 'قطعة' }}
-                  <span v-if="it.returned_qty > 0" class="text-rose-500">
+                  <span v-if="(it.returned_qty || 0) > 0" class="text-rose-500">
                     (مرتجع: {{ it.returned_qty }})
                   </span>
                 </td>
