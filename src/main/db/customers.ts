@@ -1,4 +1,4 @@
-import { getDb } from './connection'
+import { getDb, runTransaction } from './connection'
 import { parseJsonObject, parseJsonArray, stringifyExtraData } from './utils'
 import type { Customer, CustomerAppliance, MaintenanceTicket } from '../../shared/types'
 import { normalizeTicketRow } from './tickets'
@@ -148,8 +148,51 @@ export function saveCustomer(data: Partial<Customer>): Customer {
 }
 
 export function deleteCustomer(id: number): void {
-  const db = getDb()
-  db.prepare('DELETE FROM customers WHERE id = ?').run(id)
+  runTransaction(() => {
+    const db = getDb()
+    const referenceChecks: Array<{ sql: string; label: string }> = [
+      {
+        sql: 'SELECT 1 FROM maintenance_tickets WHERE customer_id = ? LIMIT 1',
+        label: 'تذاكر صيانة'
+      },
+      {
+        sql: 'SELECT 1 FROM sales_invoices WHERE customer_id = ? LIMIT 1',
+        label: 'فواتير مبيعات'
+      },
+      {
+        sql: 'SELECT 1 FROM customer_appliances WHERE customer_id = ? LIMIT 1',
+        label: 'أجهزة مسجلة'
+      },
+      {
+        sql: 'SELECT 1 FROM hearing_tests WHERE patient_id = ? LIMIT 1',
+        label: 'فحوصات سمع'
+      },
+      {
+        sql: 'SELECT 1 FROM implants WHERE patient_id = ? LIMIT 1',
+        label: 'ملفات زراعة قوقعة'
+      },
+      {
+        sql: 'SELECT 1 FROM earmold_orders WHERE patient_id = ? LIMIT 1',
+        label: 'طلبيات قوالب أذن'
+      },
+      {
+        sql: 'SELECT 1 FROM purchase_invoices WHERE customer_id = ? LIMIT 1',
+        label: 'فواتير شراء مستعمل'
+      }
+    ]
+
+    const linkedRefs = referenceChecks
+      .filter((check) => Boolean(db.prepare(check.sql).get(id)))
+      .map((check) => check.label)
+
+    if (linkedRefs.length > 0) {
+      throw new Error(
+        `لا يمكن حذف هذا العميل لارتباطه بسجلات سابقة (${linkedRefs.join('، ')}) حفاظاً على السجل المالي والطبي.`
+      )
+    }
+
+    db.prepare('DELETE FROM customers WHERE id = ?').run(id)
+  })
 }
 
 export function getCustomerAppliances(customerId: number): CustomerAppliance[] {

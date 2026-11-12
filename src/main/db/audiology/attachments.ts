@@ -1,5 +1,5 @@
 import { shell } from 'electron'
-import { join, extname } from 'path'
+import { extname, resolve, sep } from 'path'
 import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { db, runTransaction } from '../connection'
@@ -12,6 +12,51 @@ import { listTickets, normalizeTicketRow } from '../tickets'
 import { getCustomerAppliances, normalizeCustomerRow } from '../customers'
 import { listSalesInvoices } from '../sales'
 import type { PatientAttachment, PatientProfileBundle, AttachmentCategory, MaintenanceTicket } from '../../../shared/types'
+
+const ALLOWED_ATTACHMENT_EXTENSIONS = new Set([
+  '.pdf',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.gif',
+  '.bmp',
+  '.doc',
+  '.docx',
+  '.xls',
+  '.xlsx',
+  '.txt',
+  '.csv',
+  '.rtf'
+])
+
+function assertAllowedAttachmentExtension(fileName: string): string {
+  const cleaned = String(fileName || '').trim()
+  if (!cleaned || cleaned.includes('\0')) {
+    throw new Error('اسم ملف المرفق غير صالح')
+  }
+  const ext = extname(cleaned).toLowerCase()
+  if (!ext || !ALLOWED_ATTACHMENT_EXTENSIONS.has(ext)) {
+    throw new Error(
+      `امتداد الملف غير مسموح به (${ext || 'بدون امتداد'}). الامتدادات الآمنة المسموح بها فقط: ${Array.from(ALLOWED_ATTACHMENT_EXTENSIONS).join(', ')}`
+    )
+  }
+  return ext
+}
+
+function resolveAttachmentPath(storedName: string): string {
+  const attachDir = resolve(getPatientAttachmentsDir())
+  const cleanedName = String(storedName || '').trim()
+  if (!cleanedName || cleanedName.includes('\0')) {
+    throw new Error('اسم ملف المرفق المخزن غير صالح')
+  }
+  const fullPath = resolve(attachDir, cleanedName)
+  const dirPrefix = attachDir.endsWith(sep) ? attachDir : `${attachDir}${sep}`
+  if (!fullPath.startsWith(dirPrefix)) {
+    throw new Error('مسار ملف المرفق غير مسموح به')
+  }
+  return fullPath
+}
 
 export function listPatientAttachments(
   patientId: number,
@@ -53,15 +98,17 @@ export function savePatientAttachment(payload: {
   if (!payload.patient_id) throw new Error('يجب تحديد المريض لحفظ المرفق')
   if (!payload.data_base64) throw new Error('ملف المرفق فارغ')
 
-  const attachDir = getPatientAttachmentsDir()
+  const safeExt = assertAllowedAttachmentExtension(payload.file_name)
   const rawBase64 = payload.data_base64.includes(',')
     ? payload.data_base64.split(',')[1]
     : payload.data_base64
   const buffer = Buffer.from(rawBase64, 'base64')
+  if (buffer.byteLength === 0) {
+    throw new Error('ملف المرفق فارغ')
+  }
 
-  const safeExt = extname(payload.file_name || '').slice(0, 12) || '.bin'
   const storedName = `pat_${payload.patient_id}_${Date.now()}_${randomBytes(4).toString('hex')}${safeExt}`
-  const fullPath = join(attachDir, storedName)
+  const fullPath = resolveAttachmentPath(storedName)
 
   writeFileSync(fullPath, buffer)
 
@@ -103,9 +150,14 @@ export function openOrReadPatientAttachment(
     .get(id) as PatientAttachment | undefined
   if (!att) throw new Error('المرفق غير موجود في قاعدة البيانات')
 
-  const fullPath = join(getPatientAttachmentsDir(), att.stored_name)
+  const fullPath = resolveAttachmentPath(att.stored_name)
   if (!existsSync(fullPath)) {
     throw new Error('ملف المرفق غير موجود على القرص المحلي')
+  }
+
+  assertAllowedAttachmentExtension(att.stored_name)
+  if (att.file_name && extname(att.file_name.trim())) {
+    assertAllowedAttachmentExtension(att.file_name)
   }
 
   let openedExternal = false
@@ -129,8 +181,8 @@ export function deletePatientAttachment(id: number): void {
     .prepare('SELECT * FROM patient_attachments WHERE id = ?')
     .get(id) as PatientAttachment | undefined
   if (att) {
-    const fullPath = join(getPatientAttachmentsDir(), att.stored_name)
     try {
+      const fullPath = resolveAttachmentPath(att.stored_name)
       if (existsSync(fullPath)) unlinkSync(fullPath)
     } catch {
       // Ignore file removal error

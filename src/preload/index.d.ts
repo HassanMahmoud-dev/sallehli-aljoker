@@ -423,11 +423,6 @@ export interface IElectronAPI {
   setInitialBusiness: (type: BusinessType) => Promise<BusinessState>
   checkBusinessSwitch: () => Promise<{ empty: boolean; counts: Record<string, number>; total: number }>
   switchBusiness: (payload: { type: BusinessType; password?: string }) => Promise<BusinessState>
-  setLicensedModules: (
-    modules: string[]
-  ) => Promise<{ success: boolean; modules: string[]; state: BusinessState }>
-  applyVendorLicense: (token: string) => Promise<{ success: boolean; modules: string[]; issuedTo?: string; state: BusinessState }>
-  getMachineId: () => Promise<string>
   listLookups: (category?: string) => Promise<LookupItem[]>
   saveLookup: (data: Partial<LookupItem>) => Promise<LookupItem>
   deleteLookup: (id: number) => Promise<void>

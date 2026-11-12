@@ -414,10 +414,6 @@ const api = {
   checkBusinessSwitch: () => invoke('business:checkSwitch'),
   switchBusiness: (payload: { type: BusinessType; password?: string }) =>
     invoke('business:switch', payload),
-  setLicensedModules: (modules: string[]) =>
-    invoke('business:setLicensedModules', modules),
-  applyVendorLicense: (token: string) => invoke('business:applyVendorLicense', token),
-  getMachineId: () => invoke('business:getMachineId'),
   listLookups: (category?: string) => invoke('lookups:list', category),
   saveLookup: (data: Partial<LookupItem>) => invoke('lookups:save', data),
   deleteLookup: (id: number) => invoke('lookups:delete', id),

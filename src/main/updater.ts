@@ -1,11 +1,72 @@
 import { app, BrowserWindow, dialog } from 'electron'
 import { join } from 'path'
-import { createWriteStream, existsSync, unlinkSync, statSync, renameSync } from 'fs'
+import {
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  unlinkSync,
+  statSync,
+  renameSync,
+  openSync,
+  readSync,
+  closeSync,
+  readFileSync
+} from 'fs'
 import https from 'https'
-import http from 'http'
-import { spawn } from 'child_process'
+import { spawn, execFile } from 'child_process'
+import { createHash, timingSafeEqual } from 'crypto'
 import { getSettings, saveSettings, createPreUpdateBackup, closeDatabase } from './db'
 import type { UpdateCheckResult, UpdateProgressPayload, UpdateDownloadStatus } from '../shared/types'
+
+const TRUSTED_UPDATE_EXACT_HOSTS = new Set([
+  'github.com',
+  'www.github.com',
+  'api.github.com',
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com',
+  'github-releases.githubusercontent.com'
+])
+
+const verifiedChecksumsByUrl = new Map<string, string>()
+
+/** Validates that an update URL uses HTTPS and points only to trusted GitHub hosts. */
+export function isTrustedUpdateUrl(rawUrl: string): boolean {
+  if (!rawUrl || typeof rawUrl !== 'string') return false
+  try {
+    const parsed = new URL(rawUrl.trim())
+    if (parsed.protocol !== 'https:') return false
+    const host = parsed.hostname.toLowerCase()
+    if (TRUSTED_UPDATE_EXACT_HOSTS.has(host)) return true
+    return host.endsWith('.githubusercontent.com')
+  } catch {
+    return false
+  }
+}
+
+function normalizeSha256(raw?: string | null): string | undefined {
+  if (!raw || typeof raw !== 'string') return undefined
+  const cleaned = raw.trim().replace(/^sha256:/i, '').trim().toLowerCase()
+  return /^[a-f0-9]{64}$/.test(cleaned) ? cleaned : undefined
+}
+
+function extractSha256FromText(text: string, preferredFileName?: string): string | undefined {
+  if (!text) return undefined
+  const lines = text.split(/\r?\n/)
+  if (preferredFileName) {
+    const baseName = preferredFileName.toLowerCase()
+    for (const line of lines) {
+      if (line.toLowerCase().includes(baseName)) {
+        const m = line.match(/\b([a-fA-F0-9]{64})\b/)
+        if (m) return m[1].toLowerCase()
+      }
+    }
+  }
+  const labeledMatch = text.match(/sha-?256(?:\s*checksum)?\s*[:=]\s*([a-fA-F0-9]{64})\b/i)
+  if (labeledMatch) return labeledMatch[1].toLowerCase()
+  const singleHexLine = text.trim()
+  const direct = normalizeSha256(singleHexLine.split(/\s+/)[0])
+  return direct
+}
 
 function normalizeVersion(ver: string): number[] {
   const cleaned = ver.trim().replace(/^[vV]/, '').split('-')[0]
@@ -41,39 +102,67 @@ function resolveUpdateEndpoint(rawInput: string): {
     }
   }
 
-  // Match https://github.com/owner/repo...
-  const ghMatch = trimmed.match(/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/i)
-  if (ghMatch) {
-    const owner = ghMatch[1]
-    const repo = ghMatch[2].replace(/\.git$/, '')
-    return {
-      type: 'github',
-      url: `https://api.github.com/repos/${owner}/${repo}/releases/latest`
-    }
+  let parsed: URL
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    return null
   }
 
-  // Match api.github.com/repos/owner/repo...
-  if (trimmed.includes('api.github.com/repos/')) {
-    return {
-      type: 'github',
-      url: trimmed.endsWith('/releases/latest') ? trimmed : `${trimmed}/releases/latest`
-    }
+  // SEC-01: Only HTTPS URLs targeting trusted GitHub domains are accepted.
+  if (!isTrustedUpdateUrl(parsed.toString())) {
+    return null
   }
 
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+  const host = parsed.hostname.toLowerCase()
+  if (host === 'github.com' || host === 'www.github.com') {
+    const repoMatch = parsed.pathname.match(
+      /^\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+?)(?:\.git)?(?:\/releases(?:\/latest)?)?\/?$/
+    )
+    if (repoMatch) {
+      return {
+        type: 'github',
+        url: `https://api.github.com/repos/${repoMatch[1]}/${repoMatch[2]}/releases/latest`
+      }
+    }
     return {
       type: 'json_or_yml',
-      url: trimmed
+      url: parsed.toString()
     }
   }
 
-  return null
+  if (host === 'api.github.com') {
+    const apiRepoMatch = parsed.pathname.match(/^\/repos\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/?$/)
+    if (apiRepoMatch) {
+      return {
+        type: 'github',
+        url: `https://api.github.com/repos/${apiRepoMatch[1]}/${apiRepoMatch[2]}/releases/latest`
+      }
+    }
+    if (parsed.pathname.startsWith('/repos/')) {
+      return {
+        type: 'github',
+        url: parsed.toString()
+      }
+    }
+    return null
+  }
+
+  return {
+    type: 'json_or_yml',
+    url: parsed.toString()
+  }
 }
 
 function fetchTextWithRedirects(url: string, maxRedirects = 5): Promise<string> {
+  if (!isTrustedUpdateUrl(url)) {
+    return Promise.reject(
+      new Error('رابط التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من GitHub الرسمية.')
+    )
+  }
+
   return new Promise((resolve, reject) => {
-    const client = url.startsWith('https') ? https : http
-    const req = client.get(
+    const req = https.get(
       url,
       {
         headers: {
@@ -89,11 +178,16 @@ function fetchTextWithRedirects(url: string, maxRedirects = 5): Promise<string> 
           res.headers.location
         ) {
           if (maxRedirects <= 0) {
+            res.resume()
             reject(new Error('عدد كبير من عمليات إعادة التوجيه (Redirects).'))
             return
           }
           const nextUrl = new URL(res.headers.location, url).toString()
           res.resume()
+          if (!isTrustedUpdateUrl(nextUrl)) {
+            reject(new Error('تم رفض إعادة التوجيه إلى نطاق غير موثوق أو غير مشفر.'))
+            return
+          }
           fetchTextWithRedirects(nextUrl, maxRedirects - 1)
             .then(resolve)
             .catch(reject)
@@ -117,8 +211,16 @@ function fetchTextWithRedirects(url: string, maxRedirects = 5): Promise<string> 
         }
 
         let rawData = ''
+        let totalBytes = 0
+        const maxMetadataBytes = 2 * 1024 * 1024
         res.setEncoding('utf8')
-        res.on('data', (chunk) => {
+        res.on('data', (chunk: string) => {
+          totalBytes += Buffer.byteLength(chunk, 'utf8')
+          if (totalBytes > maxMetadataBytes) {
+            res.destroy()
+            reject(new Error('استجابة بيانات التحديث أكبر من الحد المسموح.'))
+            return
+          }
           rawData += chunk
         })
         res.on('end', () => {
@@ -158,7 +260,7 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
       updateAvailable: false,
       currentVersion,
       message:
-        'يرجى إدخال اسم مستودع GitHub (مثال: username/sallehli-aljoker) أو رابط خادم التحديثات أولاً.'
+        'يرجى إدخال اسم مستودع GitHub صالح (مثال: username/sallehli-aljoker) أو رابط HTTPS موثوق من GitHub.'
     }
   }
 
@@ -169,6 +271,7 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
     let downloadUrl = ''
     let releaseNotes = ''
     let publishedAt = ''
+    let expectedSha256: string | undefined
 
     if (resolved.type === 'github') {
       const release = JSON.parse(bodyText)
@@ -178,11 +281,39 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
 
       if (Array.isArray(release.assets)) {
         const exeAsset = release.assets.find(
-          (a: { name?: string; browser_download_url?: string }) =>
+          (a: { name?: string; browser_download_url?: string; digest?: string }) =>
             typeof a.name === 'string' && a.name.toLowerCase().endsWith('.exe')
         )
         if (exeAsset?.browser_download_url) {
-          downloadUrl = exeAsset.browser_download_url
+          downloadUrl = String(exeAsset.browser_download_url)
+          expectedSha256 = normalizeSha256(exeAsset.digest)
+        }
+
+        if (!expectedSha256 && exeAsset?.name) {
+          const exeNameLower = String(exeAsset.name).toLowerCase()
+          const checksumAsset = release.assets.find((a: { name?: string; browser_download_url?: string }) => {
+            if (typeof a.name !== 'string' || typeof a.browser_download_url !== 'string') return false
+            const lower = a.name.toLowerCase()
+            return (
+              lower === `${exeNameLower}.sha256` ||
+              lower === `${exeNameLower}.sha256sum` ||
+              lower === 'sha256sums.txt' ||
+              lower === 'checksums.txt' ||
+              lower.endsWith('.sha256')
+            )
+          })
+          if (checksumAsset?.browser_download_url && isTrustedUpdateUrl(checksumAsset.browser_download_url)) {
+            try {
+              const checksumText = await fetchTextWithRedirects(checksumAsset.browser_download_url)
+              expectedSha256 = extractSha256FromText(checksumText, exeAsset.name)
+            } catch {
+              // Fall through to release notes / Authenticode verification
+            }
+          }
+        }
+
+        if (!expectedSha256 && releaseNotes) {
+          expectedSha256 = extractSha256FromText(releaseNotes, exeAsset?.name)
         }
       }
     } else {
@@ -193,11 +324,13 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
         downloadUrl = String(json.url || json.downloadUrl || '')
         releaseNotes = String(json.notes || json.releaseNotes || json.body || '')
         publishedAt = String(json.publishedAt || json.releaseDate || '')
+        expectedSha256 = normalizeSha256(json.sha256 || json.sha256Hex || json.digest)
       } catch {
         // Parse latest.yml format from electron-builder
         const versionMatch = bodyText.match(/^version:\s*['"]?([^\r\n'"]+)['"]?/m)
         const pathMatch = bodyText.match(/^path:\s*['"]?([^\r\n'"]+)['"]?/m)
         const dateMatch = bodyText.match(/^releaseDate:\s*['"]?([^\r\n'"]+)['"]?/m)
+        const sha256Match = bodyText.match(/^sha256:\s*['"]?([a-fA-F0-9]{64})['"]?/m)
         if (versionMatch) {
           latestVersion = versionMatch[1].trim().replace(/^[vV]/, '')
         }
@@ -209,6 +342,9 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
         }
         if (dateMatch) {
           publishedAt = dateMatch[1].trim()
+        }
+        if (sha256Match) {
+          expectedSha256 = normalizeSha256(sha256Match[1])
         }
       }
     }
@@ -254,12 +390,26 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
       }
     }
 
+    if (!isTrustedUpdateUrl(downloadUrl)) {
+      return {
+        success: false,
+        updateAvailable: false,
+        currentVersion,
+        message: 'تم رفض رابط تحميل التحديث لأنه لا يبدأ بـ https:// أو لا ينتمي إلى نطاق GitHub الموثوق.'
+      }
+    }
+
+    if (expectedSha256) {
+      verifiedChecksumsByUrl.set(downloadUrl, expectedSha256)
+    }
+
     return {
       success: true,
       updateAvailable: true,
       currentVersion,
       latestVersion,
       downloadUrl,
+      sha256: expectedSha256,
       releaseNotes,
       publishedAt,
       message: `يتوفر تحديث جديد للبرنامج: الإصدار v${latestVersion}`
@@ -277,6 +427,7 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
 interface DownloadState {
   url: string
   version?: string
+  expectedSha256?: string
   isDownloading: boolean
   isPaused: boolean
   isReadyToInstall: boolean
@@ -286,6 +437,7 @@ interface DownloadState {
 const downloadState: DownloadState = {
   url: '',
   version: '',
+  expectedSha256: undefined,
   isDownloading: false,
   isPaused: false,
   isReadyToInstall: false,
@@ -402,6 +554,220 @@ export function pauseOnlineUpdateDownload(
   }
 }
 
+function computeFileSha256(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256')
+    const stream = createReadStream(filePath)
+    stream.on('data', (chunk) => hash.update(chunk))
+    stream.on('end', () => resolve(hash.digest('hex').toLowerCase()))
+    stream.on('error', reject)
+  })
+}
+
+function getWindowsAuthenticodeStatus(targetPath: string): Promise<{ status: string; subject?: string }> {
+  return new Promise((resolve) => {
+    const script = [
+      "$ProgressPreference = 'SilentlyContinue'",
+      '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+      'try {',
+      '  $sig = Get-AuthenticodeSignature -LiteralPath $env:SALLEHLI_INSTALLER_PATH',
+      '  $subj = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { "" }',
+      '  Write-Output ("$($sig.Status)|$subj")',
+      '} catch {',
+      '  Write-Output ("UnknownError|$($_.Exception.Message)")',
+      '}'
+    ].join('\n')
+
+    const encodedCommand = Buffer.from(script, 'utf16le').toString('base64')
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encodedCommand],
+      {
+        env: { ...process.env, SALLEHLI_INSTALLER_PATH: targetPath },
+        timeout: 15000,
+        windowsHide: true
+      },
+      (err, stdout) => {
+        if (err) {
+          resolve({ status: 'UnknownError' })
+          return
+        }
+        const firstLine = String(stdout || '').trim().split(/\r?\n/)[0] || ''
+        const [status, subject] = firstLine.split('|')
+        resolve({ status: (status || 'UnknownError').trim(), subject: subject?.trim() || undefined })
+      }
+    )
+  })
+}
+
+/**
+ * Performs pre-execution cryptographic & signature checks on a downloaded or local installer:
+ * PE header check, optional SHA-256 verification, and Windows Authenticode signature validation.
+ */
+export async function verifyDownloadedInstaller(
+  filePath: string,
+  expectedSha256?: string
+): Promise<{
+  valid: boolean
+  sha256: string
+  signed: boolean
+  signatureStatus?: string
+  reason?: string
+}> {
+  if (!filePath || !existsSync(filePath)) {
+    return { valid: false, sha256: '', signed: false, reason: 'ملف التحديث غير موجود.' }
+  }
+
+  let fileSize = 0
+  try {
+    const st = statSync(filePath)
+    if (!st.isFile() || st.size < 1024) {
+      return { valid: false, sha256: '', signed: false, reason: 'ملف التحديث غير مكتمل أو تالف.' }
+    }
+    fileSize = st.size
+  } catch {
+    return { valid: false, sha256: '', signed: false, reason: 'تعذر قراءة بيانات ملف التحديث.' }
+  }
+
+  if (process.platform === 'win32' && fileSize >= 2) {
+    let fd: number | null = null
+    try {
+      fd = openSync(filePath, 'r')
+      const header = Buffer.alloc(2)
+      readSync(fd, header, 0, 2, 0)
+      if (header[0] !== 0x4d || header[1] !== 0x5a) {
+        return {
+          valid: false,
+          sha256: '',
+          signed: false,
+          reason: 'الملف الذي تم تنزيله ليس ملف تثبيت Windows تنفيذي صالحاً (.exe).'
+        }
+      }
+    } catch {
+      return { valid: false, sha256: '', signed: false, reason: 'تعذر فحص رأس ملف التثبيت.' }
+    } finally {
+      if (fd !== null) {
+        try {
+          closeSync(fd)
+        } catch {
+          // Ignore close error
+        }
+      }
+    }
+  }
+
+  let actualSha256 = ''
+  try {
+    actualSha256 = await computeFileSha256(filePath)
+  } catch {
+    return { valid: false, sha256: '', signed: false, reason: 'فشل حساب بصمة SHA-256 لملف التحديث.' }
+  }
+
+  let checksumVerified = false
+  if (expectedSha256 !== undefined && expectedSha256 !== '') {
+    const normalizedExpected = normalizeSha256(expectedSha256)
+    if (!normalizedExpected) {
+      return {
+        valid: false,
+        sha256: actualSha256,
+        signed: false,
+        reason: 'تنسيق بصمة SHA-256 المتوقعة غير صالح.'
+      }
+    }
+    const actualBuf = Buffer.from(actualSha256, 'hex')
+    const expectedBuf = Buffer.from(normalizedExpected, 'hex')
+    if (actualBuf.length !== expectedBuf.length || !timingSafeEqual(actualBuf, expectedBuf)) {
+      return {
+        valid: false,
+        sha256: actualSha256,
+        signed: false,
+        reason: 'فشل التحقق من بصمة SHA-256 لملف التحديث؛ قد يكون الملف تالفاً أو تم تعديله.'
+      }
+    }
+    checksumVerified = true
+  }
+
+  if (process.platform === 'win32') {
+    const auth = await getWindowsAuthenticodeStatus(filePath)
+    if (auth.status === 'Valid') {
+      return {
+        valid: true,
+        sha256: actualSha256,
+        signed: true,
+        signatureStatus: auth.status
+      }
+    }
+
+    if (auth.status !== 'NotSigned') {
+      return {
+        valid: false,
+        sha256: actualSha256,
+        signed: false,
+        signatureStatus: auth.status,
+        reason: `تم رفض ملف التحديث لأن التوقيع الرقمي (Authenticode) غير صالح أو غير موثوق (${auth.status}).`
+      }
+    }
+
+    // Reject unsigned updates if the currently packaged binary itself carries a Valid signature.
+    if (app.isPackaged) {
+      const currentBinarySig = await getWindowsAuthenticodeStatus(process.execPath)
+      if (currentBinarySig.status === 'Valid') {
+        return {
+          valid: false,
+          sha256: actualSha256,
+          signed: false,
+          signatureStatus: auth.status,
+          reason: 'تم رفض ملف التحديث: التطبيق الحالي موقّع رقمياً ولا يُسمح بتثبيت تحديث غير موقّع.'
+        }
+      }
+    }
+
+    if (checksumVerified) {
+      console.warn(
+        '[Updater] Installer does not carry a Windows Authenticode signature (NotSigned), proceeding after SHA-256 digest verification.'
+      )
+      return {
+        valid: true,
+        sha256: actualSha256,
+        signed: false,
+        signatureStatus: auth.status
+      }
+    }
+
+    if (app.isPackaged) {
+      return {
+        valid: false,
+        sha256: actualSha256,
+        signed: false,
+        signatureStatus: auth.status,
+        reason:
+          'تم حظر تشغيل ملف التحديث: الملف غير موقّع رقمياً (Authenticode) ولا يتوفر له تحقق SHA-256 من الإصدار.'
+      }
+    }
+
+    console.warn(
+      '[Updater] Development environment warning: installer is unsigned and has no SHA-256 digest.'
+    )
+    return {
+      valid: true,
+      sha256: actualSha256,
+      signed: false,
+      signatureStatus: auth.status
+    }
+  }
+
+  if (app.isPackaged && !checksumVerified) {
+    return {
+      valid: false,
+      sha256: actualSha256,
+      signed: false,
+      reason: 'تعذر التحقق من بصمة SHA-256 لملف التحديث في البيئة المعبأة.'
+    }
+  }
+
+  return { valid: true, sha256: actualSha256, signed: false }
+}
+
 function launchInstallerAndQuit(installerPath: string): void {
   closeDatabase()
   const child = spawn(installerPath, [], {
@@ -427,13 +793,43 @@ export async function applyDownloadedUpdate(): Promise<{
     }
   }
 
+  // SEC-01: Mandatory origin + integrity + Authenticode verification right before launching.
+  if (!downloadState.url || !isTrustedUpdateUrl(downloadState.url)) {
+    downloadState.isReadyToInstall = false
+    try {
+      unlinkSync(readyPath)
+    } catch {
+      // Ignore cleanup error
+    }
+    return {
+      success: false,
+      message: 'مصدر ملف التحديث غير موثوق أو انتهت صلاحيته؛ يرجى إعادة التحميل عبر HTTPS من GitHub.'
+    }
+  }
+
+  const expectedSha256 =
+    downloadState.expectedSha256 || verifiedChecksumsByUrl.get(downloadState.url)
+  const verification = await verifyDownloadedInstaller(readyPath, expectedSha256)
+  if (!verification.valid) {
+    downloadState.isReadyToInstall = false
+    try {
+      unlinkSync(readyPath)
+    } catch {
+      // Ignore cleanup error
+    }
+    return {
+      success: false,
+      message: verification.reason || 'فشل التحقق الأمني من ملف التحديث قبل التثبيت.'
+    }
+  }
+
   try {
     const backupPath = createPreUpdateBackup()
     launchInstallerAndQuit(readyPath)
     return {
       success: true,
       backupPath,
-      message: 'تم أخذ نسخة احتياطية وجاري بدء تثبيت التحديث...'
+      message: 'تم التحقق الأمني وأخذ نسخة احتياطية وجاري بدء تثبيت التحديث...'
     }
   } catch (err) {
     return {
@@ -449,10 +845,15 @@ function downloadFileWithResume(
   onProgress: (payload: UpdateProgressPayload) => void,
   maxRedirects = 5
 ): Promise<void> {
+  if (!isTrustedUpdateUrl(url)) {
+    return Promise.reject(
+      new Error('رابط تحميل التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من GitHub الرسمية.')
+    )
+  }
+
   return new Promise((resolve, reject) => {
     let isAborted = false
     const existingBytes = existsSync(partPath) ? statSync(partPath).size : 0
-    const client = url.startsWith('https') ? https : http
 
     const headers: Record<string, string> = {
       'User-Agent': `Sallehli-Updater/${app.getVersion()}`
@@ -462,19 +863,24 @@ function downloadFileWithResume(
       headers['Range'] = `bytes=${existingBytes}-`
     }
 
-    const req = client.get(url, { headers }, (res) => {
-      // Handle HTTP redirects
+    const req = https.get(url, { headers, timeout: 30000 }, (res) => {
+      // Handle HTTP redirects strictly within trusted HTTPS hosts
       if (
         res.statusCode &&
         [301, 302, 303, 307, 308].includes(res.statusCode) &&
         res.headers.location
       ) {
         if (maxRedirects <= 0) {
+          res.resume()
           reject(new Error('عدد كبير من عمليات إعادة التوجيه أثناء التحميل.'))
           return
         }
         const nextUrl = new URL(res.headers.location, url).toString()
         res.resume()
+        if (!isTrustedUpdateUrl(nextUrl)) {
+          reject(new Error('تم رفض إعادة توجيه التحميل إلى نطاق غير موثوق أو غير مشفر.'))
+          return
+        }
         downloadFileWithResume(nextUrl, partPath, onProgress, maxRedirects - 1)
           .then(resolve)
           .catch(reject)
@@ -605,6 +1011,14 @@ function downloadFileWithResume(
       }
     }
 
+    req.on('timeout', () => {
+      activeAbortFn = null
+      req.destroy()
+      if (!isAborted) {
+        reject(new Error('انتهت مهلة تحميل التحديث، يمكنك المحاولة مجدداً.'))
+      }
+    })
+
     req.on('error', (err) => {
       activeAbortFn = null
       if (!isAborted) {
@@ -623,14 +1037,28 @@ export async function startOnlineUpdateDownload(
     return { success: true, message: 'التحميل قيد التنفيذ بالفعل في الخلفية.' }
   }
 
+  if (!isTrustedUpdateUrl(downloadUrl)) {
+    const msg = 'رابط تحميل التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من GitHub الرسمية.'
+    return { success: false, message: msg }
+  }
+
+  const partPath = getPartFilePath()
+  const readyPath = getReadyInstallerPath()
+
+  if (downloadState.url && downloadState.url !== downloadUrl) {
+    try {
+      if (existsSync(partPath)) unlinkSync(partPath)
+    } catch {
+      // Ignore stale part cleanup error
+    }
+  }
+
   downloadState.url = downloadUrl
+  downloadState.expectedSha256 = verifiedChecksumsByUrl.get(downloadUrl)
   if (targetVersion) downloadState.version = targetVersion
   downloadState.isDownloading = true
   downloadState.isPaused = false
   downloadState.isReadyToInstall = false
-
-  const partPath = getPartFilePath()
-  const readyPath = getReadyInstallerPath()
 
   // Clean previous ready file if fresh download url changed
   try {
@@ -650,7 +1078,7 @@ export async function startOnlineUpdateDownload(
       }
     })
 
-    // Finished successfully! Move .part to .exe
+    // Finished successfully! Move .part to .exe then run security verification
     if (existsSync(partPath)) {
       try {
         if (existsSync(readyPath)) unlinkSync(readyPath)
@@ -658,6 +1086,22 @@ export async function startOnlineUpdateDownload(
         // Ignore
       }
       renameSync(partPath, readyPath)
+    }
+
+    const verification = await verifyDownloadedInstaller(
+      readyPath,
+      downloadState.expectedSha256 || verifiedChecksumsByUrl.get(downloadUrl)
+    )
+    if (!verification.valid) {
+      try {
+        if (existsSync(readyPath)) unlinkSync(readyPath)
+      } catch {
+        // Ignore
+      }
+      downloadState.isDownloading = false
+      downloadState.isPaused = false
+      downloadState.isReadyToInstall = false
+      throw new Error(verification.reason || 'فشل التحقق الأمني من ملف التحديث بعد التحميل.')
     }
 
     downloadState.isDownloading = false
@@ -671,7 +1115,7 @@ export async function startOnlineUpdateDownload(
       speedBytesPerSec: 0,
       remainingSeconds: 0,
       status: 'completed',
-      message: 'تم اكتمال تحميل التحديث بنجاح وهو جاهز للتثبيت.',
+      message: 'تم اكتمال تحميل التحديث والتحقق من سلامته بنجاح وهو جاهز للتثبيت.',
       installerPath: readyPath,
       version: downloadState.version
     }
@@ -683,7 +1127,7 @@ export async function startOnlineUpdateDownload(
 
     return {
       success: true,
-      message: 'تم تحميل التحديث بنجاح وهو جاهز للتثبيت عند موافقتك.'
+      message: 'تم تحميل التحديث والتحقق منه بنجاح وهو جاهز للتثبيت عند موافقتك.'
     }
   } catch (err: unknown) {
     if (downloadState.isPaused) {
@@ -738,6 +1182,24 @@ export async function installUpdateFromLocalFile(
   const installerPath = filePaths[0]
   if (!existsSync(installerPath)) {
     return { success: false, message: 'الملف المختار غير موجود.' }
+  }
+
+  let siblingSha256: string | undefined
+  const siblingChecksumFile = `${installerPath}.sha256`
+  if (existsSync(siblingChecksumFile)) {
+    try {
+      siblingSha256 = extractSha256FromText(readFileSync(siblingChecksumFile, 'utf8'))
+    } catch {
+      // Ignore unreadable optional sibling file
+    }
+  }
+
+  const verification = await verifyDownloadedInstaller(installerPath, siblingSha256)
+  if (!verification.valid) {
+    return {
+      success: false,
+      message: verification.reason || 'فشل التحقق الأمني من ملف التحديث المحلي.'
+    }
   }
 
   try {
