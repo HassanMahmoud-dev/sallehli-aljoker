@@ -61,16 +61,38 @@ export function getLocalDateTimeString(d: Date = new Date()): string {
 }
 
 export function generateNextNumber(
-  db: { prepare: (sql: string) => { get: (...args: any[]) => any } },
+  db: { prepare: (sql: string) => { get: (...args: any[]) => any; all?: (...args: any[]) => any[] } },
   tableName: string,
   columnName: string,
   prefix: string,
   padLength = 4
 ): string {
-  const maxRow = db
-    .prepare(`SELECT COALESCE(MAX(id), 0) as maxId FROM ${tableName}`)
-    .get() as { maxId: number } | undefined
-  let nextSeq = (maxRow?.maxId || 0) + 1
+  const prefixLen = prefix.length
+  const prefixStmt = db.prepare(
+    `SELECT ${columnName} as val FROM ${tableName} WHERE SUBSTR(${columnName}, 1, ?) = ?`
+  )
+  let maxSeq = 0
+
+  if (typeof prefixStmt.all === 'function') {
+    const rows = prefixStmt.all(prefixLen, prefix) as Array<{ val?: string | null }>
+    for (const row of rows) {
+      const val = typeof row?.val === 'string' ? row.val : ''
+      if (!val.startsWith(prefix)) continue
+      const suffix = val.slice(prefixLen)
+      if (!/^\d+$/.test(suffix)) continue
+      const seq = Number.parseInt(suffix, 10)
+      if (Number.isSafeInteger(seq) && seq > maxSeq) {
+        maxSeq = seq
+      }
+    }
+  } else {
+    const maxRow = db
+      .prepare(`SELECT COALESCE(MAX(id), 0) as maxId FROM ${tableName}`)
+      .get() as { maxId: number } | undefined
+    maxSeq = maxRow?.maxId || 0
+  }
+
+  let nextSeq = maxSeq + 1
 
   const checkStmt = db.prepare(`SELECT 1 FROM ${tableName} WHERE ${columnName} = ? LIMIT 1`)
   let candidate = `${prefix}${String(nextSeq).padStart(padLength, '0')}`

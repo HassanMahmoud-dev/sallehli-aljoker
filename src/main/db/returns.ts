@@ -4,7 +4,16 @@ import { normalizeProductRow, syncProductQtyFromChildren } from './products'
 import { getSalesInvoiceById, saveSalesInvoice } from './sales'
 import { getPurchaseInvoiceById } from './suppliers'
 import { saveTicket } from './tickets'
-import type { InvoiceReturn, InvoiceReturnItem, ProductExchange, ExchangeType, SalesItem, PurchaseItem, ProductSerial } from '../../shared/types'
+import type {
+  InvoiceReturn,
+  InvoiceReturnItem,
+  ProductExchange,
+  ExchangeType,
+  MovementType,
+  SalesItem,
+  PurchaseItem,
+  ProductSerial
+} from '../../shared/types'
 import type { SessionInfo } from '../session'
 
 function generateNextReturnNumber(prefix: 'SRN' | 'PRN'): string {
@@ -82,9 +91,9 @@ export function createSalesReturn(
         throw new Error(`الكمية المتاحة للاسترجاع من (${sItem.product_name}) هي ${maxReturnable}`)
       }
       const piecesQty = sItem.unit === 'pack' ? qty * sItem.pack_size : qty
-      const lineEffectiveTotal = roundMoney(sItem.total_price * invoiceRatio)
-      const netUnitPrice = roundMoney(lineEffectiveTotal / sItem.quantity)
-      const amount = roundMoney(qty * netUnitPrice)
+      const lineEffectiveTotal = sItem.total_price * invoiceRatio
+      const netUnitPrice = sItem.quantity > 0 ? lineEffectiveTotal / sItem.quantity : 0
+      const amount = roundMoney(netUnitPrice * qty)
       totalReturnAmount = roundMoney(totalReturnAmount + amount)
       preparedItems.push({
         saleItem: sItem,
@@ -172,21 +181,27 @@ export function createSalesReturn(
         }
       }
 
-      db.prepare(
-        `INSERT INTO inventory_movements (
-          product_id, variant_id, serial_no, ref_type, ref_id, movement_type,
-          quantity, unit_cost, unit_price, notes
-        ) VALUES (?, ?, ?, 'sales_return', ?, 'in', ?, ?, ?, ?)`
-      ).run(
-        sItem.product_id,
-        sItem.variant_id || null,
-        sItem.serial_no || '',
-        returnId,
-        pi.piecesQty,
-        sItem.unit_cost,
-        sItem.unit_price,
-        `مرتجع مبيعات ${returnNumber} من فاتورة ${inv.invoice_number}`
-      )
+      if (sItem.item_type !== 'service') {
+        const moveType: MovementType = pi.cond === 'defective' ? 'damaged' : 'sales_return_in'
+        db.prepare(
+          `INSERT INTO inventory_movements (
+            product_id, variant_id, serial_no, ref_type, ref_id, movement_type,
+            quantity, unit_cost, unit_price, notes
+          ) VALUES (?, ?, ?, 'sales_return', ?, ?, ?, ?, ?, ?)`
+        ).run(
+          sItem.product_id,
+          sItem.variant_id || null,
+          sItem.serial_no || '',
+          returnId,
+          moveType,
+          pi.piecesQty,
+          sItem.unit_cost,
+          sItem.unit_price,
+          pi.cond === 'defective'
+            ? `مرتجع مبيعات تالف ${returnNumber} من فاتورة ${inv.invoice_number}`
+            : `مرتجع مبيعات ${returnNumber} من فاتورة ${inv.invoice_number}`
+        )
+      }
     }
 
     // Check if all items are returned
@@ -461,8 +476,12 @@ export function processProductExchange(payload: {
   create_external_repair_ticket?: boolean
   external_vendor?: string
   notes?: string
-}): ProductExchange {
+},
+callerSession?: SessionInfo | null
+): ProductExchange {
   return runTransaction(() => {
+    const createdById = callerSession?.userId || null
+    const createdByName = callerSession?.full_name || callerSession?.username || ''
     const exchangeNumber = generateNextExchangeNumber()
     const exType = payload.exchange_type
     const retProdRow = db
@@ -551,21 +570,106 @@ export function processProductExchange(payload: {
       }
     }
 
+    let settledOriginalBalance = 0
     if (payload.original_sale_item_id) {
+      const origItem = db
+        .prepare(
+          'SELECT id, invoice_id, quantity, returned_qty, total_price FROM sales_items WHERE id = ?'
+        )
+        .get(payload.original_sale_item_id) as
+        | {
+            id: number
+            invoice_id: number
+            quantity: number
+            returned_qty: number
+            total_price: number
+          }
+        | undefined
+      if (!origItem) {
+        throw new Error('بند الفاتورة الأصلية غير موجود')
+      }
+      if (origItem.quantity - (origItem.returned_qty || 0) < 1) {
+        throw new Error('هذا البند تم إرجاعه أو استبداله بالكامل بالفعل')
+      }
+
       db.prepare('UPDATE sales_items SET returned_qty = returned_qty + 1 WHERE id = ?').run(
-        payload.original_sale_item_id
+        origItem.id
       )
-      if (payload.original_invoice_id) {
+
+      const origInvoiceId = payload.original_invoice_id || origItem.invoice_id
+      if (origInvoiceId) {
+        const origInv = db
+          .prepare(
+            'SELECT id, subtotal, total_amount, paid_amount, remaining_amount, returned_amount FROM sales_invoices WHERE id = ?'
+          )
+          .get(origInvoiceId) as
+          | {
+              id: number
+              subtotal: number
+              total_amount: number
+              paid_amount: number
+              remaining_amount: number
+              returned_amount: number | null
+            }
+          | undefined
         const origItems = db
           .prepare('SELECT quantity, returned_qty FROM sales_items WHERE invoice_id = ?')
-          .all(payload.original_invoice_id) as Array<{ quantity: number; returned_qty: number }>
-        if (origItems.length > 0) {
+          .all(origInvoiceId) as Array<{ quantity: number; returned_qty: number }>
+        if (origItems.length > 0 && origInv) {
           const allRet = origItems.every((x) => x.returned_qty >= x.quantity)
-          db.prepare('UPDATE sales_invoices SET status = ?, updated_at = datetime(\'now\', \'localtime\') WHERE id = ?').run(
-            allRet ? 'returned' : 'partial_return',
-            payload.original_invoice_id
-          )
+          const nextStatus = allRet ? 'returned' : 'partial_return'
+          if (exType !== 'warranty_exchange') {
+            const origRatio = origInv.subtotal > 0 ? origInv.total_amount / origInv.subtotal : 1
+            const itemExchangeValue = roundMoney(
+              (origItem.total_price * origRatio) / Math.max(1, origItem.quantity)
+            )
+            const newReturnedAmount = roundMoney((origInv.returned_amount || 0) + itemExchangeValue)
+            const netInvoiceDue = Math.max(0, roundMoney(origInv.total_amount - newReturnedAmount))
+            const newOrigRemaining = Math.max(0, roundMoney(netInvoiceDue - origInv.paid_amount))
+            settledOriginalBalance = Math.max(
+              0,
+              roundMoney(origInv.remaining_amount - newOrigRemaining)
+            )
+            db.prepare(
+              `UPDATE sales_invoices
+               SET status = ?, returned_amount = ?, remaining_amount = ?, updated_at = datetime('now', 'localtime')
+               WHERE id = ?`
+            ).run(nextStatus, newReturnedAmount, newOrigRemaining, origInvoiceId)
+          } else {
+            db.prepare(
+              `UPDATE sales_invoices SET status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`
+            ).run(nextStatus, origInvoiceId)
+          }
         }
+      }
+    } else if (payload.original_invoice_id && exType !== 'warranty_exchange' && returnedValue > 0) {
+      const origInv = db
+        .prepare(
+          'SELECT id, total_amount, paid_amount, remaining_amount, returned_amount FROM sales_invoices WHERE id = ?'
+        )
+        .get(payload.original_invoice_id) as
+        | {
+            id: number
+            total_amount: number
+            paid_amount: number
+            remaining_amount: number
+            returned_amount: number | null
+          }
+        | undefined
+      if (origInv) {
+        const newReturnedAmount = roundMoney((origInv.returned_amount || 0) + returnedValue)
+        const netInvoiceDue = Math.max(0, roundMoney(origInv.total_amount - newReturnedAmount))
+        const newOrigRemaining = Math.max(0, roundMoney(netInvoiceDue - origInv.paid_amount))
+        settledOriginalBalance = Math.max(
+          0,
+          roundMoney(origInv.remaining_amount - newOrigRemaining)
+        )
+        const nextStatus = netInvoiceDue <= 0 ? 'returned' : 'partial_return'
+        db.prepare(
+          `UPDATE sales_invoices
+           SET status = ?, returned_amount = ?, remaining_amount = ?, updated_at = datetime('now', 'localtime')
+           WHERE id = ?`
+        ).run(nextStatus, newReturnedAmount, newOrigRemaining, origInv.id)
       }
     }
 
@@ -605,71 +709,107 @@ export function processProductExchange(payload: {
       if (ns) newSerialNo = ns.serial_no
     }
 
-    const newSaleInvoice = saveSalesInvoice({
-      invoice_type: 'exchange',
-      customer_id: customerId,
-      customer_name: payload.customer_name,
-      customer_phone: payload.customer_phone || '',
-      trade_in_credit: exType === 'warranty_exchange' ? 0 : returnedValue,
-      discount: 0,
-      paid_amount: paidDiff > 0 ? paidDiff : 0,
-      payment_method: paymentMethod,
-      parent_invoice_id: payload.original_invoice_id || null,
-      notes:
-        payload.notes?.trim() ||
-        `فاتورة ناتجة عن عملية استبدال (${exchangeNumber}) - استلام: ${retProd.name}`,
-      recordInTreasury: false, // We handle treasury difference explicitly below
-      items: [
-        {
-          product_id: newProd.id,
-          variant_id: payload.new_variant_id || null,
-          product_name: newProd.name,
-          item_type: newProd.type,
-          unit: 'piece',
-          pack_size: 1,
-          quantity: 1,
-          deducted_pieces_qty: 1,
-          serial_id: payload.new_serial_id || null,
-          serial_no: newSerialNo,
-          ear_side: payload.new_ear_side || '',
-          unit_cost: newProd.cost_price,
-          unit_price: exType === 'warranty_exchange' ? 0 : newValue,
-          discount: 0,
-          total_price: exType === 'warranty_exchange' ? 0 : newValue,
-          warranty_months: newProd.warranty_months,
-          warranty_end:
-            exType === 'warranty_exchange' && transferredWarrantyEnd
-              ? transferredWarrantyEnd
-              : null,
-          returned_qty: 0
-        }
-      ]
-    })
+    const effectiveTradeInCredit =
+      exType === 'warranty_exchange'
+        ? 0
+        : Math.max(0, roundMoney(returnedValue - settledOriginalBalance))
 
-    // 3. Record Treasury Movement for paid_difference (if any)
+    const newSaleInvoice = saveSalesInvoice(
+      {
+        invoice_type: 'exchange',
+        customer_id: customerId,
+        customer_name: payload.customer_name,
+        customer_phone: payload.customer_phone || '',
+        trade_in_credit: effectiveTradeInCredit,
+        discount: 0,
+        paid_amount: paidDiff > 0 ? paidDiff : 0,
+        payment_method: paymentMethod,
+        parent_invoice_id: payload.original_invoice_id || null,
+        notes:
+          payload.notes?.trim() ||
+          `فاتورة ناتجة عن عملية استبدال (${exchangeNumber}) - استلام: ${retProd.name}`,
+        recordInTreasury: false, // We handle treasury difference explicitly below and link sales_payments.treasury_tx_id
+        items: [
+          {
+            product_id: newProd.id,
+            variant_id: payload.new_variant_id || null,
+            product_name: newProd.name,
+            item_type: newProd.type,
+            unit: 'piece',
+            pack_size: 1,
+            quantity: 1,
+            deducted_pieces_qty: 1,
+            serial_id: payload.new_serial_id || null,
+            serial_no: newSerialNo,
+            ear_side: payload.new_ear_side || '',
+            unit_cost: newProd.cost_price,
+            unit_price: exType === 'warranty_exchange' ? 0 : newValue,
+            discount: 0,
+            total_price: exType === 'warranty_exchange' ? 0 : newValue,
+            warranty_months: newProd.warranty_months,
+            warranty_end:
+              exType === 'warranty_exchange' && transferredWarrantyEnd
+                ? transferredWarrantyEnd
+                : null,
+            returned_qty: 0
+          }
+        ]
+      },
+      callerSession
+    )
+
+    // 3. Record Treasury Movement for paid_difference (if any) & link sales_payments.treasury_tx_id
     if (paidDiff > 0) {
+      const txInfo = db
+        .prepare(
+          `INSERT INTO treasury_transactions (
+            transaction_type, category, amount, sales_invoice_id, customer_id, payment_method, description, created_by_id, created_by_name
+          ) VALUES ('income', 'فارق استبدال وترقية', ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          paidDiff,
+          newSaleInvoice.id,
+          customerId,
+          paymentMethod,
+          `تحصيل فارق استبدال (${exchangeNumber}): تسليم (${newProd.name}) مقابل (${retProd.name}) - ${payload.customer_name}`,
+          createdById,
+          createdByName
+        )
+      const incomeTxId = Number(txInfo.lastInsertRowid)
       db.prepare(
-        `INSERT INTO treasury_transactions (
-          transaction_type, category, amount, sales_invoice_id, customer_id, payment_method, description
-        ) VALUES ('income', 'فارق استبدال وترقية', ?, ?, ?, ?, ?)`
-      ).run(
-        paidDiff,
-        newSaleInvoice.id,
-        customerId,
-        paymentMethod,
-        `تحصيل فارق استبدال (${exchangeNumber}): تسليم (${newProd.name}) مقابل (${retProd.name}) - ${payload.customer_name}`
-      )
+        `UPDATE sales_payments
+         SET treasury_tx_id = ?
+         WHERE invoice_id = ? AND amount > 0 AND treasury_tx_id IS NULL`
+      ).run(incomeTxId, newSaleInvoice.id)
     } else if (paidDiff < 0) {
+      const refundAmt = Math.abs(paidDiff)
+      const txInfo = db
+        .prepare(
+          `INSERT INTO treasury_transactions (
+            transaction_type, category, amount, sales_invoice_id, customer_id, payment_method, description, created_by_id, created_by_name
+          ) VALUES ('expense', 'رد فارق استبدال للعميل', ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          refundAmt,
+          newSaleInvoice.id,
+          customerId,
+          paymentMethod,
+          `رد فارق استبدال (${exchangeNumber}) للعميل: ${payload.customer_name}`,
+          createdById,
+          createdByName
+        )
+      const refundTxId = Number(txInfo.lastInsertRowid)
       db.prepare(
-        `INSERT INTO treasury_transactions (
-          transaction_type, category, amount, sales_invoice_id, customer_id, payment_method, description
-        ) VALUES ('expense', 'رد فارق استبدال للعميل', ?, ?, ?, ?, ?)`
+        `INSERT INTO sales_payments (
+          invoice_id, customer_id, amount, payment_method, payment_type, treasury_tx_id, notes
+        ) VALUES (?, ?, ?, ?, 'refund', ?, ?)`
       ).run(
-        Math.abs(paidDiff),
         newSaleInvoice.id,
         customerId,
+        -refundAmt,
         paymentMethod,
-        `رد فارق استبدال (${exchangeNumber}) للعميل: ${payload.customer_name}`
+        refundTxId,
+        `رد فارق استبدال (${exchangeNumber})`
       )
     }
 
@@ -709,6 +849,25 @@ export function processProductExchange(payload: {
       )
 
     const exchangeId = Number(exInfo.lastInsertRowid)
+    if (retProd.type !== 'service') {
+      const exMoveType: MovementType = retCond === 'defective' ? 'damaged' : 'exchange_in'
+      db.prepare(
+        `INSERT INTO inventory_movements (
+          product_id, variant_id, serial_no, ref_type, ref_id, movement_type,
+          quantity, unit_cost, unit_price, notes
+        ) VALUES (?, ?, ?, 'product_exchange', ?, ?, 1, ?, ?, ?)`
+      ).run(
+        retProd.id,
+        null,
+        retSerialNo,
+        exchangeId,
+        exMoveType,
+        returnedValue,
+        retProd.sale_price,
+        `استلام مستبدل (${exchangeNumber})${retCond === 'defective' ? ' - تالف' : ''}`
+      )
+    }
+
     return listProductExchanges().find((e) => e.id === exchangeId)!
   })
 }

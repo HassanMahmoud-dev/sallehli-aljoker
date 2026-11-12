@@ -20,6 +20,7 @@ export function normalizeSalesInvoiceRow(row: Record<string, unknown>): SalesInv
     total_amount: roundMoney(row.total_amount),
     paid_amount: roundMoney(row.paid_amount),
     remaining_amount: roundMoney(row.remaining_amount),
+    returned_amount: roundMoney(row.returned_amount || 0),
     extra_data: parseJsonObject(row.extra_data)
   }
 }
@@ -565,6 +566,88 @@ export function deleteSalesInvoice(id: number): void {
     const inv = getSalesInvoiceById(id)
     if (!inv) throw new Error('فاتورة المبيعات غير موجودة')
 
+    // Guard against deleting invoices with returns, exchanges, child invoices, earmold links, or unreversed payments
+    const returnCount = Number(
+      (
+        db
+          .prepare(
+            "SELECT COUNT(*) as cnt FROM invoice_returns WHERE invoice_id = ? AND return_type = 'sales_return'"
+          )
+          .get(inv.id) as { cnt: number }
+      )?.cnt || 0
+    )
+    const hasReturnedItems = (inv.items || []).some((it) => Number(it.returned_qty || 0) > 0)
+    if (returnCount > 0 || Number(inv.returned_amount || 0) > 0 || hasReturnedItems) {
+      throw new Error('لا يمكن حذف فاتورة مبيعات تحتوي على مرتجعات مسجلة')
+    }
+
+    const exchangeCount = Number(
+      (
+        db
+          .prepare(
+            'SELECT COUNT(*) as cnt FROM product_exchanges WHERE original_invoice_id = ? OR new_invoice_id = ?'
+          )
+          .get(inv.id, inv.id) as { cnt: number }
+      )?.cnt || 0
+    )
+    if (exchangeCount > 0) {
+      throw new Error('لا يمكن حذف فاتورة مبيعات مرتبطة بعملية استبدال')
+    }
+
+    const childInvoiceCount = Number(
+      (
+        db
+          .prepare('SELECT COUNT(*) as cnt FROM sales_invoices WHERE parent_invoice_id = ? AND id != ?')
+          .get(inv.id, inv.id) as { cnt: number }
+      )?.cnt || 0
+    )
+    if (childInvoiceCount > 0) {
+      throw new Error('لا يمكن حذف الفاتورة لوجود فاتورة تابعة مرتبطة بها')
+    }
+
+    const earmoldTableExists = !!db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'earmold_orders'")
+      .get()
+    if (earmoldTableExists) {
+      const earmoldCount = Number(
+        (
+          db
+            .prepare('SELECT COUNT(*) as cnt FROM earmold_orders WHERE sales_invoice_id = ?')
+            .get(inv.id) as { cnt: number }
+        )?.cnt || 0
+      )
+      if (earmoldCount > 0) {
+        throw new Error('لا يمكن حذف فاتورة مبيعات مرتبطة بأمر قالب أذن')
+      }
+    }
+
+    const paymentsCount = Number(
+      (
+        db
+          .prepare('SELECT COUNT(*) as cnt FROM sales_payments WHERE invoice_id = ?')
+          .get(inv.id) as { cnt: number }
+      )?.cnt || 0
+    )
+    const treasuryTxCount = Number(
+      (
+        db
+          .prepare('SELECT COUNT(*) as cnt FROM treasury_transactions WHERE sales_invoice_id = ?')
+          .get(inv.id) as { cnt: number }
+      )?.cnt || 0
+    )
+    if (inv.paid_amount > 0 || paymentsCount > 0 || treasuryTxCount > 0) {
+      throw new Error(
+        'لا يمكن حذف فاتورة مبيعات تحتوي على دفعات أو حركات خزينة غير معكوسة؛ يرجى عكس التحصيل من الخزينة أولاً'
+      )
+    }
+
+    const insertMoveStmt = db.prepare(
+      `INSERT INTO inventory_movements (
+        product_id, variant_id, serial_no, ref_type, ref_id, movement_type,
+        quantity, unit_cost, unit_price, notes
+      ) VALUES (?, ?, ?, 'sales_invoice_delete', ?, 'sales_return_in', ?, ?, ?, ?)`
+    )
+
     for (const it of inv.items || []) {
       const netDeducted = Math.max(0, it.deducted_pieces_qty - (it.returned_qty || 0) * it.pack_size)
       if (it.serial_id) {
@@ -589,9 +672,24 @@ export function deleteSalesInvoice(id: number): void {
           )
         }
       }
+
+      if (it.item_type !== 'service') {
+        const restoredQty = netDeducted > 0 ? netDeducted : Math.max(0, it.quantity * it.pack_size)
+        if (restoredQty > 0) {
+          insertMoveStmt.run(
+            it.product_id,
+            it.variant_id || null,
+            it.serial_no || '',
+            inv.id,
+            restoredQty,
+            it.unit_cost,
+            it.unit_price,
+            `إرجاع مخزون من حذف فاتورة مبيعات ${inv.invoice_number}`
+          )
+        }
+      }
     }
 
-    db.prepare('DELETE FROM treasury_transactions WHERE sales_invoice_id = ?').run(inv.id)
     db.prepare('DELETE FROM sales_invoices WHERE id = ?').run(inv.id)
   })
 }

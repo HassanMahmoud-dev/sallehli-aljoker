@@ -74,6 +74,7 @@ export function createSystemTables(): void {
       purchase_invoice_id INTEGER DEFAULT NULL,
       supplier_id INTEGER DEFAULT NULL,
       customer_id INTEGER DEFAULT NULL,
+      linked_tx_id INTEGER DEFAULT NULL,
       payment_method TEXT NOT NULL DEFAULT 'cash',
       description TEXT NOT NULL,
       created_by_id INTEGER DEFAULT NULL,

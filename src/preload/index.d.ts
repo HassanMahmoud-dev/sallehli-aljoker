@@ -10,6 +10,7 @@ import type {
   MaintenanceTicket,
   TicketPartItem,
   TreasuryTransaction,
+  TreasuryBalances,
   CenterSettings,
   DashboardStats,
   FinancialReportData,
@@ -152,6 +153,7 @@ export interface IElectronAPI {
     payment_method: string
     notes?: string
     recordInTreasury?: boolean
+    purchase_invoice_id?: number | null
   }) => Promise<Supplier>
 
   listPurchaseInvoices: (filters?: {
@@ -359,6 +361,7 @@ export interface IElectronAPI {
   deleteTicket: (id: number) => Promise<void>
 
   listTreasuryTransactions: () => Promise<TreasuryTransaction[]>
+  getTreasuryBalances: () => Promise<TreasuryBalances>
   addTreasuryTransaction: (data: Partial<TreasuryTransaction>) => Promise<TreasuryTransaction>
   transferTreasuryFunds: (payload: {
     fromMethod: string

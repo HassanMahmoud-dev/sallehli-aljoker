@@ -153,6 +153,7 @@ const api = {
     payment_method: string
     notes?: string
     recordInTreasury?: boolean
+    purchase_invoice_id?: number | null
   }) => invoke('suppliers:pay', payload),
 
   // Phase 3B, 3C, 3D & 3E: Purchases, Sales, Returns, Exchanges & Ticket Lookups
@@ -341,6 +342,7 @@ const api = {
 
   // Treasury & Reports
   listTreasuryTransactions: () => invoke('treasury:list'),
+  getTreasuryBalances: () => invoke('treasury:balances'),
   addTreasuryTransaction: (data: Partial<TreasuryTransaction>) =>
     invoke('treasury:add', data),
   transferTreasuryFunds: (payload: {

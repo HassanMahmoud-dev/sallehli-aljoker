@@ -274,6 +274,17 @@ export function getSupplierStatement(supplierId: number): SupplierStatement {
   }
 }
 
+function computeMovingWeightedAvgCost(
+  currentQty: number,
+  currentCost: number,
+  addedQty: number,
+  unitCost: number
+): number {
+  if (unitCost <= 0) return roundMoney(currentCost)
+  if (currentQty <= 0) return roundMoney(unitCost)
+  return roundMoney((currentQty * currentCost + addedQty * unitCost) / (currentQty + addedQty))
+}
+
 export function paySupplier(
   payload: {
     supplier_id: number
@@ -281,6 +292,7 @@ export function paySupplier(
     payment_method: string
     notes?: string
     recordInTreasury?: boolean
+    purchase_invoice_id?: number | null
   },
   callerSession?: SessionInfo | null
 ): Supplier {
@@ -297,6 +309,108 @@ export function paySupplier(
     const amt = roundMoney(payload.amount)
     if (amt <= 0) {
       throw new Error('يرجى إدخال مبلغ سداد أكبر من صفر')
+    }
+
+    let remainingToAllocate = amt
+    const allocations: Array<{
+      purchase_invoice_id: number | null
+      invoice_number?: string
+      amount: number
+    }> = []
+
+    // 1. Optional specific purchase invoice settlement first
+    if (payload.purchase_invoice_id) {
+      const targetInv = db
+        .prepare(
+          `SELECT id, invoice_number, supplier_id, status, paid_amount, remaining_amount
+           FROM purchase_invoices WHERE id = ?`
+        )
+        .get(payload.purchase_invoice_id) as
+        | {
+            id: number
+            invoice_number: string
+            supplier_id: number | null
+            status: string
+            paid_amount: number
+            remaining_amount: number
+          }
+        | undefined
+
+      if (!targetInv || targetInv.supplier_id !== supplier.id) {
+        throw new Error('فاتورة المشتريات المحددة غير موجودة لهذا المورد')
+      }
+      if (targetInv.status === 'cancelled') {
+        throw new Error('لا يمكن سداد فاتورة مشتريات ملغاة')
+      }
+
+      const invRem = roundMoney(targetInv.remaining_amount)
+      if (invRem <= 0) {
+        throw new Error('فاتورة المشتريات المحددة مسددة بالكامل بالفعل')
+      }
+
+      const applied = roundMoney(Math.min(remainingToAllocate, invRem))
+      if (applied > 0) {
+        const newPaid = roundMoney(targetInv.paid_amount + applied)
+        const newRem = Math.max(0, roundMoney(invRem - applied))
+        db.prepare(
+          `UPDATE purchase_invoices SET paid_amount = ?, remaining_amount = ? WHERE id = ?`
+        ).run(newPaid, newRem, targetInv.id)
+        allocations.push({
+          purchase_invoice_id: targetInv.id,
+          invoice_number: targetInv.invoice_number,
+          amount: applied
+        })
+        remainingToAllocate = roundMoney(remainingToAllocate - applied)
+      }
+    }
+
+    // 2. FIFO settlement across open supplier invoices (oldest invoice_date, id first)
+    if (remainingToAllocate > 0) {
+      const openInvoices = db
+        .prepare(
+          `SELECT id, invoice_number, paid_amount, remaining_amount
+           FROM purchase_invoices
+           WHERE supplier_id = ? AND status != 'cancelled' AND remaining_amount > 0
+             ${payload.purchase_invoice_id ? 'AND id != ?' : ''}
+           ORDER BY invoice_date ASC, id ASC`
+        )
+        .all(
+          ...(payload.purchase_invoice_id ? [supplier.id, payload.purchase_invoice_id] : [supplier.id])
+        ) as Array<{
+        id: number
+        invoice_number: string
+        paid_amount: number
+        remaining_amount: number
+      }>
+
+      for (const openInv of openInvoices) {
+        if (remainingToAllocate <= 0) break
+        const invRem = roundMoney(openInv.remaining_amount)
+        if (invRem <= 0) continue
+
+        const applied = roundMoney(Math.min(remainingToAllocate, invRem))
+        if (applied <= 0) continue
+
+        const newPaid = roundMoney(openInv.paid_amount + applied)
+        const newRem = Math.max(0, roundMoney(invRem - applied))
+        db.prepare(
+          `UPDATE purchase_invoices SET paid_amount = ?, remaining_amount = ? WHERE id = ?`
+        ).run(newPaid, newRem, openInv.id)
+        allocations.push({
+          purchase_invoice_id: openInv.id,
+          invoice_number: openInv.invoice_number,
+          amount: applied
+        })
+        remainingToAllocate = roundMoney(remainingToAllocate - applied)
+      }
+    }
+
+    // 3. Any remaining unallocated amount applies to general supplier balance
+    if (remainingToAllocate > 0) {
+      allocations.push({
+        purchase_invoice_id: null,
+        amount: remainingToAllocate
+      })
     }
 
     const newBalance = roundMoney(supplier.balance - amt)
@@ -323,16 +437,26 @@ export function paySupplier(
       treasuryTxId = Number(txInfo.lastInsertRowid)
     }
 
-    db.prepare(
-      `INSERT INTO supplier_payments (supplier_id, amount, payment_method, treasury_tx_id, notes)
-       VALUES (?, ?, ?, ?, ?)`
-    ).run(
-      supplier.id,
-      amt,
-      payload.payment_method || 'cash',
-      treasuryTxId,
-      payload.notes?.trim() || 'سداد دفعة للمورد'
+    const insertPayStmt = db.prepare(
+      `INSERT INTO supplier_payments (supplier_id, purchase_invoice_id, amount, payment_method, treasury_tx_id, notes)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
+    const baseNotes = payload.notes?.trim()
+    for (const alloc of allocations) {
+      const rowNotes = alloc.invoice_number
+        ? baseNotes
+          ? `${baseNotes} (فاتورة ${alloc.invoice_number})`
+          : `سداد فاتورة مشتريات ${alloc.invoice_number}`
+        : baseNotes || 'سداد دفعة للمورد'
+      insertPayStmt.run(
+        supplier.id,
+        alloc.purchase_invoice_id,
+        alloc.amount,
+        payload.payment_method || 'cash',
+        treasuryTxId,
+        rowNotes
+      )
+    }
 
     return listSuppliers().find((s) => s.id === supplier.id)!
   })
@@ -601,6 +725,20 @@ export function savePurchaseInvoice(
       const purchaseItemId = Number(itemInfo.lastInsertRowid)
 
       const pieceUnitCost = unit === 'pack' ? roundMoney(unitCost / packSize) : unitCost
+      const currentProdRow = db
+        .prepare('SELECT qty, cost_price, pack_cost_price FROM products WHERE id = ?')
+        .get(prod.id) as { qty: number; cost_price: number; pack_cost_price: number }
+      const serialCurrentQty = prod.track_serial
+        ? Number(
+            (
+              db
+                .prepare(
+                  "SELECT COUNT(*) as cnt FROM product_serials WHERE product_id = ? AND status = 'in_stock'"
+                )
+                .get(prod.id) as { cnt: number }
+            )?.cnt || 0
+          )
+        : 0
 
       if (prod.track_serial) {
         for (const sn of serials) {
@@ -645,34 +783,81 @@ export function savePurchaseInvoice(
         }
         syncProductQtyFromChildren(prod.id)
       } else if (it.variant_id) {
+        const curVariant = db
+          .prepare('SELECT qty, cost_price, pack_cost_price FROM product_variants WHERE id = ?')
+          .get(it.variant_id) as
+          | { qty: number; cost_price: number; pack_cost_price: number }
+          | undefined
+        if (!curVariant) throw new Error('متغير الصنف المحدد غير موجود')
+
+        const currentQty = Number(curVariant.qty || 0)
+        const currentCost = Number(curVariant.cost_price || 0)
+        const currentPackCost = Number(curVariant.pack_cost_price || 0)
+        const newPieceCost =
+          pieceUnitCost > 0
+            ? computeMovingWeightedAvgCost(currentQty, currentCost, addedPieces, pieceUnitCost)
+            : currentCost
+        let newPackCost = currentPackCost
+        if (unit === 'pack' && unitCost > 0) {
+          if (currentQty <= 0) {
+            newPackCost = roundMoney(unitCost)
+          } else if (currentPackCost > 0) {
+            const currentPacks = currentQty / packSize
+            newPackCost = roundMoney(
+              (currentPacks * currentPackCost + qty * unitCost) / (currentPacks + qty)
+            )
+          } else {
+            newPackCost = roundMoney(newPieceCost * packSize)
+          }
+        }
+
         db.prepare(
           `UPDATE product_variants
            SET qty = qty + ?,
-               cost_price = CASE WHEN ? > 0 THEN ? ELSE cost_price END,
-               pack_cost_price = CASE WHEN ? = 'pack' AND ? > 0 THEN ? ELSE pack_cost_price END
+               cost_price = ?,
+               pack_cost_price = ?
            WHERE id = ?`
-        ).run(
-          addedPieces,
-          pieceUnitCost,
-          pieceUnitCost,
-          unit,
-          unitCost,
-          unitCost,
-          it.variant_id
-        )
+        ).run(addedPieces, newPieceCost, newPackCost, it.variant_id)
         syncProductQtyFromChildren(prod.id)
       } else {
+        const currentQty = Number(currentProdRow?.qty || 0)
+        const currentCost = Number(currentProdRow?.cost_price || 0)
+        const currentPackCost = Number(currentProdRow?.pack_cost_price || 0)
+        const newPieceCost =
+          pieceUnitCost > 0
+            ? computeMovingWeightedAvgCost(currentQty, currentCost, addedPieces, pieceUnitCost)
+            : currentCost
+        let newPackCost = currentPackCost
+        if (unit === 'pack' && unitCost > 0) {
+          if (currentQty <= 0) {
+            newPackCost = roundMoney(unitCost)
+          } else if (currentPackCost > 0) {
+            const currentPacks = currentQty / packSize
+            newPackCost = roundMoney(
+              (currentPacks * currentPackCost + qty * unitCost) / (currentPacks + qty)
+            )
+          } else {
+            newPackCost = roundMoney(newPieceCost * packSize)
+          }
+        }
+
         db.prepare(
           `UPDATE products
            SET qty = qty + ?,
-               cost_price = CASE WHEN ? > 0 THEN ? ELSE cost_price END,
-               pack_cost_price = CASE WHEN ? = 'pack' AND ? > 0 THEN ? ELSE pack_cost_price END
+               cost_price = ?,
+               pack_cost_price = ?
            WHERE id = ?`
-        ).run(addedPieces, pieceUnitCost, pieceUnitCost, unit, unitCost, unitCost, prod.id)
+        ).run(addedPieces, newPieceCost, newPackCost, prod.id)
       }
 
       if (prod.track_serial && pieceUnitCost > 0 && condition === 'new') {
-        db.prepare('UPDATE products SET cost_price = ? WHERE id = ?').run(pieceUnitCost, prod.id)
+        const newSerialProdCost = computeMovingWeightedAvgCost(
+          serialCurrentQty,
+          Number(currentProdRow?.cost_price || 0),
+          addedPieces,
+          pieceUnitCost
+        )
+        db.prepare('UPDATE products SET cost_price = ? WHERE id = ?').run(newSerialProdCost, prod.id)
       }
 
       db.prepare(

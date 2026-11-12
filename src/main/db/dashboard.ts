@@ -5,6 +5,7 @@ import { normalizeProductRow } from './products'
 import { listFollowups, listEarmoldOrders } from './audiology'
 import { getBusinessState } from './business'
 import { isDemoDataHidden } from './demo'
+import { getOperatingTreasurySummary } from './treasury'
 import type { DashboardStats, SparePart, SalesInvoice } from '../../shared/types'
 
 export function getDashboardStats(): DashboardStats {
@@ -76,47 +77,58 @@ export function getDashboardStats(): DashboardStats {
       .get(today) as { total: number }
   ).total
 
-  const todayExpense = (
-    db
-      .prepare(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type IN ('expense', 'tech_commission') AND category != 'تحويل بين الخزائن' AND date(created_at) = ?${dFilter}`
-      )
-      .get(today) as { total: number }
-  ).total
+  const todayExpense = roundMoney(
+    (
+      db
+        .prepare(
+          `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type = 'expense' AND category != 'تحويل بين الخزائن' AND date(created_at) = ?${dFilter}`
+        )
+        .get(today) as { total: number }
+    ).total
+  )
 
-  const monthIncome = (
-    db
-      .prepare(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type = 'income' AND category != 'تحويل بين الخزائن' AND strftime('%Y-%m', created_at) = ?${dFilter}`
-      )
-      .get(monthPrefix) as { total: number }
-  ).total
+  const monthIncome = roundMoney(
+    (
+      db
+        .prepare(
+          `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type = 'income' AND category != 'تحويل بين الخزائن' AND strftime('%Y-%m', created_at) = ?${dFilter}`
+        )
+        .get(monthPrefix) as { total: number }
+    ).total
+  )
 
-  const monthExpense = (
-    db
-      .prepare(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type = 'expense' AND category != 'تحويل بين الخزائن' AND strftime('%Y-%m', created_at) = ?${dFilter}`
-      )
-      .get(monthPrefix) as { total: number }
-  ).total
+  const monthExpense = roundMoney(
+    (
+      db
+        .prepare(
+          `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type = 'expense' AND category != 'تحويل بين الخزائن' AND strftime('%Y-%m', created_at) = ?${dFilter}`
+        )
+        .get(monthPrefix) as { total: number }
+    ).total
+  )
 
-  const monthTechCommissions = (
-    db
-      .prepare(
-        `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type = 'tech_commission' AND strftime('%Y-%m', created_at) = ?${dFilter}`
-      )
-      .get(monthPrefix) as { total: number }
-  ).total
+  const monthTechCommissions = roundMoney(
+    (
+      db
+        .prepare(
+          `SELECT COALESCE(SUM(amount), 0) as total FROM treasury_transactions WHERE transaction_type = 'tech_commission' AND strftime('%Y-%m', created_at) = ?${dFilter}`
+        )
+        .get(monthPrefix) as { total: number }
+    ).total
+  )
 
-  const monthPartsCost = (
-    db
-      .prepare(
-        `SELECT COALESCE(SUM(parts_cost_total), 0) as total FROM maintenance_tickets WHERE status IN ('repaired', 'delivered') AND strftime('%Y-%m', created_at) = ?${dFilter}`
-      )
-      .get(monthPrefix) as { total: number }
-  ).total
+  const monthTicketAgg = db
+    .prepare(
+      `SELECT
+        COALESCE(SUM(parts_cost_total), 0) as partsCost,
+        COALESCE(SUM(inspection_fee + labor_cost + parts_total - discount - parts_cost_total), 0) as ticketProfit
+       FROM maintenance_tickets
+       WHERE status IN ('repaired', 'delivered') AND strftime('%Y-%m', created_at) = ?${dFilter}`
+    )
+    .get(monthPrefix) as { partsCost: number; ticketProfit: number }
 
-  const monthNetProfit = roundMoney(monthIncome - monthExpense - monthTechCommissions)
+  const monthPartsCost = roundMoney(monthTicketAgg?.partsCost || 0)
+  const monthTicketProfit = roundMoney(monthTicketAgg?.ticketProfit || 0)
 
   const rawRecentTickets = db
     .prepare(
@@ -185,11 +197,15 @@ export function getDashboardStats(): DashboardStats {
 
   if (isHearingAids) {
     try {
+      const siFilter = isDemoDataHidden()
+        ? ' AND si.is_demo = 0'
+        : ` AND (si.is_demo = 0 OR si.business_type = '${bType}' OR si.business_type IS NULL OR si.business_type = '')`
+
       const todaySalesAgg = db
         .prepare(
           `SELECT COUNT(*) as cnt, COALESCE(SUM(total_amount), 0) as rev
            FROM sales_invoices
-           WHERE status != 'cancelled' AND date(created_at) = ?`
+           WHERE status != 'cancelled' AND date(created_at) = ?${dFilter}`
         )
         .get(today) as { cnt: number; rev: number }
       todaySalesCount = todaySalesAgg?.cnt || 0
@@ -199,24 +215,26 @@ export function getDashboardStats(): DashboardStats {
         .prepare(
           `SELECT
             COUNT(DISTINCT si.id) as cnt,
-            COALESCE(SUM(CASE WHEN sitem.quantity > 0 THEN (sitem.quantity - sitem.returned_qty) * (sitem.unit_price - (sitem.discount / sitem.quantity)) ELSE 0 END), 0) as rev,
+            COALESCE(
+              SUM(
+                CASE
+                  WHEN sitem.quantity > 0
+                  THEN (sitem.quantity - sitem.returned_qty)
+                       * (sitem.unit_price - (sitem.discount * 1.0 / sitem.quantity))
+                       * (CASE WHEN si.subtotal > 0 THEN MAX(0, (si.subtotal - si.discount) * 1.0 / si.subtotal) ELSE 1 END)
+                  ELSE 0
+                END
+              ),
+              0
+            ) as rev,
             COALESCE(SUM((sitem.quantity - sitem.returned_qty) * sitem.unit_cost), 0) as cost
            FROM sales_invoices si
            LEFT JOIN sales_items sitem ON sitem.invoice_id = si.id
-           WHERE si.status != 'cancelled' AND strftime('%Y-%m', si.created_at) = ?`
+           WHERE si.status != 'cancelled' AND strftime('%Y-%m', si.created_at) = ?${siFilter}`
         )
         .get(monthPrefix) as { cnt: number; rev: number; cost: number }
-      const monthInvoiceDiscounts = (
-        db
-          .prepare(
-            `SELECT COALESCE(SUM(discount), 0) as disc
-             FROM sales_invoices
-             WHERE status != 'cancelled' AND strftime('%Y-%m', created_at) = ?`
-          )
-          .get(monthPrefix) as { disc: number }
-      )?.disc || 0
       monthSalesCount = monthSalesAgg?.cnt || 0
-      monthSalesRevenue = roundMoney(Math.max(0, (monthSalesAgg?.rev || 0) - monthInvoiceDiscounts))
+      monthSalesRevenue = roundMoney(Math.max(0, monthSalesAgg?.rev || 0))
       monthSalesCost = roundMoney(monthSalesAgg?.cost || 0)
       monthSalesProfit = roundMoney(monthSalesRevenue - monthSalesCost)
 
@@ -295,6 +313,17 @@ export function getDashboardStats(): DashboardStats {
       // Ignore if hearing aids tables are not present
     }
   }
+
+  const demoTtCond = dFilter.replace(/^\s*AND\s+/i, '')
+  const { otherOperatingIncome: monthOtherIncome, operatingExpenses: monthOperatingExpenses } =
+    getOperatingTreasurySummary("strftime('%Y-%m', created_at) = ?", [monthPrefix], demoTtCond)
+  const monthNetProfit = roundMoney(
+    monthSalesProfit +
+      monthTicketProfit +
+      monthOtherIncome -
+      monthOperatingExpenses -
+      monthTechCommissions
+  )
 
   return {
     totalTicketsToday,

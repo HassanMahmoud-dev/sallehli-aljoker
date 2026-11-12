@@ -156,6 +156,7 @@ export function ensureWebApiBridge(): void {
     deleteTicket: (id) => invokeHttp('tickets:delete', id),
 
     listTreasuryTransactions: () => invokeHttp('treasury:list'),
+    getTreasuryBalances: () => invokeHttp('treasury:balances'),
     addTreasuryTransaction: (data) => invokeHttp('treasury:add', data),
     transferTreasuryFunds: (payload) => invokeHttp('treasury:transfer', payload),
     collectTicketReceivable: (payload) => invokeHttp('treasury:collectReceivable', payload),

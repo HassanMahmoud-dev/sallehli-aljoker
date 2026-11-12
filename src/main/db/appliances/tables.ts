@@ -21,6 +21,7 @@ export function createAppliancesTables(): void {
       location TEXT DEFAULT '',
       notes TEXT DEFAULT '',
       image_base64 TEXT DEFAULT '',
+      is_demo INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
     );
 
@@ -125,6 +126,7 @@ export function createAppliancesTables(): void {
       unit_cost REAL NOT NULL DEFAULT 0,
       unit_price REAL NOT NULL DEFAULT 0,
       total_price REAL NOT NULL DEFAULT 0,
+      is_restored INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (ticket_id) REFERENCES maintenance_tickets(id) ON DELETE CASCADE
     );
 

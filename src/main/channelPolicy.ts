@@ -102,6 +102,7 @@ export const CHANNEL_PERMISSIONS: Record<string, ChannelPermission> = {
 
   // Financial (super_admin, owner)
   'treasury:list': 'financial',
+  'treasury:balances': 'financial',
   'treasury:add': 'financial',
   'treasury:transfer': 'financial',
   'treasury:collectReceivable': 'financial',
@@ -228,6 +229,7 @@ export const CHANNEL_REQUIRED_MODULE: Record<string, string> = {
   'technicians:save': 'technicians',
   'technicians:delete': 'technicians',
   'treasury:list': 'treasury',
+  'treasury:balances': 'treasury',
   'treasury:add': 'treasury',
   'treasury:transfer': 'treasury',
   'treasury:collectReceivable': 'treasury',

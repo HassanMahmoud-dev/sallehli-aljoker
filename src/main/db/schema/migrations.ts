@@ -197,8 +197,10 @@ export function runMigrations(): void {
   const db = getDb()
   db.exec('PRAGMA foreign_keys = OFF;')
   try {
-    // 0. ترحيل جدول قطع الغيار بحسب النشاط
+    // 0. ترحيل جدول قطع الغيار بحسب النشاط وضمان أعمدة العرض قبل إعادة بناء أي جدول
     migrateToActivityTables()
+    ensureColumn('elect_spare_parts', 'is_demo', 'INTEGER NOT NULL DEFAULT 0')
+    ensureColumn('medicalmain_spare_parts', 'is_demo', 'INTEGER NOT NULL DEFAULT 0')
 
     // 1. Upgrade users table if old CHECK constraint only allowed 3 roles
     const userTableMeta = db
@@ -260,6 +262,7 @@ export function runMigrations(): void {
     ensureColumn('treasury_transactions', 'purchase_invoice_id', 'INTEGER DEFAULT NULL')
     ensureColumn('treasury_transactions', 'supplier_id', 'INTEGER DEFAULT NULL')
     ensureColumn('treasury_transactions', 'customer_id', 'INTEGER DEFAULT NULL')
+    ensureColumn('treasury_transactions', 'linked_tx_id', 'INTEGER DEFAULT NULL')
     ensureColumn('treasury_transactions', 'created_by_id', 'INTEGER DEFAULT NULL')
     ensureColumn('treasury_transactions', 'created_by_name', "TEXT DEFAULT ''")
 
@@ -275,6 +278,8 @@ export function runMigrations(): void {
     ensureColumn('maintenance_tickets', 'created_by_name', "TEXT DEFAULT ''")
     ensureColumn('maintenance_tickets', 'commission_rate', 'REAL DEFAULT NULL')
     ensureColumn('maintenance_tickets', 'commission_amount', 'REAL DEFAULT NULL')
+
+    ensureColumn('ticket_parts', 'is_restored', 'INTEGER NOT NULL DEFAULT 0')
 
     ensureColumn('invoice_returns', 'created_by_id', 'INTEGER DEFAULT NULL')
     ensureColumn('invoice_returns', 'created_by_name', "TEXT DEFAULT ''")
@@ -426,12 +431,15 @@ export function runMigrations(): void {
       })
     }
 
-    // 2h. Clean inventory_movements foreign keys (remove invalid view reference to spare_parts)
+    // 2h. Clean inventory_movements foreign keys and remove any restrictive CHECK on movement_type
     try {
       const imMeta = db
         .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'inventory_movements'")
         .get() as { sql?: string } | undefined
-      if (imMeta?.sql && imMeta.sql.includes('spare_parts')) {
+      if (
+        imMeta?.sql &&
+        (imMeta.sql.includes('spare_parts') || /CHECK\s*\([^)]*movement_type/i.test(imMeta.sql))
+      ) {
         runTransaction(() => {
           db.exec(`
             CREATE TABLE inventory_movements_new (

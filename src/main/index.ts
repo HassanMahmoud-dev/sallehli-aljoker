@@ -30,6 +30,7 @@ import {
   updateTicketImages,
   deleteTicket,
   listTreasuryTransactions,
+  getTreasuryBalances,
   addTreasuryTransaction,
   transferTreasuryFunds,
   collectTicketReceivable,
@@ -337,7 +338,7 @@ function registerIpcHandlers(): void {
     'returns:sales:create': (ctx, payload) => createSalesReturn(payload, ctx.session),
     'returns:purchases:create': (ctx, payload) => createPurchaseReturn(payload, ctx.session),
     'exchanges:list': () => listProductExchanges(),
-    'exchanges:process': (_ctx, payload) => processProductExchange(payload),
+    'exchanges:process': (ctx, payload) => processProductExchange(payload, ctx.session),
     'tickets:lookupSerialOrInvoice': (_ctx, query: string) =>
       lookupSerialOrInvoiceForTicket(query),
     'tickets:returnLoaner': (_ctx, ticketId: number) => returnTicketLoaner(ticketId),
@@ -378,8 +379,9 @@ function registerIpcHandlers(): void {
 
     // Treasury & Reports
     'treasury:list': () => listTreasuryTransactions(),
+    'treasury:balances': () => getTreasuryBalances(),
     'treasury:add': (ctx, data) => addTreasuryTransaction(data, ctx.session),
-    'treasury:transfer': (_ctx, payload) => transferTreasuryFunds(payload),
+    'treasury:transfer': (ctx, payload) => transferTreasuryFunds(payload, ctx.session),
     'treasury:collectReceivable': (_ctx, payload) => collectTicketReceivable(payload),
     'treasury:delete': (_ctx, id: number) => deleteTreasuryTransaction(id),
     'reports:financial': (_ctx, payload?: { dateFrom?: string; dateTo?: string }) =>
