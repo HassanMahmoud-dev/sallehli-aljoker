@@ -2,7 +2,7 @@
 import { plain } from '@renderer/utils/plain'
 import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { ref, computed, onMounted } from 'vue'
-import type { TreasuryTransaction, DashboardStats } from '@shared/types'
+import type { TreasuryTransaction, DashboardStats, TreasuryBalances } from '@shared/types'
 import { PAYMENT_METHODS } from '@renderer/constants/appliances'
 import { useAppStore } from '@renderer/stores/appStore'
 import { useTerms } from '@renderer/composables/useTerms'
@@ -17,13 +17,38 @@ import {
   X
 } from 'lucide-vue-next'
 
+type TreasuryTransactionRow = TreasuryTransaction & {
+  sales_invoice_number?: string | null
+  purchase_invoice_number?: string | null
+}
+
 const appStore = useAppStore()
 const { t: term } = useTerms()
-const transactions = ref<TreasuryTransaction[]>([])
+const transactions = ref<TreasuryTransactionRow[]>([])
 const stats = ref<DashboardStats | null>(null)
+const treasuryBalances = ref<TreasuryBalances>({
+  total: 0,
+  byMethod: {}
+})
 const modalOpen = ref(false)
 const transferModalOpen = ref(false)
 const methodFilter = ref<string>('all')
+
+function extractErrorMessage(err: unknown, fallback = 'حدث خطأ غير متوقع'): string {
+  const raw = err instanceof Error ? err.message : String(err || '')
+  const cleaned = raw.replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/i, '').trim()
+  return cleaned || fallback
+}
+
+function isLinkedTransaction(tx: TreasuryTransactionRow): boolean {
+  return Boolean(
+    tx.linked_tx_id ||
+      tx.sales_invoice_id ||
+      tx.purchase_invoice_id ||
+      tx.supplier_id ||
+      tx.ticket_id
+  )
+}
 
 const form = ref<Partial<TreasuryTransaction>>({
   transaction_type: 'expense',
@@ -41,35 +66,27 @@ const transferForm = ref({
 })
 
 async function loadData(): Promise<void> {
-  const [tList, sData] = await Promise.all([
+  const [tList, sData, bData] = await Promise.all([
     window.api.listTreasuryTransactions(),
-    window.api.getDashboardStats()
+    window.api.getDashboardStats(),
+    window.api.getTreasuryBalances()
   ])
-  transactions.value = tList
+  transactions.value = tList as TreasuryTransactionRow[]
   stats.value = sData
+  treasuryBalances.value = bData
 }
 
-const totalTreasuryBalance = computed(() =>
-  transactions.value.reduce((acc, row) => {
-    if (row.transaction_type === 'income') return acc + row.amount
-    return acc - row.amount
-  }, 0)
-)
+const totalTreasuryBalance = computed(() => Number(treasuryBalances.value?.total || 0))
 
 const balancesByMethod = computed(() => {
   const map: Record<string, { income: number; expense: number; net: number }> = {}
   for (const k of Object.keys(PAYMENT_METHODS)) {
-    map[k] = { income: 0, expense: 0, net: 0 }
+    map[k] = treasuryBalances.value.byMethod?.[k] ?? { income: 0, expense: 0, net: 0 }
   }
-  for (const row of transactions.value) {
-    const key = row.payment_method || 'cash'
-    if (!map[key]) map[key] = { income: 0, expense: 0, net: 0 }
-    if (row.transaction_type === 'income') {
-      map[key].income += row.amount
-    } else {
-      map[key].expense += row.amount
+  for (const [k, val] of Object.entries(treasuryBalances.value.byMethod || {})) {
+    if (!map[k]) {
+      map[k] = val
     }
-    map[key].net = map[key].income - map[key].expense
   }
   return map
 })
@@ -113,7 +130,7 @@ async function handleSaveTransaction(): Promise<void> {
     }, 'جاري حفظ الحركة المالية بالخزينة...')
     swalSuccess('تم تسجيل الحركة المالية بالخزينة بنجاح')
   } catch (err: unknown) {
-    swalError('تعذر حفظ الحركة المالية', err instanceof Error ? err.message : '')
+    swalError('تعذر حفظ الحركة المالية', extractErrorMessage(err, 'تعذر حفظ الحركة المالية بالخزينة'))
   }
 }
 
@@ -134,24 +151,66 @@ async function handleTransferFunds(): Promise<void> {
     }, 'جاري تحويل الرصيد بين الخزائن...')
     swalSuccess('تم تحويل الرصيد بين الخزائن بنجاح')
   } catch (err: unknown) {
-    swalError('فشل التحويل بين الخزائن', err instanceof Error ? err.message : '')
+    swalError('فشل التحويل بين الخزائن', extractErrorMessage(err, 'فشل التحويل بين الخزائن'))
   }
 }
 
-async function handleDeleteTransaction(id: number): Promise<void> {
+async function handleDeleteTransaction(tx: TreasuryTransactionRow): Promise<void> {
+  const warnings: string[] = []
+  if (tx.linked_tx_id) {
+    warnings.push(
+      `هذا القيد يمثل تحويلاً مزدوجاً بين الخزائن ومرتبط بالقيد (#${tx.linked_tx_id})؛ سيتم حذف كلا طرفي التحويل (الصادر والوارد) معاً.`
+    )
+  }
+  if (tx.sales_invoice_id) {
+    const invLabel = tx.sales_invoice_number || `#${tx.sales_invoice_id}`
+    warnings.push(
+      `القيد مرتبط بفاتورة المبيعات (${invLabel})؛ سيتم عكس أثر الدفعة وتحديث المدفوع والمتبقي على الفاتورة (أو رفض الحذف إذا لم يكن مسجلاً كدفعة).`
+    )
+  }
+  if (tx.purchase_invoice_id) {
+    const invLabel = tx.purchase_invoice_number || `#${tx.purchase_invoice_id}`
+    if (tx.category === 'استرداد مرتجع مشتريات') {
+      warnings.push(
+        `القيد مرتبط باسترداد مرتجع مشتريات على الفاتورة (${invLabel})؛ لا يسمح النظام بحذفه مباشرة من الخزينة دون إلغاء المرتجع.`
+      )
+    } else {
+      warnings.push(
+        `القيد مرتبط بفاتورة المشتريات (${invLabel})؛ سيتم عكس أثر السداد وتحديث المتبقي ورصيد المورد.`
+      )
+    }
+  } else if (tx.supplier_id) {
+    const supLabel = tx.supplier_name || `#${tx.supplier_id}`
+    warnings.push(
+      `القيد مرتبط بحساب المورد (${supLabel})؛ سيتم عكس أثره المالي وإعادة تعديل رصيد المورد.`
+    )
+  }
+  if (tx.ticket_id) {
+    const tLabel = tx.ticket_number || `#${tx.ticket_id}`
+    warnings.push(
+      `القيد مرتبط بطلب الصيانة (${tLabel})؛ سيتم عكس أثر التحصيل أو التسوية على حساب التذكرة عند انطباقه.`
+    )
+  }
+
   const confirmed = await swalConfirm(
-    'حذف الحركة المالية؟',
-    'هل أنت متأكد من حذف هذه الحركة المالية من سجل الخزينة؟'
+    warnings.length > 0 ? 'تحذير: حذف قيد مالي مرتبط؟' : 'حذف الحركة المالية؟',
+    warnings.length > 0
+      ? `تنبيه (${tx.category} — ${tx.amount} ج.م): ${warnings.join(' | ')} هل تريد تأكيد الحذف؟`
+      : 'هل أنت متأكد من حذف هذه الحركة المالية من سجل الخزينة؟',
+    warnings.length > 0 ? 'نعم، تأكيد الحذف وعكس الأثر' : 'نعم، تأكيد الحذف'
   )
   if (!confirmed) return
   try {
     await appStore.withLoading(async () => {
-      await window.api.deleteTreasuryTransaction(id)
+      await window.api.deleteTreasuryTransaction(tx.id)
       await loadData()
     }, 'جاري حذف الحركة المالية...')
     swalSuccess('تم حذف الحركة المالية بنجاح')
   } catch (err: unknown) {
-    swalError('تعذر حذف الحركة', err instanceof Error ? err.message : '')
+    swalError(
+      'تم رفض حذف الحركة',
+      extractErrorMessage(err, 'تعذر حذف الحركة المالية من الخزينة')
+    )
   }
 }
 
@@ -337,9 +396,21 @@ onMounted(loadData)
           <tr
             v-for="tx in filteredTransactions"
             :key="tx.id"
-            class="hover:bg-slate-50 dark:hover:bg-slate-800/40"
+            :class="[
+              'hover:bg-slate-50 dark:hover:bg-slate-800/40',
+              isLinkedTransaction(tx) ? 'bg-amber-50/25 dark:bg-amber-950/10' : ''
+            ]"
           >
-            <td class="py-3.5 px-4 font-mono">{{ tx.id }}</td>
+            <td class="py-3.5 px-4 font-mono">
+              <div class="flex items-center gap-1.5">
+                <span>{{ tx.id }}</span>
+                <span
+                  v-if="isLinkedTransaction(tx)"
+                  title="قيد مالي مرتبط بسجل آخر"
+                  class="w-2 h-2 rounded-full bg-amber-500 shrink-0"
+                ></span>
+              </div>
+            </td>
             <td class="py-3.5 px-4 text-slate-500 font-mono">{{ tx.created_at }}</td>
             <td class="py-3.5 px-4">
               <span
@@ -365,38 +436,61 @@ onMounted(loadData)
             <td class="py-3.5 px-4 text-slate-600 dark:text-slate-300">
               <div>{{ tx.description }}</div>
               <div
-                v-if="tx.ticket_number || tx.sales_invoice_number || tx.purchase_invoice_number || tx.supplier_name || tx.technician_name"
+                v-if="
+                  tx.linked_tx_id ||
+                  tx.ticket_id ||
+                  tx.ticket_number ||
+                  tx.sales_invoice_id ||
+                  tx.sales_invoice_number ||
+                  tx.purchase_invoice_id ||
+                  tx.purchase_invoice_number ||
+                  tx.supplier_id ||
+                  tx.supplier_name ||
+                  tx.technician_name
+                "
                 class="flex flex-wrap items-center gap-1.5 mt-1"
               >
                 <span
-                  v-if="tx.ticket_number"
+                  v-if="tx.linked_tx_id"
+                  class="px-2 py-0.5 rounded bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300 font-mono text-[10px] font-bold"
+                >
+                  تحويل مزدوج ↔ #{{ tx.linked_tx_id }}
+                </span>
+                <span
+                  v-if="tx.ticket_id || tx.ticket_number"
                   class="px-2 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 font-mono text-[10px] font-bold"
                 >
-                  طلب: {{ tx.ticket_number }}
+                  طلب: {{ tx.ticket_number || `#${tx.ticket_id}` }}
                 </span>
                 <span
-                  v-if="tx.sales_invoice_number"
+                  v-if="tx.sales_invoice_id || tx.sales_invoice_number"
                   class="px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-mono text-[10px] font-bold"
                 >
-                  فاتورة بيع: {{ tx.sales_invoice_number }}
+                  فاتورة بيع: {{ tx.sales_invoice_number || `#${tx.sales_invoice_id}` }}
                 </span>
                 <span
-                  v-if="tx.purchase_invoice_number"
+                  v-if="tx.purchase_invoice_id || tx.purchase_invoice_number"
                   class="px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-mono text-[10px] font-bold"
                 >
-                  فاتورة شراء: {{ tx.purchase_invoice_number }}
+                  فاتورة شراء: {{ tx.purchase_invoice_number || `#${tx.purchase_invoice_id}` }}
                 </span>
                 <span
-                  v-if="tx.supplier_name"
+                  v-if="tx.supplier_id || tx.supplier_name"
                   class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 text-[10px] font-bold"
                 >
-                  مورد: {{ tx.supplier_name }}
+                  مورد: {{ tx.supplier_name || `#${tx.supplier_id}` }}
                 </span>
                 <span
                   v-if="tx.technician_name"
                   class="px-2 py-0.5 rounded bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 text-[10px] font-bold"
                 >
                   {{ term('technician') }}: {{ tx.technician_name }}
+                </span>
+                <span
+                  v-if="tx.purchase_invoice_id && tx.category === 'استرداد مرتجع مشتريات'"
+                  class="px-2 py-0.5 rounded bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300 text-[10px] font-bold"
+                >
+                  قيد مرتجع محمي
                 </span>
               </div>
             </td>
@@ -414,8 +508,20 @@ onMounted(loadData)
             <td v-if="appStore.canDeleteRecords" class="py-3.5 px-4">
               <button
                 type="button"
-                @click="handleDeleteTransaction(tx.id)"
-                class="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                @click="handleDeleteTransaction(tx)"
+                :title="
+                  tx.linked_tx_id
+                    ? `حذف تحويل مزدوج (يحذف القيد #${tx.id} والقيد المرتبط #${tx.linked_tx_id} معاً)`
+                    : isLinkedTransaction(tx)
+                      ? 'حذف قيد مرتبط (يعكس أثره المالي أو يتحقق منه)'
+                      : 'حذف الحركة المالية'
+                "
+                :class="[
+                  'p-1.5 rounded-lg cursor-pointer transition',
+                  isLinkedTransaction(tx)
+                    ? 'text-amber-600 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40'
+                    : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40'
+                ]"
               >
                 <Trash2 class="w-4 h-4" />
               </button>
@@ -551,9 +657,23 @@ onMounted(loadData)
                 class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold"
               >
                 <option v-for="(label, k) in PAYMENT_METHODS" :key="k" :value="k">
-                  {{ label }}
+                  {{ label }} ({{ balancesByMethod[k]?.net || 0 }} ج.م)
                 </option>
               </select>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2 p-2.5 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-900 text-[11px]">
+            <div>
+              <span class="text-slate-500">الرصيد الفعلي للمصدر: </span>
+              <span class="font-black text-indigo-700 dark:text-indigo-300">
+                {{ balancesByMethod[transferForm.fromMethod]?.net || 0 }} ج.م
+              </span>
+            </div>
+            <div>
+              <span class="text-slate-500">الرصيد الفعلي للمستلم: </span>
+              <span class="font-black text-emerald-700 dark:text-emerald-300">
+                {{ balancesByMethod[transferForm.toMethod]?.net || 0 }} ج.م
+              </span>
             </div>
           </div>
           <div>

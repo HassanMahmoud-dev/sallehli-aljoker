@@ -146,6 +146,33 @@ const posSubtotal = computed(() =>
 )
 const posTotal = computed(() => Math.max(0, posSubtotal.value - Number(posDiscount.value || 0)))
 
+function roundMoney(val: number): number {
+  return Math.round((Number(val || 0) + Number.EPSILON) * 100) / 100
+}
+
+function extractErrorMessage(err: unknown, fallback = ''): string {
+  const raw = err instanceof Error ? err.message : String(err || '')
+  const cleaned = raw.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, '').trim()
+  return cleaned || fallback
+}
+
+function getAvailablePieces(prod: Product, variant?: ProductVariant | null): number {
+  if (prod.type === 'service') return Number.POSITIVE_INFINITY
+  return Math.max(0, Number(variant ? variant.qty : prod.qty) || 0)
+}
+
+function getPosCartUsedPieces(productId: number, variantId: number | null): number {
+  return posCart.value
+    .filter((c) => c.product_id === productId && (c.variant_id || null) === (variantId || null))
+    .reduce((sum, c) => sum + (c.unit === 'pack' ? c.quantity * (c.pack_size || 1) : c.quantity), 0)
+}
+
+function onPosDiscountInput(): void {
+  if (typeof posDiscount.value === 'number' && posDiscount.value < 0) {
+    posDiscount.value = 0
+  }
+}
+
 function addToPosCart(
   prod: Product,
   variant?: ProductVariant,
@@ -156,6 +183,18 @@ function addToPosCart(
   const existing = posCart.value.find((c) => c.key === key)
 
   const packSz = prod.pack_size || 1
+  const stepPieces = effectiveUnit === 'pack' ? packSz : 1
+  const maxPieces = getAvailablePieces(prod, variant)
+  const usedPieces = getPosCartUsedPieces(prod.id, variant?.id || null)
+
+  if (usedPieces + stepPieces > maxPieces) {
+    swalError(
+      'تجاوز المخزون المتاح',
+      `الرصيد المتاح للصنف (${prod.name}${variant?.variant_name ? ' - ' + variant.variant_name : ''}) هو ${maxPieces} قطعة فقط`
+    )
+    return
+  }
+
   const uPrice =
     effectiveUnit === 'pack'
       ? Number(
@@ -188,9 +227,27 @@ function addToPosCart(
       quantity: 1,
       unit_cost: uCost,
       unit_price: uPrice,
-      max_pieces: variant ? variant.qty : prod.qty
+      max_pieces: maxPieces
     })
   }
+}
+
+function incrementPosCartItem(idx: number): void {
+  const item = posCart.value[idx]
+  if (!item) return
+  const stepPieces = item.unit === 'pack' ? item.pack_size || 1 : 1
+  const maxPieces =
+    item.item_type === 'service' ? Number.POSITIVE_INFINITY : Math.max(0, Number(item.max_pieces || 0))
+  const usedPieces = getPosCartUsedPieces(item.product_id, item.variant_id)
+
+  if (usedPieces + stepPieces > maxPieces) {
+    swalError(
+      'تجاوز المخزون المتاح',
+      `لا يمكن زيادة الكمية؛ الرصيد المتاح للصنف (${item.product_name}) هو ${maxPieces} قطعة`
+    )
+    return
+  }
+  item.quantity += 1
 }
 
 async function handlePosBarcodeScan(): Promise<void> {
@@ -222,6 +279,28 @@ async function completeQuickPosSale(shouldPrint = false): Promise<void> {
     return
   }
 
+  if (Number(posDiscount.value || 0) < 0) {
+    swalError('خصم غير صالح', 'قيمة الخصم لا يمكن أن تكون سالبة')
+    return
+  }
+
+  for (const c of posCart.value) {
+    if (Number(c.quantity || 0) <= 0 || Number(c.unit_price || 0) < 0) {
+      swalError('بيانات غير صالحة', `يرجى مراجعة الكمية والسعر للصنف (${c.product_name})`)
+      return
+    }
+    if (c.item_type !== 'service') {
+      const usedPieces = getPosCartUsedPieces(c.product_id, c.variant_id)
+      if (usedPieces > Number(c.max_pieces || 0)) {
+        swalError(
+          'تجاوز المخزون المتاح',
+          `الكمية المطلوبة للصنف (${c.product_name}) تتجاوز الرصيد المتاح (${c.max_pieces} قطعة)`
+        )
+        return
+      }
+    }
+  }
+
   const items: SalesItem[] = posCart.value.map((c) => ({
     product_id: c.product_id,
     variant_id: c.variant_id,
@@ -233,9 +312,9 @@ async function completeQuickPosSale(shouldPrint = false): Promise<void> {
     quantity: c.quantity,
     deducted_pieces_qty: c.unit === 'pack' ? c.quantity * c.pack_size : c.quantity,
     unit_cost: c.unit_cost,
-    unit_price: c.unit_price,
+    unit_price: roundMoney(c.unit_price),
     discount: 0,
-    total_price: c.quantity * c.unit_price,
+    total_price: roundMoney(c.quantity * c.unit_price),
     warranty_months: 0,
     returned_qty: 0
   }))
@@ -249,7 +328,7 @@ async function completeQuickPosSale(shouldPrint = false): Promise<void> {
           customer_name: posCustomerName.value.trim() || 'عميل نقدي (بيع سريع)',
           customer_phone: posCustomerPhone.value.trim(),
           discount: Number(posDiscount.value || 0),
-          paid_amount: posTotal.value,
+          paid_amount: roundMoney(posTotal.value),
           payment_method: posPaymentMethod.value,
           recordInTreasury: true,
           items
@@ -268,7 +347,7 @@ async function completeQuickPosSale(shouldPrint = false): Promise<void> {
       swalSuccess('تم إتمام البيع السريع وتحصيل النقدية بنجاح')
     }
   } catch (err: unknown) {
-    swalError('تعذر إتمام البيع', err instanceof Error ? err.message : '')
+    swalError('تعذر إتمام البيع', extractErrorMessage(err))
   }
 }
 
@@ -290,6 +369,7 @@ const detailedForm = ref<{
       has_variants?: number
       available_variants?: ProductVariant[]
       product_serials?: ProductSerial[]
+      available_qty?: number
     }
   >
 }>({
@@ -366,6 +446,19 @@ function addRecommendedProductToInvoice(prodId: number): void {
   addDetailedItem()
 }
 
+function getDetailedUsedPieces(
+  productId: number,
+  variantId: number | null,
+  excludeIndex = -1
+): number {
+  return detailedForm.value.items.reduce((sum, it, idx) => {
+    if (idx === excludeIndex) return sum
+    if (it.product_id !== productId || (it.variant_id || null) !== (variantId || null)) return sum
+    const qty = Math.max(0, Number(it.quantity || 0))
+    return sum + (it.unit === 'pack' ? qty * (it.pack_size || 1) : qty)
+  }, 0)
+}
+
 function addDetailedItem(): void {
   if (!selectedDetailedProdId.value) return
   const prod = products.value.find((p) => p.id === selectedDetailedProdId.value)
@@ -374,8 +467,65 @@ function addDetailedItem(): void {
   const prodSerials = availableSerials.value.filter(
     (s) => s.product_id === prod.id && s.status === 'in_stock'
   )
-  const firstSerial = prodSerials[0] || null
   const firstVariant = prod.variants && prod.variants.length > 0 ? prod.variants[0] : null
+  const availPieces = getAvailablePieces(prod, firstVariant)
+
+  if (prod.track_serial) {
+    const usedSerialIds = new Set(
+      detailedForm.value.items.map((it) => it.serial_id).filter(Boolean)
+    )
+    const firstUnusedSerial = prodSerials.find((s) => !usedSerialIds.has(s.id)) || null
+    if (prodSerials.length === 0 || !firstUnusedSerial) {
+      swalError(
+        'تجاوز المخزون المتاح',
+        `لا توجد وحدات متاحة برقم سيريال في المخزون للصنف (${prod.name})`
+      )
+      return
+    }
+    const today = new Date().toISOString().slice(0, 10)
+    const endD = new Date()
+    endD.setMonth(endD.getMonth() + Number(prod.warranty_months || 0))
+
+    detailedForm.value.items.push({
+      product_id: prod.id,
+      variant_id: firstVariant?.id || null,
+      product_name: prod.name,
+      variant_name: firstVariant?.variant_name || '',
+      item_type: prod.type,
+      unit: 'piece',
+      pack_size: prod.pack_size || 1,
+      quantity: 1,
+      deducted_pieces_qty: 1,
+      serial_id: firstUnusedSerial.id,
+      serial_no: firstUnusedSerial.serial_no,
+      condition: firstUnusedSerial.condition,
+      ear_side: firstUnusedSerial.ear_side || 'الأذن اليمنى (Right)',
+      unit_cost: prod.cost_price,
+      unit_price: prod.sale_price,
+      discount: 0,
+      total_price: prod.sale_price,
+      warranty_months: prod.warranty_months || 0,
+      warranty_start: prod.warranty_months > 0 ? today : null,
+      warranty_end: prod.warranty_months > 0 ? endD.toISOString().slice(0, 10) : null,
+      returned_qty: 0,
+      track_serial: prod.track_serial,
+      has_variants: prod.has_variants,
+      available_variants: prod.variants || [],
+      product_serials: prodSerials,
+      available_qty: prodSerials.length
+    })
+    selectedDetailedProdId.value = null
+    return
+  }
+
+  const usedPieces = getDetailedUsedPieces(prod.id, firstVariant?.id || null)
+  if (usedPieces + 1 > availPieces) {
+    swalError(
+      'تجاوز المخزون المتاح',
+      `الرصيد المتاح للصنف (${prod.name}) هو ${availPieces} قطعة فقط`
+    )
+    return
+  }
 
   const today = new Date().toISOString().slice(0, 10)
   const endD = new Date()
@@ -391,10 +541,10 @@ function addDetailedItem(): void {
     pack_size: prod.pack_size || 1,
     quantity: 1,
     deducted_pieces_qty: 1,
-    serial_id: firstSerial ? firstSerial.id : null,
-    serial_no: firstSerial ? firstSerial.serial_no : '',
-    condition: firstSerial ? firstSerial.condition : 'new',
-    ear_side: firstSerial?.ear_side || (prod.track_serial ? 'الأذن اليمنى (Right)' : ''),
+    serial_id: null,
+    serial_no: '',
+    condition: 'new',
+    ear_side: '',
     unit_cost: prod.cost_price,
     unit_price: prod.sale_price,
     discount: 0,
@@ -406,7 +556,8 @@ function addDetailedItem(): void {
     track_serial: prod.track_serial,
     has_variants: prod.has_variants,
     available_variants: prod.variants || [],
-    product_serials: prodSerials
+    product_serials: prodSerials,
+    available_qty: availPieces
   })
   selectedDetailedProdId.value = null
 }
@@ -414,11 +565,73 @@ function addDetailedItem(): void {
 function onSerialChange(itemIndex: number): void {
   const it = detailedForm.value.items[itemIndex]
   if (!it || !it.serial_id) return
+  const duplicate = detailedForm.value.items.some(
+    (other, idx) => idx !== itemIndex && other.serial_id === it.serial_id
+  )
+  if (duplicate) {
+    swalError('سيريال مكرر', 'هذا السيريال مختار بالفعل في بند آخر ضمن نفس الفاتورة')
+    it.serial_id = null
+    it.serial_no = ''
+    return
+  }
   const sr = it.product_serials?.find((s) => s.id === it.serial_id)
   if (sr) {
     it.serial_no = sr.serial_no
     it.condition = sr.condition
     if (sr.ear_side) it.ear_side = sr.ear_side
+  }
+}
+
+function onDetailedItemQtyInput(itemIndex: number): void {
+  const it = detailedForm.value.items[itemIndex]
+  if (!it) return
+  if (typeof it.quantity === 'number' && it.quantity < 1) {
+    it.quantity = 1
+  }
+  if (it.item_type === 'service' || it.track_serial) return
+
+  const prod = products.value.find((p) => p.id === it.product_id)
+  const variant = prod?.variants?.find((v) => v.id === it.variant_id)
+  const availPieces = prod ? getAvailablePieces(prod, variant) : Number(it.available_qty ?? 0)
+  const otherPieces = getDetailedUsedPieces(it.product_id, it.variant_id || null, itemIndex)
+  const step = it.unit === 'pack' ? it.pack_size || 1 : 1
+  const maxAllowedQty = Math.max(0, Math.floor((availPieces - otherPieces) / step))
+
+  if (Number(it.quantity || 0) > maxAllowedQty) {
+    it.quantity = Math.max(1, maxAllowedQty)
+    swalError(
+      'تجاوز المخزون المتاح',
+      `الرصيد المتاح للصنف (${it.product_name}) هو ${availPieces} قطعة فقط`
+    )
+  }
+}
+
+function onDetailedItemPriceInput(itemIndex: number): void {
+  const it = detailedForm.value.items[itemIndex]
+  if (!it) return
+  if (typeof it.unit_price === 'number' && it.unit_price < 0) {
+    it.unit_price = 0
+  }
+}
+
+function onDetailedItemDiscountInput(itemIndex: number): void {
+  const it = detailedForm.value.items[itemIndex]
+  if (!it) return
+  if (typeof it.discount === 'number' && it.discount < 0) {
+    it.discount = 0
+  }
+}
+
+function onDetailedDiscountInput(): void {
+  if (typeof detailedForm.value.discount === 'number' && detailedForm.value.discount < 0) {
+    detailedForm.value.discount = 0
+  }
+}
+
+function onDetailedPaidAmountInput(): void {
+  paidAmountManuallyEdited.value = true
+  if (typeof detailedForm.value.paid_amount === 'number' && detailedForm.value.paid_amount < 0) {
+    detailedForm.value.paid_amount = 0
   }
 }
 
@@ -431,11 +644,46 @@ async function handleSaveDetailedInvoice(shouldPrint = true): Promise<void> {
     swalError('لا توجد أصناف', 'يرجى إضافة صنف واحد على الأقل للفاتورة')
     return
   }
+  if (
+    Number(detailedForm.value.discount || 0) < 0 ||
+    Number(detailedForm.value.paid_amount || 0) < 0
+  ) {
+    swalError('قيمة غير صالحة', 'الخصم والمبلغ المدفوع لا يمكن أن يكونا بقيمة سالبة')
+    return
+  }
 
-  for (const it of detailedForm.value.items) {
-    if (it.track_serial && !it.serial_id) {
-      swalError('اختر السيريال', `يرجى تحديد السيريال نمبر للصنف (${it.product_name})`)
+  const seenSerialIds = new Set<number>()
+  for (let idx = 0; idx < detailedForm.value.items.length; idx++) {
+    const it = detailedForm.value.items[idx]
+    const qty = Number(it.quantity || 0)
+    const uPrice = Number(it.unit_price || 0)
+    const disc = Number(it.discount || 0)
+    if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(uPrice) || uPrice < 0 || disc < 0) {
+      swalError('بيانات غير صالحة', `يرجى مراجعة الكمية والسعر والخصم للبند (${it.product_name})`)
       return
+    }
+    if (it.track_serial) {
+      if (!it.serial_id) {
+        swalError('اختر السيريال', `يرجى تحديد السيريال نمبر للصنف (${it.product_name})`)
+        return
+      }
+      if (seenSerialIds.has(it.serial_id)) {
+        swalError('سيريال مكرر', `السيريال (${it.serial_no}) مكرر في أكثر من بند داخل الفاتورة`)
+        return
+      }
+      seenSerialIds.add(it.serial_id)
+    } else if (it.item_type !== 'service') {
+      const prod = products.value.find((p) => p.id === it.product_id)
+      const variant = prod?.variants?.find((v) => v.id === it.variant_id)
+      const availPieces = prod ? getAvailablePieces(prod, variant) : Number(it.available_qty ?? 0)
+      const totalUsedPieces = getDetailedUsedPieces(it.product_id, it.variant_id || null)
+      if (totalUsedPieces > availPieces) {
+        swalError(
+          'تجاوز المخزون المتاح',
+          `إجمالي الكمية المطلوبة للصنف (${it.product_name}) يتجاوز الرصيد المتاح (${availPieces} قطعة)`
+        )
+        return
+      }
     }
   }
 
@@ -565,6 +813,11 @@ const salesReturnForm = ref<{
     max_qty: number
     quantity: number
     return_condition: 'in_stock' | 'defective'
+    gross_unit_price: number
+    item_discount_per_unit: number
+    effective_unit_before_invoice_discount: number
+    invoice_discount_share_per_unit: number
+    net_unit_refund: number
   }>
 }>({
   payment_method: 'cash',
@@ -572,27 +825,103 @@ const salesReturnForm = ref<{
   items: []
 })
 
+const salesReturnSummary = computed(() => {
+  const inv = invoiceToReturn.value
+  if (!inv) {
+    return {
+      invoiceDiscountTotal: 0,
+      hasInvoiceDiscount: false,
+      totalReturnAmount: 0,
+      balanceAdjusted: 0,
+      cashRefunded: 0
+    }
+  }
+  const invoiceDiscountTotal = roundMoney(
+    Number(inv.discount || 0) + Number(inv.trade_in_credit || 0)
+  )
+  const totalReturnAmount = roundMoney(
+    salesReturnForm.value.items.reduce((sum, item) => {
+      const qty = Math.max(0, Number(item.quantity || 0))
+      if (qty <= 0) return sum
+      return sum + roundMoney(item.net_unit_refund * qty)
+    }, 0)
+  )
+  const balanceAdjusted = roundMoney(
+    Math.min(Math.max(0, Number(inv.remaining_amount || 0)), totalReturnAmount)
+  )
+  const cashRefunded = roundMoney(Math.max(0, totalReturnAmount - balanceAdjusted))
+  return {
+    invoiceDiscountTotal,
+    hasInvoiceDiscount: invoiceDiscountTotal > 0,
+    totalReturnAmount,
+    balanceAdjusted,
+    cashRefunded
+  }
+})
+
+function onSalesReturnItemQtyInput(item: { quantity: number; max_qty: number }): void {
+  if (typeof item.quantity === 'number' && item.quantity < 0) {
+    item.quantity = 0
+  }
+}
+
 function openSalesReturnModal(inv: SalesInvoice): void {
   invoiceToReturn.value = inv
+  const subtotal = Number(inv.subtotal || 0)
+  const totalAmount = Number(inv.total_amount || 0)
+  const invoiceRatio = subtotal > 0 ? totalAmount / subtotal : 1
+
   salesReturnForm.value = {
     payment_method: inv.payment_method || 'cash',
     reason: '',
     items: (inv.items || [])
       .filter((it) => it.quantity - (it.returned_qty || 0) > 0)
-      .map((it) => ({
-        invoice_item_id: it.id!,
-        product_name: it.product_name,
-        serial_no: it.serial_no || '',
-        max_qty: it.quantity - (it.returned_qty || 0),
-        quantity: 0,
-        return_condition: 'in_stock'
-      }))
+      .map((it) => {
+        const origQty = Math.max(1, Number(it.quantity || 1))
+        const grossUnit = Number(it.unit_price || 0)
+        const lineTotal = Number(
+          it.total_price ?? Math.max(0, origQty * grossUnit - Number(it.discount || 0))
+        )
+        const effectiveUnitBeforeInvDisc = lineTotal / origQty
+        const itemDiscountPerUnit = Math.max(0, grossUnit - effectiveUnitBeforeInvDisc)
+        const netUnitRefund = effectiveUnitBeforeInvDisc * invoiceRatio
+        const invoiceDiscountSharePerUnit = Math.max(0, effectiveUnitBeforeInvDisc - netUnitRefund)
+
+        return {
+          invoice_item_id: it.id!,
+          product_name: it.product_name,
+          serial_no: it.serial_no || '',
+          max_qty: it.quantity - (it.returned_qty || 0),
+          quantity: 0,
+          return_condition: 'in_stock',
+          gross_unit_price: roundMoney(grossUnit),
+          item_discount_per_unit: roundMoney(itemDiscountPerUnit),
+          effective_unit_before_invoice_discount: roundMoney(effectiveUnitBeforeInvDisc),
+          invoice_discount_share_per_unit: roundMoney(invoiceDiscountSharePerUnit),
+          net_unit_refund: netUnitRefund
+        }
+      })
   }
   salesReturnModalOpen.value = true
 }
 
 async function handleCreateSalesReturn(): Promise<void> {
   if (!invoiceToReturn.value) return
+  for (const item of salesReturnForm.value.items) {
+    const qty = Number(item.quantity || 0)
+    if (!Number.isFinite(qty) || qty < 0) {
+      swalError('كمية غير صالحة', `كمية المرتجع للصنف (${item.product_name}) لا يمكن أن تكون سالبة`)
+      return
+    }
+    if (qty > item.max_qty) {
+      swalError(
+        'تجاوز الحد المتاح',
+        `الكمية المرتجعة للصنف (${item.product_name}) تتجاوز المتبقي القابل للإرجاع (${item.max_qty})`
+      )
+      return
+    }
+  }
+
   const selected = salesReturnForm.value.items.filter((x) => Number(x.quantity || 0) > 0)
   if (selected.length === 0) {
     swalError('حدد الأصناف', 'يرجى تحديد الكمية المرتجعة لصنف واحد على الأقل')
@@ -618,7 +947,7 @@ async function handleCreateSalesReturn(): Promise<void> {
     }, 'جاري تسجيل مرتجع المبيعات...')
     swalSuccess('تم تسجيل مرتجع المبيعات وتحديث المخزون والخزينة بنجاح')
   } catch (err: unknown) {
-    swalError('تعذر تسجيل المرتجع', err instanceof Error ? err.message : '')
+    swalError('تعذر تسجيل المرتجع', extractErrorMessage(err))
   }
 }
 
@@ -648,6 +977,8 @@ const exchangeForm = ref<{
   new_serial_id: number | null
   new_ear_side: string
   new_value: number
+  difference_direction: 'collect' | 'refund'
+  difference_amount: number
   paid_difference: number
   payment_method: string
   create_external_repair_ticket: boolean
@@ -668,6 +999,8 @@ const exchangeForm = ref<{
   new_serial_id: null,
   new_ear_side: 'الأذن اليمنى (Right)',
   new_value: 0,
+  difference_direction: 'collect',
+  difference_amount: 0,
   paid_difference: 0,
   payment_method: 'cash',
   create_external_repair_ticket: true,
@@ -683,14 +1016,47 @@ const exchangeNewSerials = computed(() =>
 
 const exchangePriceDiff = computed(() => {
   if (exchangeForm.value.exchange_type === 'warranty_exchange') return 0
-  return (
+  return roundMoney(
     Number(exchangeForm.value.new_value || 0) - Number(exchangeForm.value.returned_value || 0)
   )
 })
 
+const signedExchangePaidDifference = computed(() => {
+  if (exchangeForm.value.exchange_type === 'warranty_exchange') return 0
+  const amt = roundMoney(Math.max(0, Number(exchangeForm.value.difference_amount || 0)))
+  if (amt === 0) return 0
+  return exchangeForm.value.difference_direction === 'refund' ? -amt : amt
+})
+
 watch(exchangePriceDiff, (diff) => {
+  exchangeForm.value.difference_direction = diff < 0 ? 'refund' : 'collect'
+  exchangeForm.value.difference_amount = roundMoney(Math.abs(diff))
   exchangeForm.value.paid_difference = diff
 })
+
+function onExchangeValueInput(): void {
+  if (typeof exchangeForm.value.returned_value === 'number' && exchangeForm.value.returned_value < 0) {
+    exchangeForm.value.returned_value = 0
+  }
+  if (typeof exchangeForm.value.new_value === 'number' && exchangeForm.value.new_value < 0) {
+    exchangeForm.value.new_value = 0
+  }
+}
+
+function onExchangeDiffAmountInput(): void {
+  if (
+    typeof exchangeForm.value.difference_amount === 'number' &&
+    exchangeForm.value.difference_amount < 0
+  ) {
+    exchangeForm.value.difference_amount = 0
+  }
+  exchangeForm.value.paid_difference = signedExchangePaidDifference.value
+}
+
+function setExchangeDirection(dir: 'collect' | 'refund'): void {
+  exchangeForm.value.difference_direction = dir
+  exchangeForm.value.paid_difference = signedExchangePaidDifference.value
+}
 
 function openExchangeModal(inv?: SalesInvoice): void {
   exchangeInvoice.value = inv || null
@@ -712,6 +1078,8 @@ function openExchangeModal(inv?: SalesInvoice): void {
     new_serial_id: null,
     new_ear_side: firstItem?.ear_side || 'الأذن اليمنى (Right)',
     new_value: defaultNewProd?.sale_price || 0,
+    difference_direction: 'collect',
+    difference_amount: 0,
     paid_difference: 0,
     payment_method: inv?.payment_method || 'cash',
     create_external_repair_ticket: true,
@@ -719,6 +1087,10 @@ function openExchangeModal(inv?: SalesInvoice): void {
     notes: ''
   }
   onExchangeNewProductChange()
+  const initialDiff = exchangePriceDiff.value
+  exchangeForm.value.difference_direction = initialDiff < 0 ? 'refund' : 'collect'
+  exchangeForm.value.difference_amount = roundMoney(Math.abs(initialDiff))
+  exchangeForm.value.paid_difference = initialDiff
   exchangeModalOpen.value = true
 }
 
@@ -746,6 +1118,14 @@ async function handleProcessExchange(): Promise<void> {
     swalError('اسم العميل', 'يرجى إدخال اسم العميل')
     return
   }
+  if (
+    Number(exchangeForm.value.returned_value || 0) < 0 ||
+    Number(exchangeForm.value.new_value || 0) < 0 ||
+    Number(exchangeForm.value.difference_amount || 0) < 0
+  ) {
+    swalError('قيمة غير صالحة', 'لا يمكن إدخال مبالغ سالبة؛ اختر اتجاه الفرق (تحصيل أو رد) وأدخل مبلغاً موجباً')
+    return
+  }
 
   try {
     await appStore.withLoading(async () => {
@@ -765,7 +1145,7 @@ async function handleProcessExchange(): Promise<void> {
           new_serial_id: exchangeForm.value.new_serial_id,
           new_ear_side: exchangeForm.value.new_ear_side,
           new_value: Number(exchangeForm.value.new_value || 0),
-          paid_difference: Number(exchangeForm.value.paid_difference || 0),
+          paid_difference: signedExchangePaidDifference.value,
           payment_method: exchangeForm.value.payment_method,
           create_external_repair_ticket: exchangeForm.value.create_external_repair_ticket,
           external_vendor: exchangeForm.value.external_vendor,
@@ -777,7 +1157,7 @@ async function handleProcessExchange(): Promise<void> {
     }, 'جاري تنفيذ عملية الاستبدال...')
     swalSuccess('تم تنفيذ عملية الاستبدال وتحديث السيريالات والمخزن بنجاح')
   } catch (err: unknown) {
-    swalError('تعذر تنفيذ الاستبدال', err instanceof Error ? err.message : '')
+    swalError('تعذر تنفيذ الاستبدال', extractErrorMessage(err))
   }
 }
 
@@ -1078,7 +1458,7 @@ onMounted(async () => {
                 </div>
                 <div class="text-[11px] text-slate-500">
                   {{ item.unit === 'pack' ? `شريط (${item.pack_size} حبة)` : 'قطعة مفردة' }} ×
-                  {{ item.unit_price }} ج.م
+                  {{ Number(item.unit_price || 0).toFixed(2) }} ج.م
                 </div>
               </div>
 
@@ -1093,15 +1473,15 @@ onMounted(async () => {
                 <span class="font-black w-6 text-center">{{ item.quantity }}</span>
                 <button
                   type="button"
-                  @click="item.quantity++"
+                  @click="incrementPosCartItem(idx)"
                   class="p-1 rounded bg-slate-200 dark:bg-slate-700 cursor-pointer"
                 >
                   <Plus class="w-3.5 h-3.5" />
                 </button>
               </div>
 
-              <div class="font-black text-emerald-600 w-16 text-left">
-                {{ (item.quantity * item.unit_price).toFixed(0) }} ج
+              <div class="font-black text-emerald-600 w-20 text-left">
+                {{ (item.quantity * item.unit_price).toFixed(2) }} ج.م
               </div>
             </div>
           </div>
@@ -1127,6 +1507,7 @@ onMounted(async () => {
                 <label class="block font-bold mb-1">خصم (ج.م)</label>
                 <input
                   v-model.number="posDiscount"
+                  @input="onPosDiscountInput"
                   type="number"
                   min="0"
                   class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold"
@@ -1352,12 +1733,28 @@ onMounted(async () => {
 
               <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                 <div>
-                  <label class="block font-bold text-slate-500 mb-1">الكمية</label>
+                  <label class="block font-bold text-slate-500 mb-1">
+                    الكمية
+                    <span
+                      v-if="item.item_type !== 'service' && item.available_qty !== undefined"
+                      class="text-[10px] text-slate-400 font-normal"
+                    >
+                      (متاح: {{ item.available_qty }})
+                    </span>
+                  </label>
                   <input
                     v-model.number="item.quantity"
+                    @input="onDetailedItemQtyInput(idx)"
                     :disabled="Boolean(item.track_serial)"
                     type="number"
                     min="1"
+                    :max="
+                      item.item_type === 'service'
+                        ? undefined
+                        : item.track_serial
+                          ? 1
+                          : Math.max(1, Number(item.available_qty || 1))
+                    "
                     class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold"
                   />
                 </div>
@@ -1365,6 +1762,7 @@ onMounted(async () => {
                   <label class="block font-bold text-slate-500 mb-1">سعر البيع (ج.م)</label>
                   <input
                     v-model.number="item.unit_price"
+                    @input="onDetailedItemPriceInput(idx)"
                     type="number"
                     min="0"
                     class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold"
@@ -1374,6 +1772,7 @@ onMounted(async () => {
                   <label class="block font-bold text-slate-500 mb-1">خصم على البند</label>
                   <input
                     v-model.number="item.discount"
+                    @input="onDetailedItemDiscountInput(idx)"
                     type="number"
                     min="0"
                     class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
@@ -1416,6 +1815,7 @@ onMounted(async () => {
             <label class="block font-bold mb-1">خصم إضافي على الفاتورة (ج.م)</label>
             <input
               v-model.number="detailedForm.discount"
+              @input="onDetailedDiscountInput"
               type="number"
               min="0"
               class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold"
@@ -1446,7 +1846,7 @@ onMounted(async () => {
             </div>
             <input
               v-model.number="detailedForm.paid_amount"
-              @input="paidAmountManuallyEdited = true"
+              @input="onDetailedPaidAmountInput"
               type="number"
               min="0"
               :max="detailedTotal"
@@ -1548,6 +1948,7 @@ onMounted(async () => {
               <th class="py-3 px-4">العميل</th>
               <th class="py-3 px-4">الأصناف والسيريال</th>
               <th class="py-3 px-4">الإجمالي</th>
+              <th class="py-3 px-4">المرتجع</th>
               <th class="py-3 px-4">المدفوع</th>
               <th class="py-3 px-4">المتبقي</th>
               <th class="py-3 px-4">التاريخ</th>
@@ -1556,7 +1957,7 @@ onMounted(async () => {
           </thead>
           <tbody class="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
             <tr v-if="invoices.length === 0">
-              <td colspan="8" class="py-10 text-center text-slate-400">لا توجد فواتير مبيعات مطابقة</td>
+              <td colspan="9" class="py-10 text-center text-slate-400">لا توجد فواتير مبيعات مطابقة</td>
             </tr>
             <tr
               v-for="inv in invoices"
@@ -1590,6 +1991,15 @@ onMounted(async () => {
                 </div>
               </td>
               <td class="py-3 px-4 font-black">{{ inv.total_amount }} ج.م</td>
+              <td class="py-3 px-4">
+                <span
+                  v-if="Number(inv.returned_amount || 0) > 0"
+                  class="inline-flex items-center px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 font-black text-[11px]"
+                >
+                  {{ Number(inv.returned_amount || 0).toFixed(2) }} ج.م
+                </span>
+                <span v-else class="text-slate-400">—</span>
+              </td>
               <td class="py-3 px-4 text-emerald-600 font-bold">{{ inv.paid_amount }} ج.م</td>
               <td class="py-3 px-4">
                 <span v-if="inv.remaining_amount > 0" class="text-rose-600 font-black">
@@ -1827,8 +2237,8 @@ onMounted(async () => {
       v-if="salesReturnModalOpen && invoiceToReturn"
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4"
     >
-      <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden">
-        <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+      <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
           <h3 class="font-black text-base text-slate-900 dark:text-white">
             تسجيل مرتجع مبيعات - فاتورة {{ invoiceToReturn.invoice_number }}
           </h3>
@@ -1837,42 +2247,113 @@ onMounted(async () => {
           </button>
         </div>
 
-        <div class="p-5 space-y-4 text-xs">
+        <div class="p-5 space-y-4 text-xs overflow-y-auto">
+          <div
+            v-if="salesReturnSummary.hasInvoiceDiscount"
+            class="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 flex items-center justify-between"
+          >
+            <span>
+              يوجد خصم / استبدال كلي على الفاتورة بقيمة
+              <strong>{{ salesReturnSummary.invoiceDiscountTotal.toFixed(2) }} ج.م</strong>
+              يُوزّع تناسبياً على صافي استرداد البنود.
+            </span>
+          </div>
+
           <div
             v-for="(item, idx) in salesReturnForm.items"
             :key="idx"
-            class="p-3 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-3"
+            class="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2.5"
           >
-            <div>
-              <div class="font-bold text-slate-900 dark:text-white">
-                {{ item.product_name }}
-                <span v-if="item.serial_no" class="font-mono text-indigo-600">
-                  (S/N: {{ item.serial_no }})
-                </span>
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div class="font-bold text-slate-900 dark:text-white">
+                  {{ item.product_name }}
+                  <span v-if="item.serial_no" class="font-mono text-indigo-600">
+                    (S/N: {{ item.serial_no }})
+                  </span>
+                </div>
+                <div class="text-slate-500">الحد الأقصى للاسترجاع: {{ item.max_qty }}</div>
               </div>
-              <div class="text-slate-500">الحد الأقصى للاسترجاع: {{ item.max_qty }}</div>
+
+              <div class="flex items-center gap-3">
+                <div>
+                  <label class="block text-[10px] font-bold mb-1">حالة المرتجع</label>
+                  <select
+                    v-model="item.return_condition"
+                    class="px-2 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                  >
+                    <option value="in_stock">سليم (يعود للمخزن)</option>
+                    <option value="defective">معيب / تالف</option>
+                  </select>
+                </div>
+                <div class="w-24">
+                  <label class="block text-[10px] font-bold mb-1">الكمية</label>
+                  <input
+                    v-model.number="item.quantity"
+                    @input="onSalesReturnItemQtyInput(item)"
+                    type="number"
+                    min="0"
+                    :max="item.max_qty"
+                    class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold"
+                  />
+                </div>
+              </div>
             </div>
 
-            <div class="flex items-center gap-3">
+            <!-- Per-Item Net Refund Breakdown -->
+            <div
+              class="grid grid-cols-2 sm:grid-cols-4 gap-2 p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/70 border border-slate-200/70 dark:border-slate-700/70 text-[11px]"
+            >
               <div>
-                <label class="block text-[10px] font-bold mb-1">حالة المرتجع</label>
-                <select
-                  v-model="item.return_condition"
-                  class="px-2 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
-                >
-                  <option value="in_stock">سليم (يعود للمخزن)</option>
-                  <option value="defective">معيب / تالف</option>
-                </select>
+                <span class="text-slate-500 block">سعر الوحدة بالبند:</span>
+                <span class="font-bold">
+                  {{ item.effective_unit_before_invoice_discount.toFixed(2) }} ج.م
+                </span>
               </div>
-              <div class="w-24">
-                <label class="block text-[10px] font-bold mb-1">الكمية</label>
-                <input
-                  v-model.number="item.quantity"
-                  type="number"
-                  min="0"
-                  :max="item.max_qty"
-                  class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold"
-                />
+              <div>
+                <span class="text-slate-500 block">حصة خصم الفاتورة للوحدة:</span>
+                <span class="font-bold text-amber-600 dark:text-amber-400">
+                  -{{ item.invoice_discount_share_per_unit.toFixed(2) }} ج.م
+                </span>
+              </div>
+              <div>
+                <span class="text-slate-500 block">صافي استرداد الوحدة:</span>
+                <span class="font-black text-indigo-600 dark:text-indigo-400">
+                  {{ roundMoney(item.net_unit_refund).toFixed(2) }} ج.م
+                </span>
+              </div>
+              <div>
+                <span class="text-slate-500 block">صافي استرداد البند:</span>
+                <span class="font-black text-rose-600 dark:text-rose-400">
+                  {{
+                    roundMoney(item.net_unit_refund * Math.max(0, Number(item.quantity || 0))).toFixed(2)
+                  }}
+                  ج.م
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="salesReturnSummary.totalReturnAmount > 0"
+            class="grid grid-cols-3 gap-2 p-3 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800"
+          >
+            <div>
+              <div class="text-slate-500 text-[11px]">إجمالي صافي المرتجع:</div>
+              <div class="font-black text-sm text-rose-700 dark:text-rose-300">
+                {{ salesReturnSummary.totalReturnAmount.toFixed(2) }} ج.م
+              </div>
+            </div>
+            <div>
+              <div class="text-slate-500 text-[11px]">يُخصم من المتبقي بالآجل:</div>
+              <div class="font-bold text-sm text-amber-700 dark:text-amber-300">
+                {{ salesReturnSummary.balanceAdjusted.toFixed(2) }} ج.م
+              </div>
+            </div>
+            <div>
+              <div class="text-slate-500 text-[11px]">المسترد نقداً للعميل:</div>
+              <div class="font-black text-sm text-emerald-700 dark:text-emerald-300">
+                {{ salesReturnSummary.cashRefunded.toFixed(2) }} ج.م
               </div>
             </div>
           </div>
@@ -2052,6 +2533,7 @@ onMounted(async () => {
                 <label class="block font-bold mb-1">قيمة التقييم / الاسترداد (ج.م)</label>
                 <input
                   v-model.number="exchangeForm.returned_value"
+                  @input="onExchangeValueInput"
                   type="number"
                   min="0"
                   class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold"
@@ -2094,6 +2576,7 @@ onMounted(async () => {
                 <label class="block font-bold mb-1">سعر الصنف الجديد (ج.م)</label>
                 <input
                   v-model.number="exchangeForm.new_value"
+                  @input="onExchangeValueInput"
                   type="number"
                   min="0"
                   class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold"
@@ -2120,33 +2603,118 @@ onMounted(async () => {
             />
           </div>
 
-          <!-- Price Difference -->
+          <!-- Price Difference (Explicit Direction: Collect vs Refund) -->
           <div
             v-else
-            class="grid grid-cols-3 gap-3 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 items-end"
+            class="p-3.5 rounded-xl bg-slate-100 dark:bg-slate-800 space-y-3"
           >
-            <div>
-              <div class="text-slate-500">فارق السعر المحسوب:</div>
-              <div class="text-base font-black text-indigo-600">{{ exchangePriceDiff }} ج.م</div>
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-700 pb-2.5">
+              <div>
+                <span class="text-slate-500">فارق القيمة الحسابي:</span>
+                <span class="text-base font-black text-indigo-600 dark:text-indigo-400 mr-1.5">
+                  {{ Math.abs(exchangePriceDiff).toFixed(2) }} ج.م
+                </span>
+                <span
+                  class="mr-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold"
+                  :class="
+                    exchangePriceDiff > 0
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                      : exchangePriceDiff < 0
+                        ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300'
+                        : 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300'
+                  "
+                >
+                  {{
+                    exchangePriceDiff > 0
+                      ? 'مستحق على العميل لصالح المركز (+)'
+                      : exchangePriceDiff < 0
+                        ? 'مستحق للعميل يرده المركز (-)'
+                        : 'تساوي في القيمة (بدون فرق)'
+                  }}
+                </span>
+              </div>
+              <div class="text-[11px] font-black">
+                الأثر المالي المرسل للخزينة:
+                <span
+                  :class="
+                    signedExchangePaidDifference > 0
+                      ? 'text-emerald-600'
+                      : signedExchangePaidDifference < 0
+                        ? 'text-rose-600'
+                        : 'text-slate-500'
+                  "
+                  dir="ltr"
+                >
+                  {{
+                    signedExchangePaidDifference > 0
+                      ? `+${signedExchangePaidDifference.toFixed(2)}`
+                      : signedExchangePaidDifference.toFixed(2)
+                  }}
+                  ج.م
+                </span>
+              </div>
             </div>
-            <div>
-              <label class="block font-bold mb-1">المدفوع / المردود فعلياً</label>
-              <input
-                v-model.number="exchangeForm.paid_difference"
-                type="number"
-                class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-black"
-              />
-            </div>
-            <div>
-              <label class="block font-bold mb-1">طريقة الدفع</label>
-              <select
-                v-model="exchangeForm.payment_method"
-                class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
-              >
-                <option v-for="(label, key) in PAYMENT_METHODS" :key="key" :value="key">
-                  {{ label }}
-                </option>
-              </select>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+              <div>
+                <label class="block font-bold mb-1">اتجاه الفارق المالي</label>
+                <div class="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    @click="setExchangeDirection('collect')"
+                    class="px-2.5 py-1.5 rounded-lg border text-[11px] font-black transition cursor-pointer"
+                    :class="
+                      exchangeForm.difference_direction === 'collect'
+                        ? 'border-emerald-600 bg-emerald-600 text-white'
+                        : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300'
+                    "
+                  >
+                    + تحصيل من العميل
+                  </button>
+                  <button
+                    type="button"
+                    @click="setExchangeDirection('refund')"
+                    class="px-2.5 py-1.5 rounded-lg border text-[11px] font-black transition cursor-pointer"
+                    :class="
+                      exchangeForm.difference_direction === 'refund'
+                        ? 'border-rose-600 bg-rose-600 text-white'
+                        : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300'
+                    "
+                  >
+                    - رد نقدية للعميل
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label class="block font-bold mb-1">
+                  {{
+                    exchangeForm.difference_direction === 'refund'
+                      ? 'المبلغ المردود للعميل فعلياً (ج.م)'
+                      : 'المبلغ المحصل من العميل فعلياً (ج.م)'
+                  }}
+                </label>
+                <input
+                  v-model.number="exchangeForm.difference_amount"
+                  @input="onExchangeDiffAmountInput"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-black"
+                />
+              </div>
+
+              <div>
+                <label class="block font-bold mb-1">طريقة الدفع / الخزينة</label>
+                <select
+                  v-model="exchangeForm.payment_method"
+                  class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
+                >
+                  <option v-for="(label, key) in PAYMENT_METHODS" :key="key" :value="key">
+                    {{ label }}
+                  </option>
+                </select>
+              </div>
             </div>
           </div>
 

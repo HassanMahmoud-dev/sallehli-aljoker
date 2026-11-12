@@ -7,6 +7,7 @@ import { PAYMENT_METHODS } from '@renderer/constants/appliances'
 import type {
   Product,
   ProductVariant,
+  ProductSerial,
   Supplier,
   PurchaseInvoice,
   PurchaseItem,
@@ -40,24 +41,60 @@ const filterType = ref<'all' | 'supplier' | 'used_from_customer'>('all')
 const detailsModalOpen = ref(false)
 const selectedInvoice = ref<PurchaseInvoice | null>(null)
 
+interface PurchaseReturnFormItem {
+  invoice_item_id: number
+  product_id: number
+  variant_id: number | null
+  product_name: string
+  unit: 'piece' | 'pack'
+  pack_size: number
+  track_serial: boolean
+  max_qty: number
+  quantity: number
+  unit_cost: number
+  available_serials: Array<{ serial_no: string; status: string }>
+  unavailable_serials: Array<{ serial_no: string; status: string }>
+  selected_serials: string[]
+  used_fallback: boolean
+}
+
 const returnModalOpen = ref(false)
 const returnInvoice = ref<PurchaseInvoice | null>(null)
 const returnForm = ref<{
   payment_method: string
   reason: string
-  items: Array<{
-    invoice_item_id: number
-    product_name: string
-    max_qty: number
-    quantity: number
-    unit_cost: number
-    serials: string[]
-  }>
+  items: PurchaseReturnFormItem[]
 }>({
   payment_method: 'cash',
   reason: '',
   items: []
 })
+
+function extractErrorMessage(err: unknown, fallback = ''): string {
+  const raw = err instanceof Error ? err.message : String(err || '')
+  const cleaned = raw.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, '').trim()
+  return cleaned || fallback
+}
+
+function requiredReturnSerialsCount(item: Pick<PurchaseReturnFormItem, 'unit' | 'pack_size' | 'quantity'>): number {
+  const qty = Math.max(0, Number(item.quantity || 0))
+  return item.unit === 'pack' ? qty * Math.max(1, Number(item.pack_size || 1)) : qty
+}
+
+function serialStatusLabel(status: string): string {
+  switch (status) {
+    case 'in_stock':
+      return 'متاح بالمخزن'
+    case 'sold':
+      return 'مباع'
+    case 'returned':
+      return 'مرتجع مسبقاً'
+    case 'defective':
+      return 'تالف'
+    default:
+      return 'غير متاح بالمخزن'
+  }
+}
 
 // Purchase Form
 const form = ref<{
@@ -122,9 +159,31 @@ const remainingAmount = computed(() =>
   Math.max(0, totalAmount.value - Number(form.value.paid_amount || 0))
 )
 
+const paidAmountManuallyEdited = ref(false)
+
 watch(totalAmount, (newTotal) => {
-  form.value.paid_amount = newTotal
+  if (!paidAmountManuallyEdited.value) {
+    form.value.paid_amount = newTotal
+  }
 })
+
+function onPaidAmountInput(): void {
+  paidAmountManuallyEdited.value = true
+  if (typeof form.value.paid_amount === 'number' && form.value.paid_amount < 0) {
+    form.value.paid_amount = 0
+  }
+}
+
+function resetPaidAmountSync(): void {
+  paidAmountManuallyEdited.value = false
+  form.value.paid_amount = totalAmount.value
+}
+
+function onDiscountInput(): void {
+  if (typeof form.value.discount === 'number' && form.value.discount < 0) {
+    form.value.discount = 0
+  }
+}
 
 watch(activeTab, (tab) => {
   if (tab === 'new_supplier') {
@@ -145,6 +204,7 @@ watch([searchQuery, filterType], () => {
 })
 
 function resetForm(type: 'supplier' | 'used_from_customer'): void {
+  paidAmountManuallyEdited.value = false
   form.value = {
     purchase_type: type,
     supplier_id: suppliers.value[0]?.id || null,
@@ -233,16 +293,28 @@ function addItemToForm(): void {
 function onItemUnitOrQtyChange(index: number): void {
   const item = form.value.items[index]
   if (!item) return
+  if (typeof item.quantity === 'number' && item.quantity < 1) {
+    item.quantity = 1
+  }
   const prod = products.value.find((p) => p.id === item.product_id)
   const packSz = prod?.pack_size || item.pack_size || 1
   item.pack_size = packSz
-  item.added_pieces_qty = item.unit === 'pack' ? item.quantity * packSz : item.quantity
+  item.added_pieces_qty = item.unit === 'pack' ? Number(item.quantity || 1) * packSz : Number(item.quantity || 1)
   if (prod) {
     if (item.unit === 'pack') {
       item.unit_cost = Number(prod.pack_cost_price || prod.cost_price * packSz)
     } else {
       item.unit_cost = Number(prod.cost_price || 0)
     }
+  }
+  item.total_cost = Number(item.quantity || 1) * Number(item.unit_cost || 0)
+}
+
+function onItemCostInput(index: number): void {
+  const item = form.value.items[index]
+  if (!item) return
+  if (typeof item.unit_cost === 'number' && item.unit_cost < 0) {
+    item.unit_cost = 0
   }
   item.total_cost = Number(item.quantity || 1) * Number(item.unit_cost || 0)
 }
@@ -267,11 +339,27 @@ async function handleSavePurchase(): Promise<void> {
     return
   }
 
+  if (Number(form.value.discount || 0) < 0 || Number(form.value.paid_amount || 0) < 0) {
+    swalError('قيمة غير صالحة', 'الخصم والمبلغ المدفوع لا يمكن أن يكونا بقيمة سالبة')
+    return
+  }
+
+  if (Number(form.value.paid_amount || 0) > totalAmount.value) {
+    swalError('المبلغ المدفوع غير صالح', 'المبلغ المدفوع لا يمكن أن يتجاوز صافي الفاتورة')
+    return
+  }
+
   const preparedItems: PurchaseItem[] = []
   for (const it of form.value.items) {
+    const qty = Number(it.quantity || 0)
+    const unitCost = Number(it.unit_cost || 0)
+    if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(unitCost) || unitCost < 0) {
+      swalError('بيانات صنف غير صالحة', `يرجى مراجعة الكمية وسعر التكلفة للصنف (${it.product_name})`)
+      return
+    }
     const prod = products.value.find((p) => p.id === it.product_id)
     const packSz = prod?.pack_size || it.pack_size || 1
-    const addedPieces = it.unit === 'pack' ? Number(it.quantity || 1) * packSz : Number(it.quantity || 1)
+    const addedPieces = it.unit === 'pack' ? qty * packSz : qty
     const parsedSerials = (it.serials_text || '')
       .split(/[\n,;]+/)
       .map((s) => s.trim())
@@ -294,10 +382,10 @@ async function handleSavePurchase(): Promise<void> {
       variant_name: vObj?.variant_name || it.variant_name || '',
       unit: it.unit,
       pack_size: packSz,
-      quantity: Number(it.quantity || 1),
+      quantity: qty,
       added_pieces_qty: addedPieces,
-      unit_cost: Number(it.unit_cost || 0),
-      total_cost: Number(it.quantity || 1) * Number(it.unit_cost || 0),
+      unit_cost: unitCost,
+      total_cost: qty * unitCost,
       condition: form.value.purchase_type === 'used_from_customer' ? 'used' : it.condition,
       serials: parsedSerials,
       company_warranty_end: it.company_warranty_end || null,
@@ -324,11 +412,12 @@ async function handleSavePurchase(): Promise<void> {
         })
       )
       await loadInitial()
+      resetForm(form.value.purchase_type)
       activeTab.value = 'list'
     }, 'جاري حفظ فاتورة المشتريات وتحديث المخزون...')
     swalSuccess('تم حفظ فاتورة المشتريات وتوريد الأصناف للمخزن بنجاح')
   } catch (err: unknown) {
-    swalError('تعذر حفظ الفاتورة', err instanceof Error ? err.message : '')
+    swalError('تعذر حفظ الفاتورة', extractErrorMessage(err))
   }
 }
 
@@ -337,32 +426,183 @@ function openDetailsModal(inv: PurchaseInvoice): void {
   detailsModalOpen.value = true
 }
 
-function openReturnModal(inv: PurchaseInvoice): void {
+function onReturnItemQtyInput(rItem: PurchaseReturnFormItem): void {
+  if (typeof rItem.quantity === 'number' && rItem.quantity < 0) {
+    rItem.quantity = 0
+  }
+}
+
+async function openReturnModal(inv: PurchaseInvoice): Promise<void> {
+  const returnableItems = (inv.items || []).filter((it) => it.quantity - (it.returned_qty || 0) > 0)
+  const serializedProductIds = Array.from(
+    new Set(
+      returnableItems
+        .filter((it) => {
+          const prod = products.value.find((p) => p.id === it.product_id)
+          return Boolean(prod?.track_serial) || (Array.isArray(it.serials) && it.serials.length > 0)
+        })
+        .map((it) => it.product_id)
+    )
+  )
+
+  const inStockByProduct = new Map<number, ProductSerial[]>()
+  const statusMapByProduct = new Map<number, Map<string, string>>()
+
+  try {
+    if (serializedProductIds.length > 0) {
+      await appStore.withLoading(async () => {
+        await Promise.all(
+          serializedProductIds.map(async (pid) => {
+            const [inStockList, allSerialsList] = await Promise.all([
+              window.api.listProductSerials({ product_id: pid, status: 'in_stock' }),
+              window.api.listProductSerials({ product_id: pid })
+            ])
+            inStockByProduct.set(pid, inStockList)
+            const statusMap = new Map<string, string>()
+            for (const s of allSerialsList) {
+              statusMap.set(s.serial_no, s.status)
+            }
+            for (const s of inStockList) {
+              statusMap.set(s.serial_no, 'in_stock')
+            }
+            statusMapByProduct.set(pid, statusMap)
+          })
+        )
+      }, 'جاري جلب السيريالات المتاحة في المخزون...')
+    }
+  } catch (err: unknown) {
+    swalError('تعذر تحميل السيريالات المتاحة', extractErrorMessage(err))
+    return
+  }
+
   returnInvoice.value = inv
   returnForm.value = {
     payment_method: inv.payment_method || 'cash',
     reason: '',
-    items: (inv.items || [])
-      .filter((it) => it.quantity - (it.returned_qty || 0) > 0)
-      .map((it) => ({
+    items: returnableItems.map((it) => {
+      const prod = products.value.find((p) => p.id === it.product_id)
+      const invoiceSerials = Array.isArray(it.serials)
+        ? Array.from(new Set(it.serials.map((s) => String(s || '').trim()).filter(Boolean)))
+        : []
+      const isSerialized = Boolean(prod?.track_serial) || invoiceSerials.length > 0
+
+      let availableSerials: Array<{ serial_no: string; status: string }> = []
+      let unavailableSerials: Array<{ serial_no: string; status: string }> = []
+      let usedFallback = false
+
+      if (isSerialized) {
+        const inStockList = inStockByProduct.get(it.product_id) || []
+        const inStockMap = new Map(inStockList.map((s) => [s.serial_no, s]))
+        const statusMap = statusMapByProduct.get(it.product_id) || new Map<string, string>()
+        const invoiceLinkedInStock = inStockList.filter(
+          (s) =>
+            s.purchase_item_id === it.id &&
+            (!it.variant_id || s.variant_id === it.variant_id)
+        )
+
+        if (invoiceSerials.length > 0) {
+          const seenAvailable = new Set<string>()
+          for (const sn of invoiceSerials) {
+            if (inStockMap.has(sn)) {
+              availableSerials.push({ serial_no: sn, status: 'in_stock' })
+              seenAvailable.add(sn)
+            } else {
+              unavailableSerials.push({
+                serial_no: sn,
+                status: statusMap.get(sn) || 'unavailable'
+              })
+            }
+          }
+          for (const s of invoiceLinkedInStock) {
+            if (!seenAvailable.has(s.serial_no)) {
+              availableSerials.push({ serial_no: s.serial_no, status: 'in_stock' })
+              seenAvailable.add(s.serial_no)
+            }
+          }
+        } else if (invoiceLinkedInStock.length > 0) {
+          availableSerials = invoiceLinkedInStock.map((s) => ({
+            serial_no: s.serial_no,
+            status: 'in_stock'
+          }))
+        } else {
+          const fallbackInStock = inStockList.filter(
+            (s) => !it.variant_id || s.variant_id === it.variant_id
+          )
+          availableSerials = fallbackInStock.map((s) => ({
+            serial_no: s.serial_no,
+            status: 'in_stock'
+          }))
+          usedFallback = availableSerials.length > 0
+        }
+      }
+
+      return {
         invoice_item_id: it.id!,
-        product_name:
-          it.product_name + (it.variant_name ? ` (${it.variant_name})` : ''),
+        product_id: it.product_id,
+        variant_id: it.variant_id || null,
+        product_name: it.product_name + (it.variant_name ? ` (${it.variant_name})` : ''),
+        unit: it.unit || 'piece',
+        pack_size: prod?.pack_size || it.pack_size || 1,
+        track_serial: isSerialized,
         max_qty: it.quantity - (it.returned_qty || 0),
         quantity: 0,
         unit_cost: it.unit_cost,
-        serials: it.serials || []
-      }))
+        available_serials: availableSerials,
+        unavailable_serials: unavailableSerials,
+        selected_serials: [],
+        used_fallback: usedFallback
+      }
+    })
   }
   returnModalOpen.value = true
 }
 
 async function handleCreatePurchaseReturn(): Promise<void> {
   if (!returnInvoice.value) return
+  for (const item of returnForm.value.items) {
+    const qty = Number(item.quantity || 0)
+    if (!Number.isFinite(qty) || qty < 0) {
+      swalError('كمية غير صالحة', `كمية المرتجع للصنف (${item.product_name}) لا يمكن أن تكون سالبة`)
+      return
+    }
+    if (qty > item.max_qty) {
+      swalError(
+        'تجاوز الحد المتاح',
+        `الكمية المرتجعة للصنف (${item.product_name}) تتجاوز المتبقي القابل للإرجاع (${item.max_qty})`
+      )
+      return
+    }
+  }
+
   const selected = returnForm.value.items.filter((x) => Number(x.quantity || 0) > 0)
   if (selected.length === 0) {
     swalError('حدد الأصناف', 'يرجى إدخال الكمية المرتجعة لصنف واحد على الأقل')
     return
+  }
+
+  for (const item of selected) {
+    if (!item.track_serial) continue
+    const qty = Number(item.quantity)
+    if (!Number.isInteger(qty)) {
+      swalError('كمية غير صحيحة', `كمية الصنف المسلسل (${item.product_name}) يجب أن تكون رقماً صحيحاً`)
+      return
+    }
+    const reqCount = requiredReturnSerialsCount(item)
+    if (item.selected_serials.length !== reqCount) {
+      swalError(
+        'اختيار السيريالات مطلوب',
+        `الصنف (${item.product_name}) يتطلب تحديد ${reqCount} سيريال متاح بالمخزون (المختار حالياً: ${item.selected_serials.length})`
+      )
+      return
+    }
+    const inStockSet = new Set(item.available_serials.map((s) => s.serial_no))
+    if (item.selected_serials.some((sn) => !inStockSet.has(sn))) {
+      swalError(
+        'سيريالات غير متاحة',
+        `يوجد سيريال غير متاح بالمخزن (in_stock) ضمن الاختيارات للصنف (${item.product_name})`
+      )
+      return
+    }
   }
 
   try {
@@ -375,7 +615,7 @@ async function handleCreatePurchaseReturn(): Promise<void> {
           items: selected.map((x) => ({
             invoice_item_id: x.invoice_item_id,
             quantity: Number(x.quantity),
-            serials: x.serials.slice(0, Number(x.quantity))
+            serials: x.track_serial ? [...x.selected_serials] : []
           }))
         })
       )
@@ -384,7 +624,7 @@ async function handleCreatePurchaseReturn(): Promise<void> {
     }, 'جاري تسجيل مرتجع المشتريات...')
     swalSuccess('تم تسجيل مرتجع المشتريات وتعديل رصيد المورد والمخزن بنجاح')
   } catch (err: unknown) {
-    swalError('تعذر تسجيل المرتجع', err instanceof Error ? err.message : '')
+    swalError('تعذر تسجيل المرتجع', extractErrorMessage(err))
   }
 }
 
@@ -713,6 +953,7 @@ onMounted(() => {
                   </label>
                   <input
                     v-model.number="item.unit_cost"
+                    @input="onItemCostInput(idx)"
                     type="number"
                     min="0"
                     step="0.01"
@@ -782,6 +1023,7 @@ onMounted(() => {
               </label>
               <input
                 v-model.number="form.discount"
+                @input="onDiscountInput"
                 type="number"
                 min="0"
                 class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm font-bold"
@@ -796,11 +1038,22 @@ onMounted(() => {
             </div>
 
             <div>
-              <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                المبلغ المدفوع الآن (ج.م)
-              </label>
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                  المبلغ المدفوع الآن (ج.م)
+                </label>
+                <button
+                  v-if="paidAmountManuallyEdited"
+                  type="button"
+                  @click="resetPaidAmountSync"
+                  class="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                >
+                  سداد بالكامل
+                </button>
+              </div>
               <input
                 v-model.number="form.paid_amount"
+                @input="onPaidAmountInput"
                 type="number"
                 min="0"
                 :max="totalAmount"
@@ -1095,8 +1348,8 @@ onMounted(() => {
       v-if="returnModalOpen && returnInvoice"
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4"
     >
-      <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden">
-        <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+      <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
           <h3 class="font-black text-base text-slate-900 dark:text-white">
             تسجيل مرتجع مشتريات - فاتورة {{ returnInvoice.invoice_number }}
           </h3>
@@ -1109,27 +1362,117 @@ onMounted(() => {
           </button>
         </div>
 
-        <div class="p-5 space-y-4 text-xs">
+        <div class="p-5 space-y-4 text-xs overflow-y-auto">
+          <div
+            v-if="returnForm.items.length === 0"
+            class="p-4 rounded-xl bg-slate-50 dark:bg-slate-800 text-center text-slate-500 font-bold"
+          >
+            لا توجد أصناف متبقية قابلة للإرجاع في هذه الفاتورة
+          </div>
+
           <div
             v-for="(rItem, idx) in returnForm.items"
             :key="idx"
-            class="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700"
+            class="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3"
           >
-            <div>
-              <div class="font-bold text-slate-900 dark:text-white">{{ rItem.product_name }}</div>
-              <div class="text-slate-500">
-                الحد الأقصى للإرجاع: {{ rItem.max_qty }} | تكلفة الوحدة: {{ rItem.unit_cost }} ج.م
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <div class="font-bold text-slate-900 dark:text-white">{{ rItem.product_name }}</div>
+                <div class="text-slate-500">
+                  الحد الأقصى للإرجاع: {{ rItem.max_qty }} | تكلفة الوحدة: {{ rItem.unit_cost }} ج.م
+                  <span v-if="rItem.track_serial" class="mr-2 font-bold text-indigo-600 dark:text-indigo-400">
+                    | متاح بالمخزن (in_stock): {{ rItem.available_serials.length }}
+                  </span>
+                </div>
+              </div>
+              <div class="w-28 shrink-0">
+                <label class="block text-[10px] font-bold mb-1">الكمية المرتجعة</label>
+                <input
+                  v-model.number="rItem.quantity"
+                  @input="onReturnItemQtyInput(rItem)"
+                  type="number"
+                  min="0"
+                  :max="rItem.max_qty"
+                  class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold"
+                />
               </div>
             </div>
-            <div class="w-28">
-              <label class="block text-[10px] font-bold mb-1">الكمية المرتجعة</label>
-              <input
-                v-model.number="rItem.quantity"
-                type="number"
-                min="0"
-                :max="rItem.max_qty"
-                class="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold"
-              />
+
+            <!-- Serial Selection for Tracked Products -->
+            <div
+              v-if="rItem.track_serial"
+              class="pt-2.5 border-t border-slate-100 dark:border-slate-800 space-y-2"
+            >
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  <Barcode class="w-3.5 h-3.5 text-indigo-500" />
+                  <span>اختر السيريالات المتاحة في المخزون (in_stock) يدوياً:</span>
+                  <span
+                    v-if="rItem.used_fallback"
+                    class="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 text-[10px]"
+                  >
+                    عرض سيريالات المخزون المتاحة
+                  </span>
+                </div>
+                <span
+                  v-if="Number(rItem.quantity || 0) > 0"
+                  class="px-2 py-0.5 rounded-full text-[11px] font-black"
+                  :class="
+                    rItem.selected_serials.length === requiredReturnSerialsCount(rItem)
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                      : 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300'
+                  "
+                >
+                  المختار: {{ rItem.selected_serials.length }} / المطلوب:
+                  {{ requiredReturnSerialsCount(rItem) }}
+                </span>
+              </div>
+
+              <div
+                v-if="rItem.available_serials.length === 0"
+                class="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold"
+              >
+                لا توجد سيريالات متاحة في المخزن (in_stock) قابلة للإرجاع لهذا الصنف حالياً.
+              </div>
+
+              <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-36 overflow-y-auto p-1">
+                <label
+                  v-for="ser in rItem.available_serials"
+                  :key="ser.serial_no"
+                  class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border cursor-pointer transition-colors"
+                  :class="
+                    rItem.selected_serials.includes(ser.serial_no)
+                      ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-900 dark:text-indigo-100'
+                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 hover:border-indigo-300'
+                  "
+                >
+                  <input
+                    v-model="rItem.selected_serials"
+                    type="checkbox"
+                    :value="ser.serial_no"
+                    class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span class="font-mono font-bold truncate" dir="ltr">{{ ser.serial_no }}</span>
+                  <span class="mr-auto text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">
+                    متاح
+                  </span>
+                </label>
+              </div>
+
+              <div
+                v-if="rItem.unavailable_serials.length > 0"
+                class="flex flex-wrap gap-1.5 pt-1 text-[10px] text-slate-500"
+              >
+                <span class="font-bold">سيريالات غير متاحة للإرجاع:</span>
+                <span
+                  v-for="uSer in rItem.unavailable_serials"
+                  :key="uSer.serial_no"
+                  class="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 line-through font-mono"
+                  dir="ltr"
+                >
+                  {{ uSer.serial_no }} ({{ serialStatusLabel(uSer.status) }})
+                </span>
+              </div>
             </div>
           </div>
 
