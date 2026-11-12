@@ -42,42 +42,67 @@ function handleLogoUpload(e: Event): void {
 }
 
 async function handleSaveSettings(): Promise<void> {
-  await appStore.withLoading(async () => {
-    await window.api.saveSettings(plain(form.value))
-    await appStore.loadSettings()
-    statusMessage.value = 'تم حفظ إعدادات المركز وقوالب الطباعة بنجاح!'
-  }, 'جاري حفظ إعدادات المركز...')
-  swalSuccess('تم حفظ إعدادات المركز وقوالب الطباعة بنجاح!')
-  setTimeout(() => {
-    statusMessage.value = ''
-  }, 4000)
+  try {
+    await appStore.withLoading(async () => {
+      await window.api.saveSettings(plain(form.value))
+      await appStore.loadSettings()
+      statusMessage.value = 'تم حفظ إعدادات المركز وقوالب الطباعة بنجاح!'
+    }, 'جاري حفظ إعدادات المركز...')
+    swalSuccess('تم حفظ إعدادات المركز وقوالب الطباعة بنجاح!')
+    setTimeout(() => {
+      statusMessage.value = ''
+    }, 4000)
+  } catch (err: unknown) {
+    swalError('فشل حفظ الإعدادات', err instanceof Error ? err.message : '')
+  }
 }
 
 async function handleCreateBackup(): Promise<void> {
-  const res = await window.api.createBackup()
-  if (res.success) {
-    statusMessage.value = `تم حفظ النسخة الاحتياطية بنجاح في: ${res.filePath}`
-    swalSuccess('تم حفظ النسخة الاحتياطية بنجاح', res.filePath)
+  try {
+    const res = await window.api.createBackup()
+    if (res.success) {
+      statusMessage.value = `تم حفظ النسخة الاحتياطية بنجاح في: ${res.filePath}`
+      swalSuccess('تم حفظ النسخة الاحتياطية بنجاح', res.filePath)
+    }
+  } catch (err: unknown) {
+    swalError('فشل حفظ النسخة الاحتياطية', err instanceof Error ? err.message : '')
   }
 }
 
 async function handleChooseAutoBackupDir(): Promise<void> {
-  const res = await window.api.chooseBackupDir()
-  if (res.success && res.dirPath) {
-    form.value.auto_backup_dir = res.dirPath
-    await window.api.saveSettings(plain(form.value))
-    await appStore.loadSettings()
-    statusMessage.value = `تم تحديث مجلد النسخ الاحتياطي التلقائي إلى: ${res.dirPath}`
-    swalSuccess('تم تحديث مجلد النسخ الاحتياطي التلقائي', res.dirPath)
+  try {
+    const res = await window.api.chooseBackupDir()
+    if (res.success && res.dirPath) {
+      form.value.auto_backup_dir = res.dirPath
+      await appStore.withLoading(async () => {
+        await window.api.saveSettings(plain(form.value))
+        await appStore.loadSettings()
+      }, 'جاري حفظ مجلد النسخ الاحتياطي...')
+      statusMessage.value = `تم تحديث مجلد النسخ الاحتياطي التلقائي إلى: ${res.dirPath}`
+      swalSuccess('تم تحديث مجلد النسخ الاحتياطي التلقائي', res.dirPath)
+    }
+  } catch (err: unknown) {
+    swalError('فشل تحديث مجلد النسخ الاحتياطي', err instanceof Error ? err.message : '')
   }
 }
 
 async function handleRunAutoBackupNow(): Promise<void> {
-  await window.api.saveSettings(plain(form.value))
-  const res = await window.api.runAutoBackupNow()
-  if (res.success) {
-    statusMessage.value = `تم أخذ نسخة احتياطية تلقائية فورية في: ${res.filePath}`
-    swalSuccess('تم أخذ نسخة احتياطية فورية بنجاح', res.filePath)
+  try {
+    const res = await appStore.withLoading(async () => {
+      await window.api.saveSettings(plain(form.value))
+      return await window.api.runAutoBackupNow()
+    }, 'جاري أخذ نسخة احتياطية فورية...')
+    if (res.success) {
+      statusMessage.value = `تم أخذ نسخة احتياطية تلقائية فورية في: ${res.filePath}`
+      swalSuccess('تم أخذ نسخة احتياطية فورية بنجاح', res.filePath)
+    } else {
+      swalError(
+        'تعذر أخذ النسخة الاحتياطية التلقائية',
+        'تأكد من تفعيل النسخ الاحتياطي التلقائي وصلاحية مجلد الحفظ.'
+      )
+    }
+  } catch (err: unknown) {
+    swalError('فشل أخذ النسخة الاحتياطية الفورية', err instanceof Error ? err.message : '')
   }
 }
 
@@ -101,10 +126,20 @@ async function handleRestoreBackup(): Promise<void> {
 }
 
 async function handleDirectLocalUpdate(): Promise<void> {
-  const res = await window.api.installLocalUpdate()
-  if (res.success) {
-    statusMessage.value =
-      res.message || 'تم حفظ نسخة احتياطية وجاري تشغيل ملف التحديث المحلي الآن...'
+  try {
+    const res = await appStore.withLoading(
+      () => window.api.installLocalUpdate(),
+      'جاري التحقق من ملف التحديث المحلي وتشغيله...'
+    )
+    if (res.canceled) return
+    if (res.success) {
+      statusMessage.value =
+        res.message || 'تم حفظ نسخة احتياطية وجاري تشغيل ملف التحديث المحلي الآن...'
+    } else {
+      swalError('فشل التحديث المحلي', res.message || 'تعذر التحقق من ملف التحديث المحلي أو تشغيله.')
+    }
+  } catch (err: unknown) {
+    swalError('فشل التحديث المحلي', err instanceof Error ? err.message : '')
   }
 }
 
@@ -348,7 +383,7 @@ onMounted(loadSettingsData)
           <div
             class="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2.5"
           >
-            <div class="flex items-center justify-between">
+            <div v-if="appStore.isSuperAdmin" class="flex items-center justify-between">
               <label for="autoBackupToggle" class="font-black text-slate-900 dark:text-white">
                 تفعيل النسخ الاحتياطي التلقائي عند إغلاق البرنامج
               </label>
@@ -363,7 +398,7 @@ onMounted(loadSettingsData)
               />
             </div>
 
-            <div>
+            <div v-if="appStore.isSuperAdmin">
               <label class="block text-[11px] font-bold text-slate-500 mb-1">
                 مجلد حفظ النسخ التلقائية (يحتفظ بآخر {{ form.auto_backup_keep_count || 10 }} نسخ)
               </label>
@@ -424,6 +459,7 @@ onMounted(loadSettingsData)
           </button>
 
           <button
+            v-if="appStore.isSuperAdmin"
             type="button"
             @click="handleDirectLocalUpdate"
             class="w-full py-2 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold flex items-center justify-center gap-2 cursor-pointer"

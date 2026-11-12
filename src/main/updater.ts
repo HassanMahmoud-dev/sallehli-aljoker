@@ -27,7 +27,12 @@ const TRUSTED_UPDATE_EXACT_HOSTS = new Set([
   'github-releases.githubusercontent.com'
 ])
 
-const verifiedChecksumsByUrl = new Map<string, string>()
+interface ExpectedChecksums {
+  sha256?: string
+  sha512?: string
+}
+
+const verifiedChecksumsByUrl = new Map<string, ExpectedChecksums>()
 
 /** Validates that an update URL uses HTTPS and points only to trusted GitHub hosts. */
 export function isTrustedUpdateUrl(rawUrl: string): boolean {
@@ -45,27 +50,181 @@ export function isTrustedUpdateUrl(rawUrl: string): boolean {
 
 function normalizeSha256(raw?: string | null): string | undefined {
   if (!raw || typeof raw !== 'string') return undefined
-  const cleaned = raw.trim().replace(/^sha256:/i, '').trim().toLowerCase()
+  const cleaned = raw
+    .trim()
+    .replace(/^['"]|['"]$/g, '')
+    .trim()
+    .replace(/^sha-?256[:-]/i, '')
+    .trim()
+    .toLowerCase()
   return /^[a-f0-9]{64}$/.test(cleaned) ? cleaned : undefined
 }
 
-function extractSha256FromText(text: string, preferredFileName?: string): string | undefined {
+function normalizeSha512(raw?: string | null): string | undefined {
+  if (!raw || typeof raw !== 'string') return undefined
+  const cleaned = raw
+    .trim()
+    .replace(/^['"]|['"]$/g, '')
+    .trim()
+    .replace(/^sha-?512[:-]/i, '')
+    .trim()
+  if (!cleaned) return undefined
+  if (/^[a-f0-9]{128}$/i.test(cleaned)) {
+    return cleaned.toLowerCase()
+  }
+  const standardB64 = cleaned.replace(/-/g, '+').replace(/_/g, '/')
+  if (/^[A-Za-z0-9+/]{86}(?:==)?$/.test(standardB64)) {
+    const padded = standardB64.length === 86 ? `${standardB64}==` : standardB64
+    const buf = Buffer.from(padded, 'base64')
+    if (buf.length === 64 && buf.toString('base64') === padded) {
+      return buf.toString('hex').toLowerCase()
+    }
+  }
+  return undefined
+}
+
+function extractChecksumFromText(
+  text: string,
+  algorithm: 'sha256' | 'sha512',
+  preferredFileName?: string
+): string | undefined {
   if (!text) return undefined
+  const normalize = algorithm === 'sha256' ? normalizeSha256 : normalizeSha512
+  const hexLen = algorithm === 'sha256' ? 64 : 128
+  const hexPattern = new RegExp(`\\b([a-fA-F0-9]{${hexLen}})\\b`)
+  const labelPattern =
+    algorithm === 'sha256'
+      ? /sha-?256(?:\s*checksum)?\s*[:=-]\s*['"]?([a-fA-F0-9]{64})['"]?/i
+      : /sha-?512(?:\s*checksum)?\s*[:=-]\s*['"]?([a-fA-F0-9]{128}|[A-Za-z0-9+/_-]{86}(?:==)?)['"]?/i
+
   const lines = text.split(/\r?\n/)
   if (preferredFileName) {
     const baseName = preferredFileName.toLowerCase()
     for (const line of lines) {
-      if (line.toLowerCase().includes(baseName)) {
-        const m = line.match(/\b([a-fA-F0-9]{64})\b/)
-        if (m) return m[1].toLowerCase()
+      if (!line.toLowerCase().includes(baseName)) continue
+      const hexMatch = line.match(hexPattern)
+      if (hexMatch) return normalize(hexMatch[1])
+      const lineLabelMatch = line.match(labelPattern)
+      if (lineLabelMatch) {
+        const parsed = normalize(lineLabelMatch[1])
+        if (parsed) return parsed
       }
     }
   }
-  const labeledMatch = text.match(/sha-?256(?:\s*checksum)?\s*[:=]\s*([a-fA-F0-9]{64})\b/i)
-  if (labeledMatch) return labeledMatch[1].toLowerCase()
-  const singleHexLine = text.trim()
-  const direct = normalizeSha256(singleHexLine.split(/\s+/)[0])
-  return direct
+
+  const labeledMatch = text.match(labelPattern)
+  if (labeledMatch) {
+    const parsed = normalize(labeledMatch[1])
+    if (parsed) return parsed
+  }
+
+  const nonEmptyLines = lines.map((l) => l.trim()).filter(Boolean)
+  if (nonEmptyLines.length === 1) {
+    return normalize(nonEmptyLines[0].split(/\s+/)[0])
+  }
+  return undefined
+}
+
+function extractSha256FromText(text: string, preferredFileName?: string): string | undefined {
+  return extractChecksumFromText(text, 'sha256', preferredFileName)
+}
+
+function extractSha512FromText(text: string, preferredFileName?: string): string | undefined {
+  return extractChecksumFromText(text, 'sha512', preferredFileName)
+}
+
+interface ParsedLatestYml {
+  version?: string
+  path?: string
+  releaseDate?: string
+  sha256?: string
+  sha512?: string
+}
+
+function stripYamlQuotes(val: string): string {
+  return val.trim().replace(/^['"]|['"]$/g, '').trim()
+}
+
+function getBaseFileName(rawPath: string): string {
+  const clean = rawPath.split('?')[0].split('#')[0]
+  const lastSlash = Math.max(clean.lastIndexOf('/'), clean.lastIndexOf('\\'))
+  const base = lastSlash >= 0 ? clean.slice(lastSlash + 1) : clean
+  try {
+    return decodeURIComponent(base).toLowerCase()
+  } catch {
+    return base.toLowerCase()
+  }
+}
+
+function parseLatestYml(ymlText: string, preferredFileName?: string): ParsedLatestYml {
+  const versionMatch = ymlText.match(/^version:\s*(.+)$/m)
+  const pathMatch = ymlText.match(/^path:\s*(.+)$/m)
+  const dateMatch = ymlText.match(/^releaseDate:\s*(.+)$/m)
+  const sha256Match = ymlText.match(/^sha256:\s*(.+)$/m)
+  const sha512Match = ymlText.match(/^sha512:\s*(.+)$/m)
+
+  const version = versionMatch ? stripYamlQuotes(versionMatch[1]).replace(/^[vV]/, '') : undefined
+  const topLevelPath = pathMatch ? stripYamlQuotes(pathMatch[1]) : undefined
+  let path = topLevelPath
+  const releaseDate = dateMatch ? stripYamlQuotes(dateMatch[1]) : undefined
+
+  const fileEntries: Array<{ url?: string; sha256?: string; sha512?: string }> = []
+  let inFilesBlock = false
+  let currentEntry: { url?: string; sha256?: string; sha512?: string } | null = null
+  for (const line of ymlText.split(/\r?\n/)) {
+    if (/^files:\s*$/.test(line)) {
+      inFilesBlock = true
+      continue
+    }
+    if (inFilesBlock) {
+      if (/^[a-zA-Z0-9_]+:/.test(line)) {
+        inFilesBlock = false
+        currentEntry = null
+        continue
+      }
+      const itemStart = line.match(/^\s*-\s+(url|sha256|sha512):\s*(.+)$/)
+      if (itemStart) {
+        currentEntry = {}
+        fileEntries.push(currentEntry)
+        currentEntry[itemStart[1] as 'url' | 'sha256' | 'sha512'] = stripYamlQuotes(itemStart[2])
+        continue
+      }
+      const itemProp = line.match(/^\s+(url|sha256|sha512):\s*(.+)$/)
+      if (itemProp && currentEntry) {
+        currentEntry[itemProp[1] as 'url' | 'sha256' | 'sha512'] = stripYamlQuotes(itemProp[2])
+      }
+    }
+  }
+
+  const targetName = preferredFileName
+    ? getBaseFileName(preferredFileName)
+    : topLevelPath
+      ? getBaseFileName(topLevelPath)
+      : undefined
+
+  const matchedEntry = targetName
+    ? fileEntries.find((e) => e.url && getBaseFileName(e.url) === targetName)
+    : fileEntries.find((e) => e.url && e.url.toLowerCase().endsWith('.exe')) || fileEntries[0]
+
+  if (!path && matchedEntry?.url) {
+    path = matchedEntry.url
+  }
+
+  let sha256 = normalizeSha256(matchedEntry?.sha256)
+  let sha512 = normalizeSha512(matchedEntry?.sha512)
+
+  const topLevelMatchesTarget =
+    !preferredFileName ||
+    (Boolean(topLevelPath) && getBaseFileName(topLevelPath!) === getBaseFileName(preferredFileName))
+
+  if (!sha256 && topLevelMatchesTarget && sha256Match) {
+    sha256 = normalizeSha256(sha256Match[1])
+  }
+  if (!sha512 && topLevelMatchesTarget && sha512Match) {
+    sha512 = normalizeSha512(sha512Match[1])
+  }
+
+  return { version, path, releaseDate, sha256, sha512 }
 }
 
 function normalizeVersion(ver: string): number[] {
@@ -272,6 +431,7 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
     let releaseNotes = ''
     let publishedAt = ''
     let expectedSha256: string | undefined
+    let expectedSha512: string | undefined
 
     if (resolved.type === 'github') {
       const release = JSON.parse(bodyText)
@@ -287,9 +447,10 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
         if (exeAsset?.browser_download_url) {
           downloadUrl = String(exeAsset.browser_download_url)
           expectedSha256 = normalizeSha256(exeAsset.digest)
+          expectedSha512 = normalizeSha512(exeAsset.digest)
         }
 
-        if (!expectedSha256 && exeAsset?.name) {
+        if (!expectedSha256 && !expectedSha512 && exeAsset?.name) {
           const exeNameLower = String(exeAsset.name).toLowerCase()
           const checksumAsset = release.assets.find((a: { name?: string; browser_download_url?: string }) => {
             if (typeof a.name !== 'string' || typeof a.browser_download_url !== 'string') return false
@@ -297,23 +458,48 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
             return (
               lower === `${exeNameLower}.sha256` ||
               lower === `${exeNameLower}.sha256sum` ||
+              lower === `${exeNameLower}.sha512` ||
+              lower === `${exeNameLower}.sha512sum` ||
               lower === 'sha256sums.txt' ||
+              lower === 'sha512sums.txt' ||
               lower === 'checksums.txt' ||
-              lower.endsWith('.sha256')
+              lower.endsWith('.sha256') ||
+              lower.endsWith('.sha512')
             )
           })
           if (checksumAsset?.browser_download_url && isTrustedUpdateUrl(checksumAsset.browser_download_url)) {
             try {
               const checksumText = await fetchTextWithRedirects(checksumAsset.browser_download_url)
               expectedSha256 = extractSha256FromText(checksumText, exeAsset.name)
+              expectedSha512 = extractSha512FromText(checksumText, exeAsset.name)
+            } catch {
+              // Fall through to latest.yml / release notes / Authenticode verification
+            }
+          }
+        }
+
+        if (!expectedSha256 && !expectedSha512 && exeAsset?.name) {
+          const latestYmlAsset = release.assets.find(
+            (a: { name?: string; browser_download_url?: string }) =>
+              typeof a.name === 'string' &&
+              typeof a.browser_download_url === 'string' &&
+              a.name.toLowerCase() === 'latest.yml'
+          )
+          if (latestYmlAsset?.browser_download_url && isTrustedUpdateUrl(latestYmlAsset.browser_download_url)) {
+            try {
+              const ymlText = await fetchTextWithRedirects(latestYmlAsset.browser_download_url)
+              const parsedYml = parseLatestYml(ymlText, exeAsset.name)
+              expectedSha256 = parsedYml.sha256
+              expectedSha512 = parsedYml.sha512
             } catch {
               // Fall through to release notes / Authenticode verification
             }
           }
         }
 
-        if (!expectedSha256 && releaseNotes) {
+        if (!expectedSha256 && !expectedSha512 && releaseNotes) {
           expectedSha256 = extractSha256FromText(releaseNotes, exeAsset?.name)
+          expectedSha512 = extractSha512FromText(releaseNotes, exeAsset?.name)
         }
       }
     } else {
@@ -325,27 +511,22 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
         releaseNotes = String(json.notes || json.releaseNotes || json.body || '')
         publishedAt = String(json.publishedAt || json.releaseDate || '')
         expectedSha256 = normalizeSha256(json.sha256 || json.sha256Hex || json.digest)
+        expectedSha512 = normalizeSha512(json.sha512 || json.sha512Hex || json.digest)
       } catch {
-        // Parse latest.yml format from electron-builder
-        const versionMatch = bodyText.match(/^version:\s*['"]?([^\r\n'"]+)['"]?/m)
-        const pathMatch = bodyText.match(/^path:\s*['"]?([^\r\n'"]+)['"]?/m)
-        const dateMatch = bodyText.match(/^releaseDate:\s*['"]?([^\r\n'"]+)['"]?/m)
-        const sha256Match = bodyText.match(/^sha256:\s*['"]?([a-fA-F0-9]{64})['"]?/m)
-        if (versionMatch) {
-          latestVersion = versionMatch[1].trim().replace(/^[vV]/, '')
+        const parsedYml = parseLatestYml(bodyText)
+        if (parsedYml.version) {
+          latestVersion = parsedYml.version
         }
-        if (pathMatch) {
-          const fileName = pathMatch[1].trim()
-          downloadUrl = fileName.startsWith('http')
-            ? fileName
-            : new URL(fileName, resolved.url).toString()
+        if (parsedYml.path) {
+          downloadUrl = parsedYml.path.startsWith('http')
+            ? parsedYml.path
+            : new URL(parsedYml.path, resolved.url).toString()
         }
-        if (dateMatch) {
-          publishedAt = dateMatch[1].trim()
+        if (parsedYml.releaseDate) {
+          publishedAt = parsedYml.releaseDate
         }
-        if (sha256Match) {
-          expectedSha256 = normalizeSha256(sha256Match[1])
-        }
+        expectedSha256 = parsedYml.sha256
+        expectedSha512 = parsedYml.sha512
       }
     }
 
@@ -399,8 +580,11 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
       }
     }
 
-    if (expectedSha256) {
-      verifiedChecksumsByUrl.set(downloadUrl, expectedSha256)
+    if (expectedSha256 || expectedSha512) {
+      verifiedChecksumsByUrl.set(downloadUrl, {
+        sha256: expectedSha256,
+        sha512: expectedSha512
+      })
     }
 
     return {
@@ -428,6 +612,7 @@ interface DownloadState {
   url: string
   version?: string
   expectedSha256?: string
+  expectedSha512?: string
   isDownloading: boolean
   isPaused: boolean
   isReadyToInstall: boolean
@@ -438,6 +623,7 @@ const downloadState: DownloadState = {
   url: '',
   version: '',
   expectedSha256: undefined,
+  expectedSha512: undefined,
   isDownloading: false,
   isPaused: false,
   isReadyToInstall: false,
@@ -475,6 +661,8 @@ export function cancelOnlineUpdateDownload(
     activeAbortFn = null
   }
 
+  downloadState.expectedSha256 = undefined
+  downloadState.expectedSha512 = undefined
   downloadState.isDownloading = false
   downloadState.isPaused = false
   downloadState.isReadyToInstall = false
@@ -554,12 +742,24 @@ export function pauseOnlineUpdateDownload(
   }
 }
 
-function computeFileSha256(filePath: string): Promise<string> {
+function computeFileChecksums(
+  filePath: string,
+  includeSha512: boolean
+): Promise<{ sha256: string; sha512?: string }> {
   return new Promise((resolve, reject) => {
-    const hash = createHash('sha256')
+    const sha256Hash = createHash('sha256')
+    const sha512Hash = includeSha512 ? createHash('sha512') : null
     const stream = createReadStream(filePath)
-    stream.on('data', (chunk) => hash.update(chunk))
-    stream.on('end', () => resolve(hash.digest('hex').toLowerCase()))
+    stream.on('data', (chunk) => {
+      sha256Hash.update(chunk)
+      sha512Hash?.update(chunk)
+    })
+    stream.on('end', () =>
+      resolve({
+        sha256: sha256Hash.digest('hex').toLowerCase(),
+        sha512: sha512Hash ? sha512Hash.digest('hex').toLowerCase() : undefined
+      })
+    )
     stream.on('error', reject)
   })
 }
@@ -600,20 +800,58 @@ function getWindowsAuthenticodeStatus(targetPath: string): Promise<{ status: str
   })
 }
 
+export interface VerifyInstallerOptions {
+  expectedSha256?: string
+  expectedSha512?: string
+  allowUnsignedLocal?: boolean
+}
+
+function verifyHexDigest(
+  actualHex: string,
+  expectedRaw: string,
+  normalize: (raw?: string | null) => string | undefined,
+  label: 'SHA-256' | 'SHA-512'
+): { ok: true } | { ok: false; reason: string } {
+  const normalizedExpected = normalize(expectedRaw)
+  if (!normalizedExpected) {
+    return { ok: false, reason: `تنسيق بصمة ${label} المتوقعة غير صالح.` }
+  }
+  const actualBuf = Buffer.from(actualHex, 'hex')
+  const expectedBuf = Buffer.from(normalizedExpected, 'hex')
+  if (actualBuf.length !== expectedBuf.length || !timingSafeEqual(actualBuf, expectedBuf)) {
+    return {
+      ok: false,
+      reason: `فشل التحقق من بصمة ${label} لملف التحديث؛ قد يكون الملف تالفاً أو تم تعديله.`
+    }
+  }
+  return { ok: true }
+}
+
 /**
  * Performs pre-execution cryptographic & signature checks on a downloaded or local installer:
- * PE header check, optional SHA-256 verification, and Windows Authenticode signature validation.
+ * PE header check, optional SHA-256 / SHA-512 verification, and Windows Authenticode signature validation.
  */
 export async function verifyDownloadedInstaller(
   filePath: string,
-  expectedSha256?: string
+  expectedSha256OrOptions?: string | VerifyInstallerOptions,
+  extraOptions?: VerifyInstallerOptions
 ): Promise<{
   valid: boolean
   sha256: string
+  sha512?: string
   signed: boolean
   signatureStatus?: string
   reason?: string
 }> {
+  const opts: VerifyInstallerOptions =
+    typeof expectedSha256OrOptions === 'string'
+      ? { ...extraOptions, expectedSha256: expectedSha256OrOptions }
+      : { ...extraOptions, ...expectedSha256OrOptions }
+
+  const expectedSha256 = opts.expectedSha256
+  const expectedSha512 = opts.expectedSha512
+  const allowUnsignedLocal = Boolean(opts.allowUnsignedLocal)
+
   if (!filePath || !existsSync(filePath)) {
     return { valid: false, sha256: '', signed: false, reason: 'ملف التحديث غير موجود.' }
   }
@@ -656,32 +894,46 @@ export async function verifyDownloadedInstaller(
     }
   }
 
+  const needSha512 = expectedSha512 !== undefined && expectedSha512 !== ''
   let actualSha256 = ''
+  let actualSha512: string | undefined
   try {
-    actualSha256 = await computeFileSha256(filePath)
+    const hashes = await computeFileChecksums(filePath, needSha512)
+    actualSha256 = hashes.sha256
+    actualSha512 = hashes.sha512
   } catch {
-    return { valid: false, sha256: '', signed: false, reason: 'فشل حساب بصمة SHA-256 لملف التحديث.' }
+    return {
+      valid: false,
+      sha256: '',
+      signed: false,
+      reason: 'فشل حساب البصمة التشفيرية لملف التحديث.'
+    }
   }
 
   let checksumVerified = false
   if (expectedSha256 !== undefined && expectedSha256 !== '') {
-    const normalizedExpected = normalizeSha256(expectedSha256)
-    if (!normalizedExpected) {
+    const check = verifyHexDigest(actualSha256, expectedSha256, normalizeSha256, 'SHA-256')
+    if (!check.ok) {
       return {
         valid: false,
         sha256: actualSha256,
+        sha512: actualSha512,
         signed: false,
-        reason: 'تنسيق بصمة SHA-256 المتوقعة غير صالح.'
+        reason: check.reason
       }
     }
-    const actualBuf = Buffer.from(actualSha256, 'hex')
-    const expectedBuf = Buffer.from(normalizedExpected, 'hex')
-    if (actualBuf.length !== expectedBuf.length || !timingSafeEqual(actualBuf, expectedBuf)) {
+    checksumVerified = true
+  }
+
+  if (expectedSha512 !== undefined && expectedSha512 !== '') {
+    const check = verifyHexDigest(actualSha512 || '', expectedSha512, normalizeSha512, 'SHA-512')
+    if (!check.ok) {
       return {
         valid: false,
         sha256: actualSha256,
+        sha512: actualSha512,
         signed: false,
-        reason: 'فشل التحقق من بصمة SHA-256 لملف التحديث؛ قد يكون الملف تالفاً أو تم تعديله.'
+        reason: check.reason
       }
     }
     checksumVerified = true
@@ -693,6 +945,7 @@ export async function verifyDownloadedInstaller(
       return {
         valid: true,
         sha256: actualSha256,
+        sha512: actualSha512,
         signed: true,
         signatureStatus: auth.status
       }
@@ -702,6 +955,7 @@ export async function verifyDownloadedInstaller(
       return {
         valid: false,
         sha256: actualSha256,
+        sha512: actualSha512,
         signed: false,
         signatureStatus: auth.status,
         reason: `تم رفض ملف التحديث لأن التوقيع الرقمي (Authenticode) غير صالح أو غير موثوق (${auth.status}).`
@@ -709,12 +963,15 @@ export async function verifyDownloadedInstaller(
     }
 
     // Reject unsigned updates if the currently packaged binary itself carries a Valid signature.
+    let currentBinaryStatus: string | undefined
     if (app.isPackaged) {
       const currentBinarySig = await getWindowsAuthenticodeStatus(process.execPath)
-      if (currentBinarySig.status === 'Valid') {
+      currentBinaryStatus = currentBinarySig.status
+      if (currentBinaryStatus === 'Valid') {
         return {
           valid: false,
           sha256: actualSha256,
+          sha512: actualSha512,
           signed: false,
           signatureStatus: auth.status,
           reason: 'تم رفض ملف التحديث: التطبيق الحالي موقّع رقمياً ولا يُسمح بتثبيت تحديث غير موقّع.'
@@ -724,11 +981,35 @@ export async function verifyDownloadedInstaller(
 
     if (checksumVerified) {
       console.warn(
-        '[Updater] Installer does not carry a Windows Authenticode signature (NotSigned), proceeding after SHA-256 digest verification.'
+        '[Updater] Installer does not carry a Windows Authenticode signature (NotSigned), proceeding after checksum verification.'
       )
       return {
         valid: true,
         sha256: actualSha256,
+        sha512: actualSha512,
+        signed: false,
+        signatureStatus: auth.status
+      }
+    }
+
+    if (allowUnsignedLocal) {
+      if (app.isPackaged && currentBinaryStatus !== 'NotSigned') {
+        return {
+          valid: false,
+          sha256: actualSha256,
+          sha512: actualSha512,
+          signed: false,
+          signatureStatus: auth.status,
+          reason: `تم حظر التحديث المحلي غير الموقّع لأن حالة توقيع التطبيق الحالي هي (${currentBinaryStatus || 'Unknown'}).`
+        }
+      }
+      console.warn(
+        '[Updater] Local manual installer is unsigned (NotSigned) with no sibling checksum; allowing because PE header is valid and current app is unsigned.'
+      )
+      return {
+        valid: true,
+        sha256: actualSha256,
+        sha512: actualSha512,
         signed: false,
         signatureStatus: auth.status
       }
@@ -738,34 +1019,40 @@ export async function verifyDownloadedInstaller(
       return {
         valid: false,
         sha256: actualSha256,
+        sha512: actualSha512,
         signed: false,
         signatureStatus: auth.status,
         reason:
-          'تم حظر تشغيل ملف التحديث: الملف غير موقّع رقمياً (Authenticode) ولا يتوفر له تحقق SHA-256 من الإصدار.'
+          'تم حظر تشغيل ملف التحديث: الملف غير موقّع رقمياً (Authenticode) ولا يتوفر له تحقق SHA-256 أو SHA-512 من الإصدار.'
       }
     }
 
     console.warn(
-      '[Updater] Development environment warning: installer is unsigned and has no SHA-256 digest.'
+      '[Updater] Development environment warning: installer is unsigned and has no SHA-256/SHA-512 digest.'
     )
     return {
       valid: true,
       sha256: actualSha256,
+      sha512: actualSha512,
       signed: false,
       signatureStatus: auth.status
     }
   }
 
   if (app.isPackaged && !checksumVerified) {
+    if (allowUnsignedLocal) {
+      return { valid: true, sha256: actualSha256, sha512: actualSha512, signed: false }
+    }
     return {
       valid: false,
       sha256: actualSha256,
+      sha512: actualSha512,
       signed: false,
-      reason: 'تعذر التحقق من بصمة SHA-256 لملف التحديث في البيئة المعبأة.'
+      reason: 'تعذر التحقق من بصمة SHA-256 أو SHA-512 لملف التحديث في البيئة المعبأة.'
     }
   }
 
-  return { valid: true, sha256: actualSha256, signed: false }
+  return { valid: true, sha256: actualSha256, sha512: actualSha512, signed: false }
 }
 
 function launchInstallerAndQuit(installerPath: string): void {
@@ -807,9 +1094,11 @@ export async function applyDownloadedUpdate(): Promise<{
     }
   }
 
-  const expectedSha256 =
-    downloadState.expectedSha256 || verifiedChecksumsByUrl.get(downloadState.url)
-  const verification = await verifyDownloadedInstaller(readyPath, expectedSha256)
+  const cachedChecksums = verifiedChecksumsByUrl.get(downloadState.url)
+  const verification = await verifyDownloadedInstaller(readyPath, {
+    expectedSha256: downloadState.expectedSha256 || cachedChecksums?.sha256,
+    expectedSha512: downloadState.expectedSha512 || cachedChecksums?.sha512
+  })
   if (!verification.valid) {
     downloadState.isReadyToInstall = false
     try {
@@ -1053,8 +1342,10 @@ export async function startOnlineUpdateDownload(
     }
   }
 
+  const cachedChecksums = verifiedChecksumsByUrl.get(downloadUrl)
   downloadState.url = downloadUrl
-  downloadState.expectedSha256 = verifiedChecksumsByUrl.get(downloadUrl)
+  downloadState.expectedSha256 = cachedChecksums?.sha256
+  downloadState.expectedSha512 = cachedChecksums?.sha512
   if (targetVersion) downloadState.version = targetVersion
   downloadState.isDownloading = true
   downloadState.isPaused = false
@@ -1088,10 +1379,11 @@ export async function startOnlineUpdateDownload(
       renameSync(partPath, readyPath)
     }
 
-    const verification = await verifyDownloadedInstaller(
-      readyPath,
-      downloadState.expectedSha256 || verifiedChecksumsByUrl.get(downloadUrl)
-    )
+    const latestChecksums = verifiedChecksumsByUrl.get(downloadUrl)
+    const verification = await verifyDownloadedInstaller(readyPath, {
+      expectedSha256: downloadState.expectedSha256 || latestChecksums?.sha256,
+      expectedSha512: downloadState.expectedSha512 || latestChecksums?.sha512
+    })
     if (!verification.valid) {
       try {
         if (existsSync(readyPath)) unlinkSync(readyPath)
@@ -1162,6 +1454,35 @@ export async function downloadAndInstallOnlineUpdate(
   return startOnlineUpdateDownload(downloadUrl, undefined, mainWindow)
 }
 
+function readRequiredSiblingChecksum(
+  installerPath: string,
+  algorithm: 'sha256' | 'sha512'
+): { ok: true; value?: string } | { ok: false; message: string } {
+  const ext = `.${algorithm}`
+  const label = algorithm.toUpperCase().replace('SHA', 'SHA-')
+  const checksumPath = `${installerPath}${ext}`
+  if (!existsSync(checksumPath)) {
+    return { ok: true, value: undefined }
+  }
+  let rawText = ''
+  try {
+    rawText = readFileSync(checksumPath, 'utf8')
+  } catch {
+    return {
+      ok: false,
+      message: `تم العثور على ملف التحقق المجاور (${ext}) ولكن تعذر قراءته.`
+    }
+  }
+  const value = extractChecksumFromText(rawText, algorithm, getBaseFileName(installerPath))
+  if (!value) {
+    return {
+      ok: false,
+      message: `ملف التحقق المجاور (${ext}) موجود ولكنه لا يحتوي على بصمة ${label} صالحة.`
+    }
+  }
+  return { ok: true, value }
+}
+
 export async function installUpdateFromLocalFile(
   mainWindow: BrowserWindow | null
 ): Promise<{ success: boolean; canceled?: boolean; message?: string; backupPath?: string }> {
@@ -1184,17 +1505,21 @@ export async function installUpdateFromLocalFile(
     return { success: false, message: 'الملف المختار غير موجود.' }
   }
 
-  let siblingSha256: string | undefined
-  const siblingChecksumFile = `${installerPath}.sha256`
-  if (existsSync(siblingChecksumFile)) {
-    try {
-      siblingSha256 = extractSha256FromText(readFileSync(siblingChecksumFile, 'utf8'))
-    } catch {
-      // Ignore unreadable optional sibling file
-    }
+  const sibling256 = readRequiredSiblingChecksum(installerPath, 'sha256')
+  if (!sibling256.ok) {
+    return { success: false, message: sibling256.message }
   }
 
-  const verification = await verifyDownloadedInstaller(installerPath, siblingSha256)
+  const sibling512 = readRequiredSiblingChecksum(installerPath, 'sha512')
+  if (!sibling512.ok) {
+    return { success: false, message: sibling512.message }
+  }
+
+  const verification = await verifyDownloadedInstaller(installerPath, {
+    expectedSha256: sibling256.value,
+    expectedSha512: sibling512.value,
+    allowUnsignedLocal: !sibling256.value && !sibling512.value
+  })
   if (!verification.valid) {
     return {
       success: false,

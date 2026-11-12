@@ -63,7 +63,7 @@ export function invalidateUserSessionsInMemory(userId: number): void {
 
 export function createBackupTicket(token?: string | null): string | null {
   const session = getSessionFromMemory(token)
-  if (!session || (session.role !== 'super_admin' && session.role !== 'owner' && session.role !== 'tenant')) {
+  if (!session || (session.role !== 'super_admin' && session.role !== 'owner')) {
     return null
   }
   const ticket = randomBytes(24).toString('hex')
@@ -80,6 +80,6 @@ export function consumeBackupTicket(ticket?: string | null): boolean {
   if (!entry) return false
   backupTickets.delete(ticket)
   if (Date.now() > entry.expiresAt) return false
-  return ['super_admin', 'owner', 'tenant'].includes(entry.role)
+  return entry.role === 'super_admin' || entry.role === 'owner'
 }
 
