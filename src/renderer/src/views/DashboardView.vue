@@ -19,7 +19,6 @@ import {
   MessageCircle,
   PlusCircle,
   Package,
-  ShieldAlert,
   ShoppingCart,
   Boxes,
   Send,
@@ -70,27 +69,6 @@ onMounted(loadStats)
 
 <template>
   <div class="space-y-6">
-    <!-- Tenant Subscription Alert Banner if applicable -->
-    <div
-      v-if="appStore.isTenant && appStore.subscriptionDaysRemaining !== null"
-      :class="[
-        'flex items-center justify-between px-5 py-3 rounded-2xl border text-xs font-bold',
-        appStore.subscriptionDaysRemaining <= 7
-          ? 'bg-amber-50 border-amber-300 text-amber-900 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300'
-          : 'bg-blue-50 border-blue-200 text-blue-900 dark:bg-blue-950/40 dark:border-blue-800 dark:text-blue-300'
-      ]"
-    >
-      <div class="flex items-center gap-2">
-        <ShieldAlert class="w-4 h-4" />
-        <span>
-          نوع الحساب: مستأجر البرنامج — متبقي في فترة الاشتراك الحالية
-          <strong>{{ appStore.subscriptionDaysRemaining }} يوم</strong>
-          (تاريخ الانتهاء: {{ appStore.currentUser?.subscription_end }})
-        </span>
-      </div>
-      <span>للتجديد تواصل مع السوبر أدمن</span>
-    </div>
-
     <!-- Top Action Bar -->
     <div
       class="flex flex-wrap items-center justify-between gap-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-xs"

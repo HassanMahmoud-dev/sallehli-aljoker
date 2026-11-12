@@ -22,12 +22,11 @@ const REMEMBERED_SESSION_KEY = 'sallehli_remembered_session'
 
 function loadInitialRememberedSession(): {
   user: User | null
-  daysRemaining: number | null
   token: string | null
 } {
   try {
     const raw = localStorage.getItem(REMEMBERED_SESSION_KEY)
-    if (!raw) return { user: null, daysRemaining: null, token: null }
+    if (!raw) return { user: null, token: null }
     const parsed = JSON.parse(raw)
     if (parsed && parsed.user && parsed.user.id && parsed.user.username) {
       if (parsed.token && window.api?.setSessionToken) {
@@ -35,14 +34,13 @@ function loadInitialRememberedSession(): {
       }
       return {
         user: parsed.user as User,
-        daysRemaining: parsed.daysRemaining ?? null,
         token: parsed.token || null
       }
     }
   } catch {
     // Ignore corrupted storage
   }
-  return { user: null, daysRemaining: null, token: null }
+  return { user: null, token: null }
 }
 
 export type ThemeMode = 'light' | 'dark' | 'system'
@@ -51,7 +49,6 @@ export const useAppStore = defineStore('app', () => {
   const initialSession = loadInitialRememberedSession()
   const currentUser = ref<User | null>(initialSession.user)
   const sessionToken = ref<string | null>(initialSession.token)
-  const subscriptionDaysRemaining = ref<number | null>(initialSession.daysRemaining)
 
   // 3-Mode Theme (Light / Dark / System)
   const savedThemeMode = (localStorage.getItem('sallehli_theme_mode') as ThemeMode) ||
@@ -260,14 +257,16 @@ export const useAppStore = defineStore('app', () => {
   const isSuperAdmin = computed(() => currentUser.value?.role === 'super_admin')
   const isOwner = computed(() => currentUser.value?.role === 'owner')
 
-  // Role-Based Access Control (RBAC): super_admin and owner both have full access
-  const isFullManager = computed(() => !!currentUser.value)
+  // Role-Based Access Control (RBAC): only super_admin and owner are valid roles with full access
+  const hasFullAccess = (): boolean =>
+    ['super_admin', 'owner'].includes(currentUser.value?.role || '')
+  const isFullManager = computed(hasFullAccess)
   const canManageUsers = computed(() => currentUser.value?.role === 'super_admin')
-  const canViewFinancials = computed(() => !!currentUser.value)
-  const canViewInventory = computed(() => !!currentUser.value)
-  const canViewPurchasePrices = computed(() => !!currentUser.value)
-  const canDeleteRecords = computed(() => !!currentUser.value)
-  const canViewMedicalRecords = computed(() => !!currentUser.value)
+  const canViewFinancials = computed(hasFullAccess)
+  const canViewInventory = computed(hasFullAccess)
+  const canViewPurchasePrices = computed(hasFullAccess)
+  const canDeleteRecords = computed(hasFullAccess)
+  const canViewMedicalRecords = computed(hasFullAccess)
 
   function resolveIsDark(mode: ThemeMode): boolean {
     if (mode === 'dark') return true
@@ -438,12 +437,11 @@ export const useAppStore = defineStore('app', () => {
 
   function setSession(
     user: User,
-    daysRemaining: number | null,
+    _daysRemaining: number | null = null,
     rememberMe = false,
     token?: string | null
   ): void {
     currentUser.value = user
-    subscriptionDaysRemaining.value = daysRemaining
     if (token) {
       sessionToken.value = token
       window.api?.setSessionToken?.(token)
@@ -452,7 +450,7 @@ export const useAppStore = defineStore('app', () => {
     if (rememberMe) {
       localStorage.setItem(
         REMEMBERED_SESSION_KEY,
-        JSON.stringify({ user, daysRemaining, token: sessionToken.value })
+        JSON.stringify({ user, token: sessionToken.value })
       )
     } else {
       localStorage.removeItem(REMEMBERED_SESSION_KEY)
@@ -474,7 +472,7 @@ export const useAppStore = defineStore('app', () => {
       const isRemembered = Boolean(localStorage.getItem(REMEMBERED_SESSION_KEY))
       setSession(
         res.user,
-        res.subscriptionStatus?.daysRemaining ?? null,
+        null,
         isRemembered,
         res.token || sessionToken.value
       )
@@ -493,7 +491,6 @@ export const useAppStore = defineStore('app', () => {
     }
     currentUser.value = null
     sessionToken.value = null
-    subscriptionDaysRemaining.value = null
     window.api?.setSessionToken?.('')
     localStorage.removeItem(REMEMBERED_SESSION_KEY)
   }
@@ -614,7 +611,6 @@ export const useAppStore = defineStore('app', () => {
   return {
     currentUser,
     sessionToken,
-    subscriptionDaysRemaining,
     themeMode,
     isDark,
     appVersion,
@@ -664,7 +660,6 @@ export const useAppStore = defineStore('app', () => {
     isAuthenticated,
     isSuperAdmin,
     isOwner,
-    isTenant,
     isFullManager,
     canManageUsers,
     canViewFinancials,
