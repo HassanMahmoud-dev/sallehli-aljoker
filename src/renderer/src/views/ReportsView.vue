@@ -138,7 +138,19 @@ function exportActiveReportToExcel(): void {
       [`ربح ${t('parts')} الصافي`, String(report.value.summary.totalPartsProfit)],
       ['عمولات الفنيين المنصرفة', String(report.value.summary.totalTechCommissions)],
       ['المصروفات الإدارية والتشغيلية', String(report.value.summary.totalExpense)],
-      ['صافي الربح النهائي للمركز', String(report.value.summary.netProfit)],
+      [
+        'صافي الربح الحقيقي للمركز (على أساس الاستحقاق / التكلفة)',
+        String(report.value.summary.netProfit)
+      ],
+      [
+        'صافي التدفق النقدي للفترة (حركة الخزينة الفعلية)',
+        String(
+          report.value.summary.netCashFlow ??
+            report.value.summary.totalIncome -
+              report.value.summary.totalExpense -
+              report.value.summary.totalTechCommissions
+        )
+      ],
       ['إجمالي مديونيات العملاء المتبقية بالخارج', String(report.value.summary.totalReceivables)],
       ...(appStore.businessType === 'hearing_aids'
         ? [
@@ -422,7 +434,7 @@ onMounted(loadReport)
       <!-- TAB 1: NET PROFIT & MULTI-WALLET BALANCES             -->
       <!-- ===================================================== -->
       <div v-if="activeTab === 'profit'" class="space-y-5">
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <div
             class="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs"
           >
@@ -466,13 +478,52 @@ onMounted(loadReport)
             class="p-5 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/30 border-2 border-emerald-500/60 shadow-xs"
           >
             <span class="text-xs font-black text-emerald-800 dark:text-emerald-300">
-              صافي ربح المركز في الفترة
+              صافي الربح الحقيقي (استحقاق / تكلفة)
             </span>
             <div class="text-2xl font-black text-emerald-700 dark:text-emerald-300 mt-1">
               {{ report.summary.netProfit }} ج.م
             </div>
             <div class="text-[11px] text-emerald-700/80 dark:text-emerald-400 mt-1">
-              مديونيات بالخارج: {{ report.summary.totalReceivables }} ج.م
+              على أساس التكلفة والاستحقاق | مديونيات بالخارج: {{ report.summary.totalReceivables }} ج.م
+            </div>
+          </div>
+
+          <div
+            :class="[
+              'p-5 rounded-2xl border-2 shadow-xs',
+              (report.summary.netCashFlow ??
+                report.summary.totalIncome -
+                  report.summary.totalExpense -
+                  report.summary.totalTechCommissions) >= 0
+                ? 'bg-sky-50/70 dark:bg-sky-950/30 border-sky-500/60'
+                : 'bg-rose-50/70 dark:bg-rose-950/30 border-rose-500/60'
+            ]"
+          >
+            <span class="text-xs font-black text-sky-900 dark:text-sky-200">
+              صافي التدفق النقدي للفترة
+            </span>
+            <div
+              :class="[
+                'text-2xl font-black mt-1',
+                (report.summary.netCashFlow ??
+                  report.summary.totalIncome -
+                    report.summary.totalExpense -
+                    report.summary.totalTechCommissions) >= 0
+                  ? 'text-sky-700 dark:text-sky-300'
+                  : 'text-rose-700 dark:text-rose-300'
+              ]"
+            >
+              {{
+                report.summary.netCashFlow ??
+                report.summary.totalIncome -
+                  report.summary.totalExpense -
+                  report.summary.totalTechCommissions
+              }}
+              ج.م
+            </div>
+            <div class="text-[11px] text-slate-600 dark:text-slate-300 mt-1">
+              حركة السيولة بالخزينة: مقبوضات {{ report.summary.totalIncome }} − منصرف وعمولات
+              {{ report.summary.totalExpense + report.summary.totalTechCommissions }} ج.م
             </div>
           </div>
         </div>
