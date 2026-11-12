@@ -19,7 +19,7 @@ export function listTechnicians(): Technician[] {
                  WHEN im.movement_type = 'custody_return' THEN -im.quantity
                  ELSE 0 END
           ) FROM inventory_movements im WHERE im.technician_id = tech.id), 0) as custody_parts_count,
-        COALESCE((SELECT SUM(COALESCE(mt.commission_amount, (mt.labor_cost + mt.inspection_fee) * (COALESCE(mt.commission_rate, tech.commission_rate) / 100.0)))
+        COALESCE((SELECT SUM(COALESCE(mt.commission_amount, MAX(0, (mt.labor_cost + mt.inspection_fee - COALESCE(mt.discount, 0))) * (COALESCE(mt.commission_rate, tech.commission_rate) / 100.0)))
           FROM maintenance_tickets mt
           WHERE mt.technician_id = tech.id AND mt.status IN ('repaired', 'delivered')), 0) as total_earned_commission,
         COALESCE((SELECT SUM(tt.amount) FROM treasury_transactions tt

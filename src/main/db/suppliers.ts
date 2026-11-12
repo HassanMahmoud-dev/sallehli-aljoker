@@ -786,13 +786,15 @@ export function savePurchaseInvoice(
         const curVariant = db
           .prepare('SELECT qty, cost_price, pack_cost_price FROM product_variants WHERE id = ?')
           .get(it.variant_id) as
-          | { qty: number; cost_price: number; pack_cost_price: number }
+          | { qty: number; cost_price: number | null; pack_cost_price: number | null }
           | undefined
         if (!curVariant) throw new Error('متغير الصنف المحدد غير موجود')
 
         const currentQty = Number(curVariant.qty || 0)
-        const currentCost = Number(curVariant.cost_price || 0)
-        const currentPackCost = Number(curVariant.pack_cost_price || 0)
+        const currentCost = Number(curVariant.cost_price ?? currentProdRow?.cost_price ?? 0)
+        const currentPackCost = Number(
+          curVariant.pack_cost_price ?? currentProdRow?.pack_cost_price ?? 0
+        )
         const newPieceCost =
           pieceUnitCost > 0
             ? computeMovingWeightedAvgCost(currentQty, currentCost, addedPieces, pieceUnitCost)

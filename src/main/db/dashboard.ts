@@ -15,6 +15,8 @@ export function getDashboardStats(): DashboardStats {
   const dFilter = isDemoDataHidden()
     ? ' AND is_demo = 0'
     : ` AND (is_demo = 0 OR business_type = '${bType}' OR business_type IS NULL OR business_type = '')`
+  const spareDemoFilter = isDemoDataHidden() ? ' AND is_demo = 0' : ''
+  const simpleDemoFilter = spareDemoFilter
   const dMtWhere = isDemoDataHidden()
     ? ' WHERE mt.is_demo = 0'
     : ` WHERE (mt.is_demo = 0 OR mt.business_type = '${bType}' OR mt.business_type IS NULL OR mt.business_type = '')`
@@ -65,7 +67,7 @@ export function getDashboardStats(): DashboardStats {
 
   const lowStockPartsCount = (
     db
-      .prepare(`SELECT COUNT(*) as cnt FROM spare_parts WHERE quantity <= min_quantity${dFilter}`)
+      .prepare(`SELECT COUNT(*) as cnt FROM spare_parts WHERE quantity <= min_quantity${spareDemoFilter}`)
       .get() as { cnt: number }
   ).cnt
 
@@ -149,14 +151,18 @@ export function getDashboardStats(): DashboardStats {
        ORDER BY mt.id DESC LIMIT 8`
     )
     .all() as Record<string, unknown>[]
-  const getPartsStmt = db.prepare('SELECT * FROM ticket_parts WHERE ticket_id = ?')
+  const getPartsStmt = db.prepare(
+    'SELECT * FROM ticket_parts WHERE ticket_id = ? AND COALESCE(is_restored, 0) = 0 ORDER BY id ASC'
+  )
   const recentTickets = rawRecentTickets.map((r) => {
     const t = normalizeTicketRow(r)
     t.parts = getPartsStmt.all(t.id) as any[]
     return t
   })
   const lowStockParts = db
-    .prepare(`SELECT * FROM spare_parts WHERE quantity <= min_quantity${dFilter} ORDER BY quantity ASC LIMIT 8`)
+    .prepare(
+      `SELECT * FROM spare_parts WHERE quantity <= min_quantity${spareDemoFilter} ORDER BY quantity ASC LIMIT 8`
+    )
     .all() as SparePart[]
 
   const externalRepairOpenCount = (
@@ -241,7 +247,7 @@ export function getDashboardStats(): DashboardStats {
       const lowStockProductsRaw = db
         .prepare(
           `SELECT * FROM products
-           WHERE is_active = 1 AND type != 'service' AND qty <= min_stock
+           WHERE is_active = 1 AND type != 'service' AND qty <= min_stock${dFilter}
            ORDER BY qty ASC LIMIT 8`
         )
         .all() as Record<string, unknown>[]
@@ -250,19 +256,19 @@ export function getDashboardStats(): DashboardStats {
       lowStockProductsCount = (
         db
           .prepare(
-            `SELECT COUNT(*) as cnt FROM products WHERE is_active = 1 AND type != 'service' AND qty <= min_stock`
+            `SELECT COUNT(*) as cnt FROM products WHERE is_active = 1 AND type != 'service' AND qty <= min_stock${dFilter}`
           )
           .get() as { cnt: number }
       ).cnt
 
       activeLoanersCount = (
         db
-          .prepare(`SELECT COUNT(*) as cnt FROM product_serials WHERE status = 'loaned'`)
+          .prepare(`SELECT COUNT(*) as cnt FROM product_serials WHERE status = 'loaned'${simpleDemoFilter}`)
           .get() as { cnt: number }
       ).cnt
 
       const recentSalesRaw = db
-        .prepare(`SELECT * FROM sales_invoices ORDER BY id DESC LIMIT 8`)
+        .prepare(`SELECT * FROM sales_invoices WHERE 1=1${dFilter} ORDER BY id DESC LIMIT 8`)
         .all() as Record<string, unknown>[]
       recentSales = recentSalesRaw.map((r) => ({
         ...(r as unknown as SalesInvoice),
@@ -277,13 +283,17 @@ export function getDashboardStats(): DashboardStats {
 
       dueFollowupsTodayCount = (
         db
-          .prepare(`SELECT COUNT(*) as cnt FROM followups WHERE status = 'pending' AND due_date = ?`)
+          .prepare(
+            `SELECT COUNT(*) as cnt FROM followups WHERE status = 'pending' AND due_date = ?${simpleDemoFilter}`
+          )
           .get(today) as { cnt: number }
       ).cnt
 
       overdueFollowupsCount = (
         db
-          .prepare(`SELECT COUNT(*) as cnt FROM followups WHERE status = 'pending' AND due_date < ?`)
+          .prepare(
+            `SELECT COUNT(*) as cnt FROM followups WHERE status = 'pending' AND due_date < ?${simpleDemoFilter}`
+          )
           .get(today) as { cnt: number }
       ).cnt
 
@@ -292,14 +302,14 @@ export function getDashboardStats(): DashboardStats {
           .prepare(
             `SELECT COUNT(*) as cnt FROM earmold_orders
              WHERE status = 'sent_to_lab' AND expected_date IS NOT NULL
-               AND expected_date != '' AND expected_date < ?`
+               AND expected_date != '' AND expected_date < ?${simpleDemoFilter}`
           )
           .get(today) as { cnt: number }
       ).cnt
 
       readyEarmoldsWaitingDeliveryCount = (
         db
-          .prepare(`SELECT COUNT(*) as cnt FROM earmold_orders WHERE status = 'received'`)
+          .prepare(`SELECT COUNT(*) as cnt FROM earmold_orders WHERE status = 'received'${simpleDemoFilter}`)
           .get() as { cnt: number }
       ).cnt
 

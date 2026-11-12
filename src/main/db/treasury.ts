@@ -553,7 +553,7 @@ export function getFinancialReport(dateFrom?: string, dateTo?: string): Financia
           WHERE mt.technician_id = tech.id AND mt.status IN ('repaired', 'delivered')
           AND ${demoMtAliasCond}
           AND date(mt.created_at) BETWEEN ? AND ?), 0) as period_labor_and_inspection,
-        COALESCE((SELECT SUM(COALESCE(mt.commission_amount, (mt.labor_cost + mt.inspection_fee) * (COALESCE(mt.commission_rate, tech.commission_rate) / 100.0))) FROM maintenance_tickets mt
+        COALESCE((SELECT SUM(COALESCE(mt.commission_amount, MAX(0, (mt.labor_cost + mt.inspection_fee - COALESCE(mt.discount, 0))) * (COALESCE(mt.commission_rate, tech.commission_rate) / 100.0))) FROM maintenance_tickets mt
           WHERE mt.technician_id = tech.id AND mt.status IN ('repaired', 'delivered')
           AND ${demoMtAliasCond}
           AND date(mt.created_at) BETWEEN ? AND ?), 0) as period_earned_commission,
@@ -561,7 +561,7 @@ export function getFinancialReport(dateFrom?: string, dateTo?: string): Financia
           WHERE tt.technician_id = tech.id AND tt.transaction_type = 'tech_commission'
           AND ${demoTtAliasCond}
           AND date(tt.created_at) BETWEEN ? AND ?), 0) as period_paid_commission,
-        COALESCE((SELECT SUM(COALESCE(mt.commission_amount, (mt.labor_cost + mt.inspection_fee) * (COALESCE(mt.commission_rate, tech.commission_rate) / 100.0))) FROM maintenance_tickets mt
+        COALESCE((SELECT SUM(COALESCE(mt.commission_amount, MAX(0, (mt.labor_cost + mt.inspection_fee - COALESCE(mt.discount, 0))) * (COALESCE(mt.commission_rate, tech.commission_rate) / 100.0))) FROM maintenance_tickets mt
           WHERE mt.technician_id = tech.id AND mt.status IN ('repaired', 'delivered')
           AND ${demoMtAliasCond}), 0) as total_earned_commission,
         COALESCE((SELECT SUM(tt.amount) FROM treasury_transactions tt
