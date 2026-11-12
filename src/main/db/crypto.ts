@@ -1,27 +1,65 @@
-import { scryptSync, createHmac, timingSafeEqual } from 'crypto'
+import { randomBytes, scryptSync, createHmac, timingSafeEqual } from 'crypto'
 import { getMachineId } from '../vendorLicense'
 
 export const PASSWORD_SALT = 'sallehli_aljoker_salt_v1_2026'
 export const LICENSE_HMAC_SECRET = 'sallehli_aljoker_license_secret_key_v1'
 export const BUSINESS_HMAC_SECRET = 'sallehli_aljoker_business_secret_key_v1_2026'
-export const MODULES_HMAC_SECRET = 'sallehli_aljoker_modules_secret_key_v1_2026'
 
+/** Hashes a password with a per-user 16-byte random salt using scrypt (`scrypt2:<salt>:<hash>`). */
 export function hashPassword(password: string): string {
-  const derived = scryptSync(password, PASSWORD_SALT, 32).toString('hex')
-  return `scrypt:${derived}`
+  const salt = randomBytes(16).toString('hex')
+  const derived = scryptSync(password, salt, 32).toString('hex')
+  return `scrypt2:${salt}:${derived}`
 }
 
+/**
+ * Verifies a password against `scrypt2:`, legacy static-salt `scrypt:`, or legacy plaintext.
+ * Legacy formats set `needsUpgrade: true` on match so callers re-hash seamlessly on login.
+ */
 export function verifyPassword(password: string, storedHash: string): { valid: boolean; needsUpgrade: boolean } {
-  if (storedHash.startsWith('scrypt:')) {
-    const expectedHex = storedHash.slice('scrypt:'.length)
-    const actualHex = scryptSync(password, PASSWORD_SALT, 32).toString('hex')
+  if (typeof storedHash !== 'string' || typeof password !== 'string') {
+    return { valid: false, needsUpgrade: false }
+  }
+
+  if (storedHash.startsWith('scrypt2:')) {
+    const rest = storedHash.slice('scrypt2:'.length)
+    const sepIdx = rest.indexOf(':')
+    if (sepIdx <= 0) {
+      return { valid: false, needsUpgrade: false }
+    }
+    const salt = rest.slice(0, sepIdx)
+    const expectedHex = rest.slice(sepIdx + 1)
+    if (!salt || !expectedHex) {
+      return { valid: false, needsUpgrade: false }
+    }
     try {
-      const valid = timingSafeEqual(Buffer.from(expectedHex, 'hex'), Buffer.from(actualHex, 'hex'))
+      const expectedBuf = Buffer.from(expectedHex, 'hex')
+      const actualBuf = scryptSync(password, salt, 32)
+      if (expectedBuf.length !== actualBuf.length) {
+        return { valid: false, needsUpgrade: false }
+      }
+      const valid = timingSafeEqual(expectedBuf, actualBuf)
       return { valid, needsUpgrade: false }
     } catch {
       return { valid: false, needsUpgrade: false }
     }
   }
+
+  if (storedHash.startsWith('scrypt:')) {
+    const expectedHex = storedHash.slice('scrypt:'.length)
+    try {
+      const expectedBuf = Buffer.from(expectedHex, 'hex')
+      const actualBuf = scryptSync(password, PASSWORD_SALT, 32)
+      if (expectedBuf.length !== actualBuf.length) {
+        return { valid: false, needsUpgrade: false }
+      }
+      const valid = timingSafeEqual(expectedBuf, actualBuf)
+      return { valid, needsUpgrade: valid }
+    } catch {
+      return { valid: false, needsUpgrade: false }
+    }
+  }
+
   const valid = storedHash === password
   return { valid, needsUpgrade: valid }
 }
@@ -38,18 +76,5 @@ export function signBusinessType(type: string): string {
 /** Business-type signature bound to this device, so a copied database cannot silently change sector. */
 export function signBusinessTypeForMachine(type: string, machineId: string = getMachineId()): string {
   return createHmac('sha256', BUSINESS_HMAC_SECRET).update(`biz|${type}|${machineId}`).digest('hex')
-}
-
-export function signLicensedModules(modules: string[]): string {
-  const sorted = [...modules].filter((m) => typeof m === 'string' && m.trim()).sort().join('|')
-  return createHmac('sha256', MODULES_HMAC_SECRET).update(`mods|${sorted}`).digest('hex')
-}
-
-export function signLicensedModulesForMachine(
-  modules: string[],
-  machineId: string = getMachineId()
-): string {
-  const sorted = [...modules].filter((m) => typeof m === 'string' && m.trim()).sort().join('|')
-  return createHmac('sha256', MODULES_HMAC_SECRET).update(`mods|${sorted}|${machineId}`).digest('hex')
 }
 

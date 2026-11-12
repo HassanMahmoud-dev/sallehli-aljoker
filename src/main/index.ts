@@ -1,5 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electron'
-import { join } from 'path'
+import { join, resolve } from 'path'
+import { fileURLToPath } from 'url'
 import { existsSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import {
@@ -164,6 +165,31 @@ function applyWindowBranding(type: BusinessType): void {
   }
 }
 
+/** Validates that a frame/navigation URL belongs strictly to this app's trusted renderer origin. */
+function isTrustedRendererUrl(rawUrl: string): boolean {
+  if (!rawUrl || typeof rawUrl !== 'string') return false
+  try {
+    const parsed = new URL(rawUrl)
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      return parsed.origin === new URL(process.env['ELECTRON_RENDERER_URL']).origin
+    }
+    if (parsed.protocol !== 'file:') return false
+    const expectedPath = resolve(join(__dirname, '../renderer/index.html'))
+    const actualPath = resolve(fileURLToPath(parsed))
+    return process.platform === 'win32'
+      ? actualPath.toLowerCase() === expectedPath.toLowerCase()
+      : actualPath === expectedPath
+  } catch {
+    return false
+  }
+}
+
+function isTrustedIpcSender(event: Electron.IpcMainInvokeEvent): boolean {
+  const frame = event.senderFrame
+  if (!frame || frame.parent !== null) return false
+  return isTrustedRendererUrl(frame.url)
+}
+
 function createWindow(): void {
   const bState = getBusinessState()
   const iconFile = resolveSectorIcon(bState.type)
@@ -182,7 +208,8 @@ function createWindow(): void {
       preload: existsSync(join(__dirname, '../preload/index.mjs'))
         ? join(__dirname, '../preload/index.mjs')
         : join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      sandbox: true,
+      nodeIntegration: false,
       contextIsolation: true
     }
   })
@@ -193,8 +220,21 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    try {
+      const parsed = new URL(details.url)
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        void shell.openExternal(parsed.toString())
+      }
+    } catch {
+      // Block invalid or non-HTTP(S) schemes (e.g. file:, ms-msdt:, smb:)
+    }
     return { action: 'deny' }
+  })
+
+  mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+    if (!isTrustedRendererUrl(navigationUrl)) {
+      event.preventDefault()
+    }
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -208,7 +248,7 @@ function registerIpcHandlers(): void {
   const handlers: Record<string, (...args: any[]) => any> = {
     // Auth & Users
     'auth:login': (_ctx, payload) => loginUser(payload),
-    'auth:verifySession': (_ctx, userId: number) => verifySession(userId),
+    'auth:verifySession': (_ctx, sessionToken: string | number) => verifySession(sessionToken),
     'users:list': () => listUsers(),
     'users:save': (ctx, data) => saveUser(data, ctx.session),
     'users:delete': (ctx, id: number) => deleteUser(id, ctx.session),
@@ -216,9 +256,7 @@ function registerIpcHandlers(): void {
     // Customers & Appliances
     'customers:list': (ctx, search?: string) => {
       const list = listCustomers(search)
-      const canSeeMedical = ['super_admin', 'owner', 'tenant', 'receptionist'].includes(
-        ctx.session?.role || ''
-      )
+      const canSeeMedical = ['super_admin', 'owner'].includes(ctx.session?.role || '')
       if (canSeeMedical) return list
       return list.map((c) => ({
         ...c,
@@ -233,9 +271,7 @@ function registerIpcHandlers(): void {
     'customers:findByPhone': (ctx, phone: string) => {
       const c = findCustomerByPhone(phone)
       if (!c) return null
-      const canSeeMedical = ['super_admin', 'owner', 'tenant', 'receptionist'].includes(
-        ctx.session?.role || ''
-      )
+      const canSeeMedical = ['super_admin', 'owner'].includes(ctx.session?.role || '')
       if (canSeeMedical) return c
       return {
         ...c,
@@ -268,9 +304,7 @@ function registerIpcHandlers(): void {
     // Phase 3A: Products, Variants, Serials & Suppliers
     'products:list': (ctx, filters) => {
       const list = listProducts(filters)
-      const canSeeCost = ['super_admin', 'owner', 'tenant', 'storekeeper'].includes(
-        ctx.session?.role || ''
-      )
+      const canSeeCost = ['super_admin', 'owner'].includes(ctx.session?.role || '')
       if (canSeeCost) return list
       return list.map((p) => ({
         ...p,
@@ -355,7 +389,7 @@ function registerIpcHandlers(): void {
     'app:version': () => app.getVersion(),
     'dashboard:stats': () => getDashboardStats(),
     'settings:get': () => getSettings(),
-    'settings:save': (_ctx, settings) => saveSettings(settings),
+    'settings:save': (ctx, settings) => saveSettings(settings, ctx.session ?? null),
     'db:path': () => getDatabasePath(),
 
     // Backup & Restore & Auto-Backup
@@ -397,10 +431,16 @@ function registerIpcHandlers(): void {
     // External Links (e.g. WhatsApp / Browser)
     'shell:openExternal': async (_ctx, url: string) => {
       const cleanUrl = String(url || '').trim()
-      if (!/^https?:\/\//i.test(cleanUrl)) {
+      let parsed: URL
+      try {
+        parsed = new URL(cleanUrl)
+      } catch {
         throw new Error('الرابط غير صالح؛ يسمح فقط بروابط http و https')
       }
-      await shell.openExternal(cleanUrl)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error('الرابط غير صالح؛ يسمح فقط بروابط http و https')
+      }
+      await shell.openExternal(parsed.toString())
     },
 
     // Application Updates (Online & Offline & 24h Auto Check)
@@ -475,9 +515,6 @@ function registerIpcHandlers(): void {
       applyWindowBranding(res.type)
       return res
     },
-    'business:setLicensedModules': () => ({ success: true, modules: [], state: getBusinessState() }),
-    'business:applyVendorLicense': () => ({ success: true, modules: [], state: getBusinessState() }),
-    'business:getMachineId': () => 'machine-ok',
 
     // Dynamic Lookups (Types & Brands)
     'lookups:list': (_ctx: unknown, category?: string) => listLookupItems(category),
@@ -562,7 +599,12 @@ function registerIpcHandlers(): void {
       return fn({ session, token }, ...actualArgs)
     }
 
-    ipcMain.handle(channel, (_e, ...args) => wrapped(...args))
+    ipcMain.handle(channel, (e, ...args) => {
+      if (!isTrustedIpcSender(e)) {
+        throw new Error('تم رفض الطلب: مصدر الإطار غير موثوق.')
+      }
+      return wrapped(...args)
+    })
     wrappedHandlers[channel] = wrapped
   }
 

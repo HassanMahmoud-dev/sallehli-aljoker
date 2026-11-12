@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto'
 import { getDb } from './connection'
-import { hashPassword, verifyPassword, signSubscription } from './crypto'
+import { hashPassword, verifyPassword } from './crypto'
 import { getBusinessState } from './business'
 import {
   createSessionInMemory,
@@ -11,15 +11,33 @@ import {
 } from '../session'
 import type { User, UserRole, LoginPayload, AuthResponse } from '../../shared/types'
 
+/** Removes expired persistent sessions from SQLite so stale tokens cannot accumulate. */
+export function cleanupExpiredSessions(referenceIso: string = new Date().toISOString()): number {
+  const db = getDb()
+  const info = db.prepare('DELETE FROM user_sessions WHERE expires_at <= ?').run(referenceIso)
+  return Number(info.changes ?? 0)
+}
+
 export function loginUser(payload: LoginPayload): AuthResponse {
   const db = getDb()
+  cleanupExpiredSessions()
+
+  const username = typeof payload?.username === 'string' ? payload.username.trim() : ''
+  const password = typeof payload?.password === 'string' ? payload.password : ''
+  if (!username || !password) {
+    return {
+      success: false,
+      message: 'اسم المستخدم أو كلمة المرور غير صحيحة'
+    }
+  }
+
   const userRow = db
     .prepare(
       `SELECT id, username, password_hash, full_name, phone, role, is_active,
               subscription_start, subscription_end, subscription_sig, notes, created_at
        FROM users WHERE username = ?`
     )
-    .get(payload.username.trim()) as
+    .get(username) as
     | (User & { password_hash: string; subscription_sig?: string })
     | undefined
 
@@ -30,7 +48,7 @@ export function loginUser(payload: LoginPayload): AuthResponse {
     }
   }
 
-  const { valid, needsUpgrade } = verifyPassword(payload.password, userRow.password_hash)
+  const { valid, needsUpgrade } = verifyPassword(password, userRow.password_hash)
   if (!valid) {
     return {
       success: false,
@@ -40,7 +58,7 @@ export function loginUser(payload: LoginPayload): AuthResponse {
 
   if (needsUpgrade) {
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(
-      hashPassword(payload.password),
+      hashPassword(password),
       userRow.id
     )
   }
@@ -80,6 +98,8 @@ export function loginUser(payload: LoginPayload): AuthResponse {
 
 export function verifySession(identifier: string | number): AuthResponse {
   const db = getDb()
+  cleanupExpiredSessions()
+
   if (!identifier || typeof identifier !== 'string' || identifier.trim().length < 16) {
     return { success: false, message: 'جلسة غير صالحة أو غير مسجلة' }
   }
@@ -93,7 +113,7 @@ export function verifySession(identifier: string | number): AuthResponse {
     return { success: false, message: 'جلسة غير صالحة أو غير مسجلة' }
   }
 
-  if (new Date(sessionRow.expires_at).getTime() < Date.now()) {
+  if (new Date(sessionRow.expires_at).getTime() <= Date.now()) {
     db.prepare('DELETE FROM user_sessions WHERE token = ?').run(token)
     removeSessionFromMemory(token)
     return { success: false, message: 'انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً' }
@@ -113,6 +133,8 @@ export function verifySession(identifier: string | number): AuthResponse {
     | undefined
 
   if (!userRow || !userRow.is_active) {
+    db.prepare('DELETE FROM user_sessions WHERE token = ?').run(token)
+    removeSessionFromMemory(token)
     return {
       success: false,
       message: 'هذا الحساب غير موجود أو موقوف حالياً.'
@@ -145,13 +167,16 @@ export function resolveSession(token?: string | null): SessionInfo | null {
   const cached = getSessionFromMemory(token)
   if (cached) return cached
 
+  cleanupExpiredSessions()
+
   const row = db
     .prepare('SELECT user_id, role, expires_at FROM user_sessions WHERE token = ?')
     .get(token) as { user_id: number; role: string; expires_at: string } | undefined
 
   if (!row) return null
-  if (new Date(row.expires_at).getTime() < Date.now()) {
+  if (new Date(row.expires_at).getTime() <= Date.now()) {
     db.prepare('DELETE FROM user_sessions WHERE token = ?').run(token)
+    removeSessionFromMemory(token)
     return null
   }
 
@@ -159,7 +184,11 @@ export function resolveSession(token?: string | null): SessionInfo | null {
     .prepare('SELECT id, username, full_name, phone, role, is_active FROM users WHERE id = ?')
     .get(row.user_id) as User | undefined
 
-  if (!user || !user.is_active) return null
+  if (!user || !user.is_active) {
+    db.prepare('DELETE FROM user_sessions WHERE token = ?').run(token)
+    removeSessionFromMemory(token)
+    return null
+  }
 
   createSessionInMemory(user, token)
   return getSessionFromMemory(token)

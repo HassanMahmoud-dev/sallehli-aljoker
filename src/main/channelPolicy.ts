@@ -46,7 +46,7 @@ export const CHANNEL_PERMISSIONS: Record<string, ChannelPermission> = {
   'tickets:lookupSerialOrInvoice': 'authenticated',
   'tickets:returnLoaner': 'authenticated',
 
-  // Medical (super_admin, owner, tenant, receptionist - Sensitive Audiology & Patient Medical Data)
+  // Medical (super_admin, owner - Sensitive Audiology & Patient Medical Data)
   'patients:profile': 'medical',
   'hearingTests:list': 'medical',
   'hearingTests:save': 'medical',
@@ -65,7 +65,7 @@ export const CHANNEL_PERMISSIONS: Record<string, ChannelPermission> = {
   'attachments:upload': 'medical',
   'attachments:open': 'medical',
 
-  // Managers (super_admin, owner, tenant)
+  // Managers (super_admin, owner)
   'tickets:delete': 'manager',
   'hearingTests:delete': 'manager',
   'followups:delete': 'manager',
@@ -100,7 +100,7 @@ export const CHANNEL_PERMISSIONS: Record<string, ChannelPermission> = {
   'backup:createTicket': 'manager',
   'db:path': 'manager',
 
-  // Financial (super_admin, owner, tenant, cashier)
+  // Financial (super_admin, owner)
   'treasury:list': 'financial',
   'treasury:add': 'financial',
   'treasury:transfer': 'financial',
@@ -109,10 +109,10 @@ export const CHANNEL_PERMISSIONS: Record<string, ChannelPermission> = {
   'suppliers:statement': 'financial',
   'sales:collectInstallment': 'financial',
 
-  // Sales Operations (super_admin, owner, tenant, cashier, receptionist)
+  // Sales Operations (super_admin, owner)
   'sales:save': 'sales_ops',
 
-  // Inventory (super_admin, owner, tenant, storekeeper, cashier)
+  // Inventory (super_admin, owner)
   'purchases:list': 'inventory',
   'parts:save': 'inventory',
   'inventory:movement': 'inventory',
@@ -142,15 +142,17 @@ export const CHANNEL_PERMISSIONS: Record<string, ChannelPermission> = {
   'system:setBrowserConfig': 'super_admin',
   'system:setLanConfig': 'super_admin',
   'system:setAutoStart': 'super_admin',
-  'business:get': 'owner',
-  'business:setInitial': 'owner',
-  'business:checkSwitch': 'owner',
-  'business:switch': 'owner',
   'db:reset': 'super_admin',
-  'demo:seed': 'owner',
-  'demo:remove': 'owner',
-  'demo:status': 'owner',
-  'demo:setHidden': 'owner'
+
+  // Business Profile & Demo Data Management (super_admin, owner)
+  'business:get': 'manager',
+  'business:setInitial': 'manager',
+  'business:checkSwitch': 'manager',
+  'business:switch': 'manager',
+  'demo:seed': 'manager',
+  'demo:remove': 'manager',
+  'demo:status': 'manager',
+  'demo:setHidden': 'manager'
 }
 
 export const CHANNEL_REQUIRED_MODULE: Record<string, string> = {

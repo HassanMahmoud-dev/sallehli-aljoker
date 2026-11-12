@@ -15,6 +15,7 @@ import { createTables } from './schema/tables'
 import { runMigrations } from './schema/migrations'
 import { seedDefaults } from './schema/seeds'
 import { signBusinessType, signBusinessTypeForMachine } from './crypto'
+import type { SessionInfo } from '../session'
 import type { BusinessType, CenterSettings } from '../../shared/types'
 
 const requireModule = createRequire(import.meta.url)
@@ -95,14 +96,88 @@ export function getSettings(): CenterSettings {
   }
 }
 
-export function saveSettings(settings: Partial<CenterSettings>): CenterSettings {
+const CENTER_SETTINGS_KEYS = new Set<keyof CenterSettings>([
+  'center_name',
+  'center_subtitle',
+  'phone1',
+  'phone2',
+  'whatsapp',
+  'address',
+  'logo_base64',
+  'default_print_format',
+  'default_inspection_fee',
+  'default_warranty_months',
+  'exchange_policy_days',
+  'warranty_terms',
+  'receipt_footer'
+])
+
+const SYSTEM_SENSITIVE_SETTINGS_KEYS = new Set<keyof CenterSettings>([
+  'update_url',
+  'lan_port',
+  'browser_enabled',
+  'lan_enabled',
+  'auto_backup_enabled',
+  'auto_backup_dir',
+  'auto_backup_keep_count',
+  'auto_start_windows'
+])
+
+/**
+ * Persists center settings with role-based enforcement for sensitive system keys.
+ * When `callerSession` is provided (IPC/HTTP requests), non-super_admin users may only
+ * update center/printing preferences; any attempt to modify system keys throws an error,
+ * while unchanged system values sent by a full-form UI save are safely ignored.
+ */
+export function saveSettings(
+  settings: Partial<CenterSettings>,
+  callerSession?: SessionInfo | null
+): CenterSettings {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    throw new Error('بيانات الإعدادات غير صالحة')
+  }
+
+  const enforceRoleBoundary = callerSession !== undefined
+  const isSuperAdmin = !enforceRoleBoundary || callerSession?.role === 'super_admin'
+  const current = enforceRoleBoundary && !isSuperAdmin ? getSettings() : null
+
+  const entriesToWrite: [string, string][] = []
+
+  for (const [key, rawValue] of Object.entries(settings)) {
+    if (rawValue === undefined) continue
+    const typedKey = key as keyof CenterSettings
+
+    if (CENTER_SETTINGS_KEYS.has(typedKey)) {
+      entriesToWrite.push([key, String(rawValue)])
+      continue
+    }
+
+    if (SYSTEM_SENSITIVE_SETTINGS_KEYS.has(typedKey)) {
+      if (isSuperAdmin) {
+        entriesToWrite.push([key, String(rawValue)])
+      } else if (current) {
+        const incomingStr = String(rawValue)
+        const currentStr = String(current[typedKey] ?? '')
+        if (incomingStr !== currentStr) {
+          throw new Error(
+            `صلاحية غير كافية: لا يُسمح بتعديل إعداد النظام الحساس (${key}) إلا لحساب مالك البرنامج (السوبر أدمن).`
+          )
+        }
+      }
+      continue
+    }
+
+    // `last_update_check_at` is managed internally; ignore stale values from non-super_admin form saves.
+    if (key === 'last_update_check_at' && isSuperAdmin) {
+      entriesToWrite.push([key, String(rawValue)])
+    }
+  }
+
   const db = getDb()
   const stmt = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
   runTransaction(() => {
-    for (const [k, v] of Object.entries(settings)) {
-      if (v !== undefined) {
-        stmt.run(k, String(v))
-      }
+    for (const [k, v] of entriesToWrite) {
+      stmt.run(k, v)
     }
   })
   return getSettings()

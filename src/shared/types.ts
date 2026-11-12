@@ -533,6 +533,7 @@ export interface TicketPartItem {
   unit_cost: number
   unit_price: number
   total_price: number
+  is_restored?: number
 }
 
 export interface MaintenanceTicket {
@@ -616,9 +617,22 @@ export interface TreasuryTransaction {
   supplier_id?: number | null
   supplier_name?: string
   customer_id?: number | null
+  linked_tx_id?: number | null
   payment_method: string
   description: string
   created_at: string
+}
+
+export interface TreasuryBalances {
+  total: number
+  byMethod: Record<
+    string,
+    {
+      income: number
+      expense: number
+      net: number
+    }
+  >
 }
 
 export interface CenterSettings {
@@ -663,6 +677,7 @@ export interface UpdateCheckResult {
   currentVersion: string
   latestVersion?: string
   downloadUrl?: string
+  sha256?: string
   releaseNotes?: string
   publishedAt?: string
   message?: string
@@ -1009,6 +1024,7 @@ export interface FinancialReportData {
     totalPartsProfit: number
     totalInspectionAndLabor: number
     netProfit: number
+    netCashFlow?: number
     ticketsCount: number
     completedTicketsCount: number
     totalReceivables: number

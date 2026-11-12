@@ -4,16 +4,57 @@ let currentSessionToken = ''
 
 async function invokeHttp(channel: string, ...args: unknown[]): Promise<any> {
   const tokenArg = { _token: currentSessionToken }
-  const res = await fetch('/api/rpc', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ channel, token: currentSessionToken, args: [tokenArg, ...args] })
-  })
-  const data = await res.json()
-  if (!res.ok || !data?.ok) {
-    throw new Error(data?.error || `فشل تنفيذ العملية (${channel})`)
+  const supportsTimeout =
+    typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+  let fallbackController: AbortController | undefined
+  let fallbackTimer: ReturnType<typeof setTimeout> | undefined
+  const signal = supportsTimeout
+    ? AbortSignal.timeout(15000)
+    : (() => {
+        fallbackController = new AbortController()
+        fallbackTimer = setTimeout(() => fallbackController?.abort(), 15000)
+        return fallbackController.signal
+      })()
+
+  try {
+    const res = await fetch('/api/rpc', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel, token: currentSessionToken, args: [tokenArg, ...args] }),
+      signal
+    })
+
+    const contentType = res.headers.get('content-type') || ''
+    if (!contentType.toLowerCase().includes('application/json')) {
+      const rawText = await res.text()
+      const trimmed = rawText.trim()
+      if (trimmed.startsWith('<')) {
+        throw new Error(`استجاب الخادم بصفحة غير متوقعة (HTTP ${res.status}) أثناء تنفيذ (${channel})`)
+      }
+      throw new Error(trimmed || `فشل الاتصال بالخادم (HTTP ${res.status})`)
+    }
+
+    let data: any
+    try {
+      data = await res.json()
+    } catch {
+      throw new Error(`استجابة JSON غير صالحة من الخادم أثناء تنفيذ (${channel})`)
+    }
+
+    if (!res.ok || !data?.ok) {
+      throw new Error(data?.error || `فشل تنفيذ العملية (${channel})`)
+    }
+    return data.result
+  } catch (err: any) {
+    if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+      throw new Error('انتهت مهلة الاتصال بالخادم (15 ثانية). يرجى التحقق من اتصال الشبكة المحلية.')
+    }
+    throw err
+  } finally {
+    if (fallbackTimer !== undefined) {
+      clearTimeout(fallbackTimer)
+    }
   }
-  return data.result
 }
 
 export function ensureWebApiBridge(): void {
@@ -130,7 +171,10 @@ export function ensureWebApiBridge(): void {
     createBackup: async () => {
       try {
         const ticket = await invokeHttp('backup:createTicket')
-        window.open(`/api/backup/download?ticket=${encodeURIComponent(ticket || '')}`, '_blank')
+        if (!ticket) {
+          throw new Error('لم يتم استلام تذكرة تحميل صالحة')
+        }
+        window.open(`/api/backup/download?ticket=${encodeURIComponent(ticket)}`, '_blank', 'noopener,noreferrer')
         return { success: true, filePath: 'تم بدء تحميل النسخة الاحتياطية في المتصفح' }
       } catch (e: any) {
         throw new Error(e?.message || 'فشل طلب تصريح تحميل النسخة الاحتياطية')
@@ -141,7 +185,14 @@ export function ensureWebApiBridge(): void {
     chooseBackupDir: () => invokeHttp('backup:chooseDir'),
     runAutoBackupNow: () => invokeHttp('backup:autoNow'),
     openExternal: async (url: string) => {
-      window.open(url, '_blank', 'noopener,noreferrer')
+      try {
+        const parsed = new URL(String(url || '').trim())
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+          window.open(parsed.toString(), '_blank', 'noopener,noreferrer')
+        }
+      } catch {
+        // Ignore invalid URL
+      }
     },
 
     checkForUpdates: (customUrl) => invokeHttp('update:check', customUrl),
@@ -169,9 +220,6 @@ export function ensureWebApiBridge(): void {
     setInitialBusiness: (type) => invokeHttp('business:setInitial', type),
     checkBusinessSwitch: () => invokeHttp('business:checkSwitch'),
     switchBusiness: (payload) => invokeHttp('business:switch', payload),
-    setLicensedModules: async () => ({ success: true, modules: [], state: {} as any }),
-    applyVendorLicense: async () => ({ success: true, modules: [], state: {} as any }),
-    getMachineId: async () => 'machine-ok',
     listLookups: (category) => invokeHttp('lookups:list', category),
     saveLookup: (data) => invokeHttp('lookups:save', data),
     deleteLookup: (id) => invokeHttp('lookups:delete', id),

@@ -4,13 +4,9 @@ import { readSetting, writeSetting, createPreSwitchBackup } from './settings'
 import { createTables } from './schema/tables'
 import { runMigrations } from './schema/migrations'
 import { seedDefaults } from './schema/seeds'
-import { getMachineId, verifyVendorLicense } from '../vendorLicense'
-import { parseJsonArray } from './utils'
 import {
   signBusinessType,
   signBusinessTypeForMachine,
-  signLicensedModules,
-  signLicensedModulesForMachine,
   verifyPassword
 } from './crypto'
 import type { BusinessType, BusinessState } from '../../shared/types'
@@ -20,12 +16,7 @@ import {
   HEARING_AIDS_PROFILE
 } from '../../shared/businessProfiles'
 
-export {
-  signBusinessType,
-  signBusinessTypeForMachine,
-  signLicensedModules,
-  signLicensedModulesForMachine
-}
+export { signBusinessType, signBusinessTypeForMachine }
 
 export function writeBusinessSignatures(type: string): void {
   writeSetting('business_type_sig', signBusinessType(type))
@@ -179,94 +170,6 @@ export function getEffectiveModules(): string[] {
   return Array.from(new Set([...base, ...extra]))
 }
 
-export function setLicensedModules(
-  modules: string[],
-  sessionUserId = 1
-): { success: boolean; modules: string[]; state: BusinessState } {
-  const db = getDb()
-  const allowedAddons = ['sales', 'purchases', 'products', 'suppliers', 'followups', 'inventory']
-  const cleanMods = Array.from(
-    new Set(
-      modules
-        .filter((m) => typeof m === 'string' && allowedAddons.includes(m.trim()))
-        .map((m) => m.trim())
-    )
-  ).sort()
-
-  const sig = signLicensedModules(cleanMods)
-  const msig = signLicensedModulesForMachine(cleanMods)
-  const jsonStr = JSON.stringify(cleanMods)
-
-  runTransaction(() => {
-    writeSetting('licensed_modules', jsonStr)
-    writeSetting('licensed_modules_sig', sig)
-    writeSetting('licensed_modules_msig', msig)
-    // A manual super-admin selection replaces any previously applied vendor license.
-    db.prepare('DELETE FROM settings WHERE key = ?').run('vendor_license')
-
-    if (cleanMods.length > 0) {
-      createTables(getBusinessState().type)
-      runMigrations()
-      seedDefaults()
-    }
-
-    db.prepare(
-      `INSERT INTO business_audit_log (user_id, from_type, to_type, had_data, notes)
-       VALUES (?, 'modules', 'modules', 0, ?)`
-    ).run(sessionUserId, `تحديث الوحدات المرخصة إضافياً: [${cleanMods.join(', ')}]`)
-  })
-
-  return {
-    success: true,
-    modules: cleanMods,
-    state: getBusinessState()
-  }
-}
-
-/** Applies an Ed25519-signed vendor license (issued by Al-Joker Tech) granting add-on modules. */
-export function applyVendorLicense(
-  token: string,
-  sessionUserId = 1
-): { success: boolean; modules: string[]; issuedTo?: string; state: BusinessState } {
-  const db = getDb()
-  const payload = verifyVendorLicense(token)
-  const allowedAddons = ['sales', 'purchases', 'products', 'suppliers', 'followups', 'inventory']
-  const cleanMods = Array.from(
-    new Set(
-      payload.modules
-        .filter((m) => typeof m === 'string' && allowedAddons.includes(m.trim()))
-        .map((m) => m.trim())
-    )
-  ).sort()
-
-  runTransaction(() => {
-    writeSetting('licensed_modules', JSON.stringify(cleanMods))
-    writeSetting('licensed_modules_sig', signLicensedModules(cleanMods))
-    writeSetting('licensed_modules_msig', signLicensedModulesForMachine(cleanMods))
-    writeSetting('vendor_license', token.trim())
-
-    if (cleanMods.length > 0) {
-      createTables(getBusinessState().type)
-      runMigrations()
-      seedDefaults()
-    }
-
-    db.prepare(
-      `INSERT INTO business_audit_log (user_id, from_type, to_type, had_data, notes)
-       VALUES (?, 'modules', 'modules', 0, ?)`
-    ).run(
-      sessionUserId,
-      `تفعيل ترخيص الشركة (${payload.issuedTo || 'بدون اسم'}): [${cleanMods.join(', ')}]`
-    )
-  })
-
-  return { success: true, modules: cleanMods, issuedTo: payload.issuedTo, state: getBusinessState() }
-}
-
-export function getDeviceMachineId(): string {
-  return getMachineId()
-}
-
 export function setInitialBusinessType(type: BusinessType): BusinessState {
   const db = getDb()
   const current = getBusinessState()
@@ -381,16 +284,6 @@ export function switchBusinessType(
     createTables(toType)
     runMigrations()
     seedDefaults(toType)
-
-    // Super-admin recovery on a new device: re-bind previously licensed (locally signed) modules too.
-    const rawMods = readSetting('licensed_modules')
-    const modsSig = readSetting('licensed_modules_sig')
-    if (rawMods && modsSig) {
-      const parsedMods = parseJsonArray(rawMods)
-      if (parsedMods.length > 0 && modsSig === signLicensedModules(parsedMods)) {
-        writeSetting('licensed_modules_msig', signLicensedModulesForMachine(parsedMods))
-      }
-    }
 
     const curName = (
       db.prepare('SELECT value FROM settings WHERE key = ?').get('center_name') as { value: string }
