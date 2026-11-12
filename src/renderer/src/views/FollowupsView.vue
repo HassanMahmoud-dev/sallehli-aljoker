@@ -4,6 +4,7 @@ import { plain } from '@renderer/utils/plain'
 import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { useAppStore } from '@renderer/stores/appStore'
 import { useTerms } from '@renderer/composables/useTerms'
+import { PAYMENT_METHODS } from '@renderer/constants/appliances'
 import type {
   FollowupItem,
   FollowupType,
@@ -130,6 +131,9 @@ const earmoldForm = ref<{
   expected_date: string
   lab_cost: number
   customer_price: number
+  createSalesInvoiceForMold: boolean
+  recordLabCostInTreasury: boolean
+  payment_method: string
   notes: string
 }>({
   patient_id: 0,
@@ -145,8 +149,16 @@ const earmoldForm = ref<{
   expected_date: '',
   lab_cost: 0,
   customer_price: 0,
+  createSalesInvoiceForMold: false,
+  recordLabCostInTreasury: false,
+  payment_method: 'cash',
   notes: ''
 })
+
+const EARMOLD_PAYMENT_METHODS: Record<string, string> = {
+  ...PAYMENT_METHODS,
+  check: 'شيك بنكي'
+}
 
 const earmoldStatusForm = ref<{
   id: number
@@ -489,7 +501,10 @@ function openNewEarmoldModal(): void {
     expected_date: nextWeek.toISOString().slice(0, 10),
     lab_cost: 0,
     customer_price: 0,
-    notes: ''
+    notes: '',
+    createSalesInvoiceForMold: false,
+    recordLabCostInTreasury: false,
+    payment_method: 'cash'
   }
   earmoldModalOpen.value = true
 }
@@ -497,6 +512,20 @@ function openNewEarmoldModal(): void {
 async function handleSaveEarmold(): Promise<void> {
   if (!earmoldForm.value.patient_id) {
     swalError('يرجى اختيار المريض')
+    return
+  }
+  const customerPrice = Number(earmoldForm.value.customer_price || 0)
+  const labCost = Number(earmoldForm.value.lab_cost || 0)
+  if (customerPrice < 0 || labCost < 0) {
+    swalError('لا يمكن أن تكون الأسعار أو التكاليف قيماً سالبة')
+    return
+  }
+  if (earmoldForm.value.createSalesInvoiceForMold && customerPrice <= 0) {
+    swalError('يرجى إدخال سعر بيع أكبر من صفر لإنشاء فاتورة مبيعات للعميل')
+    return
+  }
+  if (earmoldForm.value.recordLabCostInTreasury && labCost <= 0) {
+    swalError('يرجى إدخال تكلفة معمل أكبر من صفر لتسجيلها في الخزينة')
     return
   }
   try {
@@ -1086,6 +1115,26 @@ async function handleDeleteImplant(id: number): Promise<void> {
               <td class="py-3 px-4 font-mono">
                 <div class="font-black text-slate-900 dark:text-white">{{ order.customer_price }} ج.م</div>
                 <div class="text-[10px] text-slate-400">تكلفة: {{ order.lab_cost }} ج.م</div>
+                <div class="flex flex-wrap gap-1 mt-1 font-sans">
+                  <span
+                    v-if="order.sales_invoice_id"
+                    class="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 text-[10px] font-bold"
+                  >
+                    فاتورة {{ order.sales_invoice_number || `#${order.sales_invoice_id}` }}
+                  </span>
+                  <span
+                    v-if="Number(order.is_lab_cost_paid || 0) === 1"
+                    class="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[10px] font-bold"
+                  >
+                    تم سداد المعمل
+                  </span>
+                  <span
+                    v-else-if="Number(order.lab_cost || 0) > 0"
+                    class="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] font-bold"
+                  >
+                    معمل غير مسدد
+                  </span>
+                </div>
               </td>
               <td class="py-3 px-4">
                 <span
@@ -1577,6 +1626,7 @@ async function handleDeleteImplant(id: number): Promise<void> {
                 v-model.number="earmoldForm.customer_price"
                 type="number"
                 min="0"
+                step="0.01"
                 class="w-full p-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-mono font-bold"
               />
             </div>
@@ -1587,8 +1637,44 @@ async function handleDeleteImplant(id: number): Promise<void> {
                 v-model.number="earmoldForm.lab_cost"
                 type="number"
                 min="0"
+                step="0.01"
                 class="w-full p-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-mono"
               />
+            </div>
+          </div>
+
+          <div
+            class="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2.5"
+          >
+            <label class="flex items-center gap-2 cursor-pointer font-bold text-slate-800 dark:text-slate-200">
+              <input
+                v-model="earmoldForm.createSalesInvoiceForMold"
+                type="checkbox"
+                class="w-4 h-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
+              />
+              <span>إنشاء فاتورة مبيعات للعميل بقيمة القالب تلقائياً</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer font-bold text-slate-800 dark:text-slate-200">
+              <input
+                v-model="earmoldForm.recordLabCostInTreasury"
+                type="checkbox"
+                class="w-4 h-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
+              />
+              <span>تسجيل تكلفة المعمل كمصروف في الخزينة الآن</span>
+            </label>
+            <div
+              v-if="earmoldForm.createSalesInvoiceForMold || earmoldForm.recordLabCostInTreasury"
+              class="pt-1"
+            >
+              <label class="block font-bold mb-1">وسيلة الدفع / التحصيل</label>
+              <select
+                v-model="earmoldForm.payment_method"
+                class="w-full p-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold"
+              >
+                <option v-for="(label, methodKey) in EARMOLD_PAYMENT_METHODS" :key="methodKey" :value="methodKey">
+                  {{ label }}
+                </option>
+              </select>
             </div>
           </div>
 

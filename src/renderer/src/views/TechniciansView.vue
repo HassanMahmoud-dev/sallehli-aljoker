@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { plain } from '@renderer/utils/plain'
 import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import type { Technician } from '@shared/types'
+import { PAYMENT_METHODS } from '@renderer/constants/appliances'
 import { useAppStore } from '@renderer/stores/appStore'
 import { useTerms } from '@renderer/composables/useTerms'
 import { compressImageFile } from '@renderer/utils/imageHelper'
@@ -15,7 +16,20 @@ const modalOpen = ref(false)
 const payoutModalOpen = ref(false)
 const selectedTech = ref<Technician | null>(null)
 const payoutAmount = ref(0)
+const payoutPaymentMethod = ref<string>('cash')
 const payoutNotes = ref('')
+
+const PAYOUT_PAYMENT_METHODS: Record<string, string> = {
+  ...PAYMENT_METHODS,
+  check: 'شيك بنكي'
+}
+
+const selectedTechDue = computed(() => {
+  if (!selectedTech.value) return 0
+  const earned = Number(selectedTech.value.total_earned_commission || 0)
+  const paid = Number(selectedTech.value.total_paid_commission || 0)
+  return Math.max(0, Number((earned - paid).toFixed(2)))
+})
 
 const form = ref<Partial<Technician>>({
   name: '',
@@ -61,8 +75,12 @@ function openEditModal(t: Technician): void {
 
 function openPayoutModal(t: Technician): void {
   selectedTech.value = t
-  const due = Math.max(0, (t.total_earned_commission || 0) - (t.total_paid_commission || 0))
-  payoutAmount.value = Math.round(due)
+  const due = Math.max(
+    0,
+    Number(((t.total_earned_commission || 0) - (t.total_paid_commission || 0)).toFixed(2))
+  )
+  payoutAmount.value = due
+  payoutPaymentMethod.value = 'cash'
   payoutNotes.value = `صرف عمولة لـ ${term('technician')}: ${t.name}`
   payoutModalOpen.value = true
 }
@@ -86,15 +104,34 @@ async function handleSaveTechnician(): Promise<void> {
 }
 
 async function handleConfirmPayout(): Promise<void> {
-  if (!selectedTech.value || payoutAmount.value <= 0) return
+  if (!selectedTech.value) return
+  const amount = Number(payoutAmount.value)
+  if (!Number.isFinite(amount) || amount <= 0) {
+    swalError('مبلغ غير صالح', 'يجب أن يكون مبلغ الصرف أكبر من صفر')
+    return
+  }
+
+  const due = selectedTechDue.value
+  if (amount > due) {
+    const confirmedOverpay = await swalConfirm(
+      'تنبيه: المبلغ يتجاوز الرصيد المستحق!',
+      due <= 0
+        ? `لا يوجد رصيد عمولات مستحق حالياً لـ ${term('technician')} (${selectedTech.value.name}). هل تريد المتابعة بصرف مبلغ (${amount} ج.م) كدفعة مقدمة / سلفة؟`
+        : `المبلغ المطلوب صرفه (${amount} ج.م) أكبر من الرصيد المستحق (${due} ج.م). هل تريد تأكيد صرف المبلغ الإضافي؟`,
+      'نعم، تأكيد الصرف',
+      'تراجع وتعديل المبلغ'
+    )
+    if (!confirmedOverpay) return
+  }
+
   try {
     await appStore.withLoading(async () => {
       await window.api.addTreasuryTransaction({
         transaction_type: 'tech_commission',
         category: 'عمولات ومستحقات',
-        amount: payoutAmount.value,
+        amount,
         technician_id: selectedTech.value!.id,
-        payment_method: 'cash',
+        payment_method: payoutPaymentMethod.value || 'cash',
         description: payoutNotes.value || `صرف مستحقات ${term('technician')} ${selectedTech.value!.name}`
       })
       payoutModalOpen.value = false
@@ -444,15 +481,56 @@ onMounted(loadTechnicians)
           </button>
         </div>
         <form @submit.prevent="handleConfirmPayout" class="p-6 space-y-4">
+          <div
+            class="grid grid-cols-3 gap-2 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 text-center"
+          >
+            <div>
+              <div class="text-[11px] text-slate-500">إجمالي المستحق</div>
+              <div class="font-bold text-slate-800 dark:text-slate-100">
+                {{ Number(selectedTech.total_earned_commission || 0).toFixed(2) }} ج.م
+              </div>
+            </div>
+            <div>
+              <div class="text-[11px] text-slate-500">المصروف سابقاً</div>
+              <div class="font-bold text-slate-800 dark:text-slate-100">
+                {{ Number(selectedTech.total_paid_commission || 0).toFixed(2) }} ج.م
+              </div>
+            </div>
+            <div>
+              <div class="text-[11px] text-slate-500">الرصيد المتاح</div>
+              <div class="font-black text-emerald-600 dark:text-emerald-400">
+                {{ selectedTechDue.toFixed(2) }} ج.م
+              </div>
+            </div>
+          </div>
+          <div
+            v-if="Number(payoutAmount || 0) > selectedTechDue"
+            class="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 font-bold text-[11px]"
+          >
+            ⚠️ المبلغ المدخل ({{ Number(payoutAmount || 0).toFixed(2) }} ج.م) يتجاوز الرصيد المستحق المتاح ({{ selectedTechDue.toFixed(2) }} ج.م) وسيُطلب تأكيد إضافي قبل الصرف.
+          </div>
           <div>
             <label class="block font-bold mb-1">المبلغ المنصرف من الخزينة (ج.م) *</label>
             <input
               v-model.number="payoutAmount"
               type="number"
-              min="1"
+              min="0.01"
+              step="0.01"
               required
               class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-black text-base"
             />
+          </div>
+          <div>
+            <label class="block font-bold mb-1">وسيلة الدفع من الخزينة *</label>
+            <select
+              v-model="payoutPaymentMethod"
+              required
+              class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold"
+            >
+              <option v-for="(label, methodKey) in PAYOUT_PAYMENT_METHODS" :key="methodKey" :value="methodKey">
+                {{ label }}
+              </option>
+            </select>
           </div>
           <div>
             <label class="block font-bold mb-1">البيان</label>

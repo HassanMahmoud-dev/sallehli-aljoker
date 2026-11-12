@@ -134,6 +134,13 @@ const uploadAttachmentModalOpen = ref(false)
 const newAttachmentTitle = ref('')
 const newAttachmentCategory = ref<'external_report' | 'audiogram_scan' | 'mapping_file' | 'prescription' | 'id_card' | 'general'>('external_report')
 const newAttachmentNotes = ref('')
+const attachmentPreviewModalOpen = ref(false)
+const attachmentPreview = ref<{
+  title: string
+  fileName: string
+  mimeType: string
+  dataUrl: string
+} | null>(null)
 const technicians = ref<Technician[]>([])
 const products = ref<Product[]>([])
 
@@ -296,18 +303,43 @@ async function handleFileSelected(event: Event): Promise<void> {
   reader.readAsDataURL(file)
 }
 
+function triggerAttachmentDownload(dataUrl: string, fileName: string): void {
+  const link = document.createElement('a')
+  link.href = dataUrl
+  link.download = fileName || 'attachment'
+  link.style.display = 'none'
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+}
+
+function isInlinePreviewableAttachment(mimeType: string): boolean {
+  const normalized = (mimeType || '').toLowerCase()
+  return normalized === 'application/pdf' || normalized.startsWith('text/')
+}
+
 async function handleOpenAttachment(att: PatientAttachment): Promise<void> {
   try {
     const res = await window.api.openPatientAttachment({ id: att.id, openExternal: true })
     if (res.dataUrl) {
-      if ((res.attachment.mime_type || '').startsWith('image/')) {
+      const mimeType = res.attachment.mime_type || att.mime_type || 'application/octet-stream'
+      const fileName = res.attachment.file_name || att.file_name || att.title || 'attachment'
+      if (mimeType.startsWith('image/')) {
         appStore.openImagePreview(res.dataUrl, att.title)
-      } else {
-        const w = window.open('')
-        if (w) {
-          w.document.write(`<iframe src="${res.dataUrl}" style="border:0; top:0; left:0; bottom:0; right:0; width:100%; height:100%;" allowfullscreen></iframe>`)
+      } else if (isInlinePreviewableAttachment(mimeType)) {
+        attachmentPreview.value = {
+          title: att.title || fileName,
+          fileName,
+          mimeType,
+          dataUrl: res.dataUrl
         }
+        attachmentPreviewModalOpen.value = true
+      } else {
+        triggerAttachmentDownload(res.dataUrl, fileName)
+        swalSuccess('تم بدء تنزيل المرفق')
       }
+    } else if (!res.openedExternal) {
+      swalError('تعذر فتح المرفق', 'لا تتوفر بيانات للمعاينة أو التنزيل')
     }
   } catch (err: unknown) {
     swalError('تعذر فتح المرفق', err instanceof Error ? err.message : '')
@@ -2152,6 +2184,48 @@ onMounted(async () => {
             </button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Safe Non-Image Attachment Preview Modal -->
+    <div
+      v-if="attachmentPreviewModalOpen && attachmentPreview"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-4"
+    >
+      <div
+        class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden text-xs"
+      >
+        <div
+          class="px-5 py-3 bg-slate-100 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3"
+        >
+          <div class="min-w-0">
+            <h3 class="font-bold text-sm truncate">{{ attachmentPreview.title }}</h3>
+            <div class="text-[11px] text-slate-500 font-mono truncate">{{ attachmentPreview.fileName }}</div>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <a
+              :href="attachmentPreview.dataUrl"
+              :download="attachmentPreview.fileName"
+              class="px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-700 text-white font-bold flex items-center gap-1.5 cursor-pointer"
+            >
+              تنزيل الملف
+            </a>
+            <button
+              type="button"
+              @click="attachmentPreviewModalOpen = false"
+              class="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+            >
+              <X class="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+        <div class="flex-1 bg-slate-100 dark:bg-slate-950 overflow-hidden">
+          <iframe
+            :src="attachmentPreview.dataUrl"
+            :title="attachmentPreview.title"
+            class="w-full h-full border-0"
+          ></iframe>
+        </div>
       </div>
     </div>
   </div>

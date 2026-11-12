@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { plain } from '@renderer/utils/plain'
-import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
+import { swalSuccess, swalError, swalWarning, swalConfirm } from '@renderer/utils/swal'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
@@ -216,8 +216,172 @@ const form = ref<{
 })
 
 const computedPartsTotal = computed(() =>
-  form.value.parts.reduce((sum, p) => sum + Number(p.quantity) * Number(p.unit_price), 0)
+  form.value.parts
+    .filter((p) => Number(p.is_restored || 0) !== 1)
+    .reduce(
+      (sum, p) =>
+        sum + Math.max(0, Number(p.quantity || 0)) * Math.max(0, Number(p.unit_price || 0)),
+      0
+    )
 )
+
+const activeFormPartsCount = computed(
+  () => form.value.parts.filter((p) => Number(p.is_restored || 0) !== 1).length
+)
+
+const restoredFormPartsCount = computed(
+  () => form.value.parts.filter((p) => Number(p.is_restored || 0) === 1).length
+)
+
+const hasUnreturnedLoaner = computed(() =>
+  Boolean(form.value.loaner_serial_id && !form.value.loaner_returned_at)
+)
+
+const originalActivePartQty = ref<Record<number, number>>({})
+const originalActiveProductQty = ref<Record<string, number>>({})
+
+function resetOriginalTicketParts(parts: TicketPartItem[] = []): void {
+  const partMap: Record<number, number> = {}
+  const prodMap: Record<string, number> = {}
+  for (const p of parts) {
+    if (Number(p.is_restored || 0) === 1) continue
+    const qty = Math.max(0, Number(p.quantity || 0))
+    if (p.product_id) {
+      const key = `${p.product_id}:${p.variant_id || 0}`
+      prodMap[key] = (prodMap[key] || 0) + qty * Math.max(1, Number(p.pack_size || 1))
+    } else if (p.part_id) {
+      partMap[p.part_id] = (partMap[p.part_id] || 0) + qty
+    }
+  }
+  originalActivePartQty.value = partMap
+  originalActiveProductQty.value = prodMap
+}
+
+function getMaxTicketPartQty(partId: number): number {
+  const part = spareParts.value.find((p) => p.id === partId)
+  const stockLeft = Math.max(0, Number(part?.quantity || 0))
+  const savedOnTicket = originalActivePartQty.value[partId] || 0
+  return stockLeft + savedOnTicket
+}
+
+function getUsedFormPartQty(partId: number, excludeIndex = -1): number {
+  return form.value.parts.reduce((sum, p, idx) => {
+    if (idx === excludeIndex || Number(p.is_restored || 0) === 1 || p.part_id !== partId) {
+      return sum
+    }
+    return sum + Math.max(0, Number(p.quantity || 0))
+  }, 0)
+}
+
+function getMaxTicketProductPieces(productId: number, variantId: number | null): number | null {
+  const prod = products.value.find((p) => p.id === productId)
+  if (!prod || prod.type === 'service') return null
+  const variant = variantId ? prod.variants?.find((v) => v.id === variantId) : null
+  const stockLeft = Math.max(0, Number(variant ? variant.qty : prod.qty || 0))
+  const savedOnTicket = originalActiveProductQty.value[`${productId}:${variantId || 0}`] || 0
+  return stockLeft + savedOnTicket
+}
+
+function getUsedFormProductPieces(
+  productId: number,
+  variantId: number | null,
+  excludeIndex = -1
+): number {
+  return form.value.parts.reduce((sum, p, idx) => {
+    if (
+      idx === excludeIndex ||
+      Number(p.is_restored || 0) === 1 ||
+      p.product_id !== productId ||
+      (p.variant_id || null) !== (variantId || null)
+    ) {
+      return sum
+    }
+    return sum + Math.max(0, Number(p.quantity || 0)) * Math.max(1, Number(p.pack_size || 1))
+  }, 0)
+}
+
+function clampNonNegativeField(
+  field: 'inspection_fee' | 'labor_cost' | 'discount' | 'paid_amount' | 'external_cost'
+): void {
+  const val = Number(form.value[field])
+  if (!Number.isFinite(val) || val < 0) {
+    form.value[field] = 0
+  }
+}
+
+function handlePartUnitPriceInput(item: TicketPartItem): void {
+  if (Number(item.is_restored || 0) === 1) return
+  const price = Number(item.unit_price)
+  if (!Number.isFinite(price) || price < 0) {
+    item.unit_price = 0
+  }
+  item.total_price =
+    Math.round(Math.max(0, Number(item.quantity || 0)) * Math.max(0, Number(item.unit_price || 0)) * 100) /
+    100
+}
+
+function updateTicketPartQuantity(index: number, rawNewQty: unknown): boolean {
+  const item = form.value.parts[index]
+  if (!item || Number(item.is_restored || 0) === 1) return false
+
+  const newQty = Number(rawNewQty)
+  if (!Number.isFinite(newQty) || newQty <= 0) {
+    swalError('كمية غير صالحة', 'يجب أن تكون الكمية أكبر من صفر')
+    return false
+  }
+
+  if (item.product_id) {
+    const maxPieces = getMaxTicketProductPieces(item.product_id, item.variant_id || null)
+    const packSz = Math.max(1, Number(item.pack_size || 1))
+    if (maxPieces !== null) {
+      const otherUsed = getUsedFormProductPieces(item.product_id, item.variant_id || null, index)
+      if (otherUsed + newQty * packSz > maxPieces) {
+        const maxRemainingQty = Math.max(0, Math.floor((maxPieces - otherUsed) / packSz))
+        swalError(
+          'الكمية تتجاوز المخزون المتاح',
+          `الحد الأقصى المتاح من (${item.part_name}) لهذه التذكرة هو ${maxRemainingQty}`
+        )
+        return false
+      }
+    }
+  } else if (item.part_id) {
+    const maxAllowed = getMaxTicketPartQty(item.part_id)
+    const otherUsed = getUsedFormPartQty(item.part_id, index)
+    if (otherUsed + newQty > maxAllowed) {
+      const maxRemainingQty = Math.max(0, maxAllowed - otherUsed)
+      swalError(
+        'الكمية تتجاوز المخزون المتاح',
+        `الحد الأقصى المتاح من (${item.part_name}) لهذه التذكرة هو ${maxRemainingQty}`
+      )
+      return false
+    }
+  }
+
+  item.quantity = newQty
+  item.total_price = Math.round(newQty * Math.max(0, Number(item.unit_price || 0)) * 100) / 100
+  return true
+}
+
+function onPartQtyInputChange(index: number, e: Event): void {
+  const input = e.target as HTMLInputElement
+  const ok = updateTicketPartQuantity(index, input.value)
+  if (!ok && form.value.parts[index]) {
+    input.value = String(form.value.parts[index].quantity)
+  }
+}
+
+function handleStatusChange(): void {
+  if (form.value.status === 'delivered' && hasUnreturnedLoaner.value) {
+    swalWarning(
+      'تنبيه: جهاز الإعارة لم يُسترجع بعد!',
+      `العميل لديه سماعة بديلة مؤقتة (${form.value.loaner_product_name || ''} - S/N: ${form.value.loaner_serial_no || ''}). يجب تأكيد استردادها للمخزن قبل تسليم التذكرة.`
+    )
+  }
+}
+
+function markFormLoanerReturnedNow(): void {
+  form.value.loaner_returned_at = new Date().toISOString().slice(0, 19).replace('T', ' ')
+}
 
 const computedTotalAmount = computed(() =>
   Math.max(
@@ -376,11 +540,29 @@ function addPartToTicket(): void {
   const part = spareParts.value.find((p) => p.id === selectedPartId.value)
   if (!part) return
 
-  const qty = Math.max(1, Number(selectedPartQty.value || 1))
-  const existing = form.value.parts.find((p) => p.part_id === part.id)
+  const qty = Number(selectedPartQty.value)
+  if (!Number.isFinite(qty) || qty <= 0) {
+    swalError('كمية غير صالحة', 'يجب أن تكون الكمية المضافة أكبر من صفر')
+    return
+  }
+
+  const maxAllowed = getMaxTicketPartQty(part.id)
+  const alreadyUsed = getUsedFormPartQty(part.id)
+  if (alreadyUsed + qty > maxAllowed) {
+    const remaining = Math.max(0, maxAllowed - alreadyUsed)
+    swalError(
+      'الكمية تتجاوز المخزون المتاح',
+      `المتاح حالياً من (${part.name}) لهذه التذكرة هو ${remaining} فقط`
+    )
+    return
+  }
+
+  const existing = form.value.parts.find(
+    (p) => p.part_id === part.id && Number(p.is_restored || 0) !== 1
+  )
   if (existing) {
     existing.quantity += qty
-    existing.total_price = existing.quantity * existing.unit_price
+    existing.total_price = Math.round(existing.quantity * Math.max(0, existing.unit_price) * 100) / 100
   } else {
     form.value.parts.push({
       part_id: part.id,
@@ -389,7 +571,8 @@ function addPartToTicket(): void {
       quantity: qty,
       unit_cost: part.purchase_price,
       unit_price: part.selling_price,
-      total_price: qty * part.selling_price
+      total_price: Math.round(qty * Math.max(0, part.selling_price) * 100) / 100,
+      is_restored: 0
     })
   }
   selectedPartId.value = null
@@ -401,16 +584,40 @@ function addProductToTicket(): void {
   const prod = products.value.find((p) => p.id === selectedProductId.value)
   if (!prod) return
 
-  const qty = Math.max(1, Number(selectedProductQty.value || 1))
-  const existing = form.value.parts.find((p) => p.product_id === prod.id)
+  const qty = Number(selectedProductQty.value)
+  if (!Number.isFinite(qty) || qty <= 0) {
+    swalError('كمية غير صالحة', 'يجب أن تكون الكمية المضافة أكبر من صفر')
+    return
+  }
+
+  const variantId = prod.variants?.[0]?.id || null
+  const maxPieces = getMaxTicketProductPieces(prod.id, variantId)
+  if (maxPieces !== null) {
+    const alreadyUsedPieces = getUsedFormProductPieces(prod.id, variantId)
+    if (alreadyUsedPieces + qty > maxPieces) {
+      const remaining = Math.max(0, maxPieces - alreadyUsedPieces)
+      swalError(
+        'الكمية تتجاوز المخزون المتاح',
+        `المتاح حالياً من (${prod.name}) لهذه التذكرة هو ${remaining} فقط`
+      )
+      return
+    }
+  }
+
+  const existing = form.value.parts.find(
+    (p) =>
+      p.product_id === prod.id &&
+      (p.variant_id || null) === variantId &&
+      Number(p.is_restored || 0) !== 1
+  )
   if (existing) {
     existing.quantity += qty
-    existing.total_price = existing.quantity * existing.unit_price
+    existing.total_price = Math.round(existing.quantity * Math.max(0, existing.unit_price) * 100) / 100
   } else {
     form.value.parts.push({
       part_id: null,
       product_id: prod.id,
-      variant_id: prod.variants?.[0]?.id || null,
+      variant_id: variantId,
       unit: 'piece',
       pack_size: 1,
       part_name: prod.name,
@@ -418,7 +625,8 @@ function addProductToTicket(): void {
       quantity: qty,
       unit_cost: prod.cost_price,
       unit_price: prod.sale_price,
-      total_price: qty * prod.sale_price
+      total_price: Math.round(qty * Math.max(0, prod.sale_price) * 100) / 100,
+      is_restored: 0
     })
   }
   selectedProductId.value = null
@@ -500,6 +708,8 @@ async function handleReturnLoaner(ticket: MaintenanceTicket): Promise<void> {
 }
 
 function removePartFromTicket(index: number): void {
+  const target = form.value.parts[index]
+  if (!target || Number(target.is_restored || 0) === 1) return
   form.value.parts.splice(index, 1)
 }
 
@@ -581,6 +791,7 @@ function openCreateModal(): void {
     notes: '',
     parts: []
   }
+  resetOriginalTicketParts([])
   modalOpen.value = true
 }
 
@@ -640,6 +851,7 @@ function openEditModal(ticket: MaintenanceTicket): void {
     notes: ticket.notes || '',
     parts: ticket.parts ? ticket.parts.map((p) => ({ ...p })) : []
   }
+  resetOriginalTicketParts(form.value.parts)
   modalOpen.value = true
 }
 
@@ -668,6 +880,32 @@ async function handleSaveTicket(andPrint = false): Promise<void> {
     return
   }
 
+  if (
+    Number(form.value.inspection_fee || 0) < 0 ||
+    Number(form.value.labor_cost || 0) < 0 ||
+    Number(form.value.discount || 0) < 0 ||
+    Number(form.value.paid_amount || 0) < 0 ||
+    Number(form.value.external_cost || 0) < 0
+  ) {
+    errorMsg.value = 'لا يمكن إدخال قيم سالبة في الأسعار أو المصنعية أو الخصم'
+    swalError('قيمة غير صالحة', errorMsg.value)
+    return
+  }
+
+  for (const p of form.value.parts) {
+    if (Number(p.is_restored || 0) === 1) continue
+    if (Number(p.quantity || 0) <= 0) {
+      errorMsg.value = `الكمية للصنف (${p.part_name}) يجب أن تكون أكبر من صفر`
+      swalError('كمية غير صالحة', errorMsg.value)
+      return
+    }
+    if (Number(p.unit_price || 0) < 0) {
+      errorMsg.value = `سعر الوحدة للصنف (${p.part_name}) لا يمكن أن يكون سالباً`
+      swalError('قيمة غير صالحة', errorMsg.value)
+      return
+    }
+  }
+
   // Warn if delivering ticket while loaner hearing aid is still not returned
   if (
     form.value.status === 'delivered' &&
@@ -676,11 +914,16 @@ async function handleSaveTicket(andPrint = false): Promise<void> {
   ) {
     const confirmLoaner = await swalConfirm(
       'تنبيه: سماعة بديلة مؤقتة بعهدة العميل!',
-      `العميل لديه سماعة بديلة مؤقتة (${form.value.loaner_product_name || ''} - S/N: ${form.value.loaner_serial_no || ''}) لم يُسجل استردادها بعد. هل تم استردادها الآن مع تسليم الجهاز؟`
+      `العميل لديه سماعة بديلة مؤقتة (${form.value.loaner_product_name || ''} - S/N: ${form.value.loaner_serial_no || ''}) لم يُسجل استردادها بعد. هل تم استردادها الآن مع تسليم الجهاز؟`,
+      'نعم، تم استردادها الآن',
+      'إلغاء الحفظ'
     )
-    if (confirmLoaner) {
-      form.value.loaner_returned_at = new Date().toISOString().slice(0, 19).replace('T', ' ')
+    if (!confirmLoaner) {
+      errorMsg.value = 'لا يمكن تسليم الجهاز قبل استرداد السماعة البديلة المؤقتة من العميل'
+      swalWarning('تعذر تسليم الجهاز', errorMsg.value)
+      return
     }
+    form.value.loaner_returned_at = new Date().toISOString().slice(0, 19).replace('T', ' ')
   }
 
   try {
@@ -878,9 +1121,22 @@ onMounted(async () => {
                 </div>
                 <div
                   v-if="ticket.parts && ticket.parts.length > 0"
-                  class="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold mt-0.5"
+                  class="flex flex-wrap items-center gap-1.5 text-[10px] font-bold mt-0.5"
                 >
-                  🔧 {{ t('parts') }} مركبة: {{ ticket.parts.length }}
+                  <span
+                    v-if="ticket.parts.some((p) => Number(p.is_restored || 0) !== 1)"
+                    class="text-emerald-600 dark:text-emerald-400"
+                  >
+                    🔧 {{ t('parts') }} مركبة:
+                    {{ ticket.parts.filter((p) => Number(p.is_restored || 0) !== 1).length }}
+                  </span>
+                  <span
+                    v-if="ticket.parts.some((p) => Number(p.is_restored || 0) === 1)"
+                    class="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20"
+                  >
+                    مسترجعة للمخزن:
+                    {{ ticket.parts.filter((p) => Number(p.is_restored || 0) === 1).length }}
+                  </span>
                 </div>
               </td>
 
@@ -1381,12 +1637,29 @@ onMounted(async () => {
                 <label class="block font-bold mb-1">حالة الطلب *</label>
                 <select
                   v-model="form.status"
+                  @change="handleStatusChange"
                   class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
                 >
                   <option v-for="(info, k) in TICKET_STATUS_MAP" :key="k" :value="k">
                     {{ info.label }}
                   </option>
                 </select>
+                <div
+                  v-if="form.status === 'delivered' && hasUnreturnedLoaner"
+                  class="mt-2 p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-300 text-[11px] font-bold flex items-center justify-between gap-2"
+                >
+                  <span>
+                    ⚠️ تنبيه: جهاز الإعارة المؤقت ({{ form.loaner_product_name || 'سماعة بديلة' }} - S/N:
+                    {{ form.loaner_serial_no || '' }}) لم يُسترجع بعد!
+                  </span>
+                  <button
+                    type="button"
+                    @click="markFormLoanerReturnedNow"
+                    class="shrink-0 px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black cursor-pointer"
+                  >
+                    تأكيد الاسترجاع الآن
+                  </button>
+                </div>
               </div>
               <div>
                 <label class="block font-bold mb-1">تعيين الفني المسؤول</label>
@@ -1637,6 +1910,19 @@ onMounted(async () => {
               v-if="form.parts.length > 0"
               class="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-900"
             >
+              <div
+                class="px-3 py-1.5 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between text-[11px]"
+              >
+                <span class="font-bold text-slate-700 dark:text-slate-300">
+                  القطع النشطة المحتسبة: {{ activeFormPartsCount }}
+                </span>
+                <span
+                  v-if="restoredFormPartsCount > 0"
+                  class="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 font-bold"
+                >
+                  قطع تاريخية مسترجعة للمخزن (غير محتسبة بالإجمالي): {{ restoredFormPartsCount }}
+                </span>
+              </div>
               <table class="w-full text-right text-xs">
                 <thead class="bg-slate-100 dark:bg-slate-800 font-bold">
                   <tr>
@@ -1649,21 +1935,97 @@ onMounted(async () => {
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-200 dark:divide-slate-800">
-                  <tr v-for="(item, idx) in form.parts" :key="idx">
+                  <tr
+                    v-for="(item, idx) in form.parts"
+                    :key="idx"
+                    :class="
+                      Number(item.is_restored || 0) === 1
+                        ? 'bg-amber-50/40 dark:bg-amber-950/20 opacity-70'
+                        : ''
+                    "
+                  >
                     <td class="py-2 px-3 font-mono">{{ item.part_code }}</td>
-                    <td class="py-2 px-3 font-bold">{{ item.part_name }}</td>
-                    <td class="py-2 px-3">{{ item.quantity }}</td>
+                    <td class="py-2 px-3 font-bold">
+                      <div class="flex items-center gap-1.5 flex-wrap">
+                        <span
+                          :class="
+                            Number(item.is_restored || 0) === 1
+                              ? 'line-through text-slate-500'
+                              : ''
+                          "
+                        >
+                          {{ item.part_name }}
+                        </span>
+                        <span
+                          v-if="Number(item.is_restored || 0) === 1"
+                          class="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 text-[10px] font-black"
+                        >
+                          مسترجعة للمخزن
+                        </span>
+                      </div>
+                    </td>
+                    <td class="py-2 px-3">
+                      <span
+                        v-if="Number(item.is_restored || 0) === 1"
+                        class="font-mono text-slate-500 line-through"
+                      >
+                        {{ item.quantity }}
+                      </span>
+                      <div v-else class="inline-flex items-center gap-1">
+                        <button
+                          type="button"
+                          @click="updateTicketPartQuantity(idx, Number(item.quantity || 1) - 1)"
+                          class="w-6 h-6 rounded bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 font-black cursor-pointer"
+                        >
+                          -
+                        </button>
+                        <input
+                          :value="item.quantity"
+                          @change="onPartQtyInputChange(idx, $event)"
+                          type="number"
+                          min="1"
+                          class="w-14 px-1.5 py-1 text-center rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-mono font-bold"
+                        />
+                        <button
+                          type="button"
+                          @click="updateTicketPartQuantity(idx, Number(item.quantity || 0) + 1)"
+                          class="w-6 h-6 rounded bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 font-black cursor-pointer"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </td>
                     <td class="py-2 px-3">
                       <input
                         v-model.number="item.unit_price"
-                        @input="item.total_price = item.quantity * item.unit_price"
+                        @input="handlePartUnitPriceInput(item)"
                         type="number"
-                        class="w-24 px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold"
+                        min="0"
+                        step="0.01"
+                        :disabled="Number(item.is_restored || 0) === 1"
+                        class="w-24 px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold disabled:opacity-60 disabled:cursor-not-allowed"
                       />
                     </td>
-                    <td class="py-2 px-3 font-bold">{{ item.quantity * item.unit_price }} ج.م</td>
+                    <td class="py-2 px-3 font-bold">
+                      <span
+                        v-if="Number(item.is_restored || 0) === 1"
+                        class="text-slate-400 line-through font-mono"
+                      >
+                        {{ Math.max(0, item.quantity) * Math.max(0, item.unit_price) }} ج.م (مستثناة)
+                      </span>
+                      <span v-else>
+                        {{ Math.max(0, item.quantity) * Math.max(0, item.unit_price) }} ج.م
+                      </span>
+                    </td>
                     <td class="py-2 px-3">
+                      <span
+                        v-if="Number(item.is_restored || 0) === 1"
+                        class="text-[10px] text-slate-400 font-bold"
+                      >
+                        سجل تاريخي
+                      </span>
                       <button
+                        v-else
                         type="button"
                         @click="removePartFromTicket(idx)"
                         class="text-rose-600 hover:underline font-bold cursor-pointer"
@@ -1738,8 +2100,10 @@ onMounted(async () => {
                   <label class="block font-bold mb-1">تكلفة المعمل على المركز (ج.م)</label>
                   <input
                     v-model.number="form.external_cost"
+                    @input="clampNonNegativeField('external_cost')"
                     type="number"
                     min="0"
+                    step="0.01"
                     class="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
                   />
                 </div>
@@ -1821,8 +2185,10 @@ onMounted(async () => {
                 <label class="block font-bold mb-1">رسوم الكشف</label>
                 <input
                   v-model.number="form.inspection_fee"
+                  @input="clampNonNegativeField('inspection_fee')"
                   type="number"
                   min="0"
+                  step="0.01"
                   class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
                 />
               </div>
@@ -1830,8 +2196,10 @@ onMounted(async () => {
                 <label class="block font-bold mb-1">المصنعية والإصلاح</label>
                 <input
                   v-model.number="form.labor_cost"
+                  @input="clampNonNegativeField('labor_cost')"
                   type="number"
                   min="0"
+                  step="0.01"
                   class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
                 />
               </div>
@@ -1848,8 +2216,10 @@ onMounted(async () => {
                 <label class="block font-bold mb-1">خصم للعميل</label>
                 <input
                   v-model.number="form.discount"
+                  @input="clampNonNegativeField('discount')"
                   type="number"
                   min="0"
+                  step="0.01"
                   class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
                 />
               </div>
@@ -1859,8 +2229,10 @@ onMounted(async () => {
                 </label>
                 <input
                   v-model.number="form.paid_amount"
+                  @input="clampNonNegativeField('paid_amount')"
                   type="number"
                   min="0"
+                  step="0.01"
                   class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border-2 border-emerald-500 font-black"
                 />
               </div>

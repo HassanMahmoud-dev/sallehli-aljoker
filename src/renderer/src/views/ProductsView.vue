@@ -57,6 +57,7 @@ const newSerialRecordInTreasury = ref(false)
 const newSerialPaymentMethod = ref('cash')
 
 const selectedProductForStock = ref<Product | null>(null)
+const editingProduct = ref<Product | null>(null)
 const stockForm = ref<{
   product_id: number
   variant_id: number | null
@@ -370,6 +371,7 @@ function removeVariant(idx: number): void {
 }
 
 function openCreateModal(presetType: ProductType = 'hearing_aid'): void {
+  editingProduct.value = null
   form.value = {
     code: `PR-${Math.floor(1000 + Math.random() * 9000)}`,
     barcode: '',
@@ -406,6 +408,7 @@ function openCreateModal(presetType: ProductType = 'hearing_aid'): void {
 }
 
 function openEditModal(p: Product): void {
+  editingProduct.value = p
   form.value = {
     id: p.id,
     code: p.code,
@@ -435,6 +438,14 @@ function openEditModal(p: Product): void {
     initial_serials_text: ''
   }
   productModalOpen.value = true
+}
+
+function openStockAdjustFromEdit(): void {
+  const target =
+    products.value.find((x) => x.id === form.value.id) || editingProduct.value
+  if (!target) return
+  productModalOpen.value = false
+  openStockModal(target)
 }
 
 async function handleImageUpload(e: Event): Promise<void> {
@@ -1410,13 +1421,35 @@ onMounted(loadData)
               </div>
 
               <div v-if="form.type !== 'service' && !form.track_serial && !form.has_variants">
-                <label class="block font-bold mb-1">الرصيد الحالي (بـ {{ form.unit_name }})</label>
+                <label class="block font-bold mb-1">
+                  {{ form.id ? `الرصيد الحالي (للقراءة فقط - بـ ${form.unit_name})` : `الرصيد الافتتاحي (بـ ${form.unit_name})` }}
+                </label>
                 <input
                   v-model.number="form.qty"
                   type="number"
                   min="0"
-                  class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono font-bold"
+                  :disabled="Boolean(form.id)"
+                  :readonly="Boolean(form.id)"
+                  :class="
+                    form.id
+                      ? 'bg-slate-100 dark:bg-slate-800/70 text-slate-500 cursor-not-allowed'
+                      : 'bg-white dark:bg-slate-900'
+                  "
+                  class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 font-mono font-bold"
                 />
+                <div
+                  v-if="form.id"
+                  class="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-amber-700 dark:text-amber-400"
+                >
+                  <span>يُعدّل الرصيد عبر حركة مخزنية رسمية وليس من بطاقة الصنف.</span>
+                  <button
+                    type="button"
+                    @click="openStockAdjustFromEdit"
+                    class="shrink-0 px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 font-bold border border-amber-500/30 cursor-pointer"
+                  >
+                    تسوية المخزون (Stock Adjust)
+                  </button>
+                </div>
               </div>
 
               <div v-if="form.type !== 'service' && !form.has_variants">

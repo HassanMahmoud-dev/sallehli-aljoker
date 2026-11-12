@@ -3,6 +3,7 @@ import { plain } from '@renderer/utils/plain'
 import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { ref, onMounted } from 'vue'
 import { useAppStore } from '@renderer/stores/appStore'
+import { compressImageFile } from '@renderer/utils/imageHelper'
 import LookupManager from '@renderer/components/LookupManager.vue'
 import CustomFieldManager from '@renderer/components/CustomFieldManager.vue'
 import jokerTechLogo from '@renderer/assets/joker-tech-logo.png'
@@ -30,15 +31,48 @@ async function loadSettingsData(): Promise<void> {
   dbPath.value = await window.api.getDatabasePath()
 }
 
-function handleLogoUpload(e: Event): void {
+async function handleLogoUpload(e: Event): Promise<void> {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
-  const reader = new FileReader()
-  reader.onload = () => {
-    form.value.logo_base64 = String(reader.result || '')
+
+  const allowedMimeTypes = new Set([
+    'image/png',
+    'image/jpeg',
+    'image/jpg',
+    'image/webp',
+    'image/gif',
+    'image/bmp'
+  ])
+  if (!file.type || !allowedMimeTypes.has(file.type.toLowerCase())) {
+    swalError('صيغة صورة غير صالحة', 'يرجى اختيار ملف صورة صالح بصيغة PNG أو JPG أو WEBP أو GIF')
+    input.value = ''
+    return
   }
-  reader.readAsDataURL(file)
+
+  const maxRawBytes = 5 * 1024 * 1024 // 5 MB
+  if (file.size > maxRawBytes) {
+    swalError('حجم الصورة كبير جداً', 'الحد الأقصى المسموح به لحجم ملف الشعار هو 5 ميجابايت')
+    input.value = ''
+    return
+  }
+
+  try {
+    const compressed = await compressImageFile(file, 600, 600, 0.85)
+    if (!compressed || !compressed.startsWith('data:image/')) {
+      swalError('تعذر قراءة الصورة', 'الملف المختار لا يمثل صورة صالحة')
+      return
+    }
+    if (compressed.length > 2 * 1024 * 1024) {
+      swalError('حجم الشعار بعد الضغط لا يزال كبيراً', 'يرجى اختيار صورة ذات أبعاد أو حجم أصغر')
+      return
+    }
+    form.value.logo_base64 = compressed
+  } catch (err: unknown) {
+    swalError('تعذر معالجة صورة الشعار', err instanceof Error ? err.message : '')
+  } finally {
+    input.value = ''
+  }
 }
 
 async function handleSaveSettings(): Promise<void> {
