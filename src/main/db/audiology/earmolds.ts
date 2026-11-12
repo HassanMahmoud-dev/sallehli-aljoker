@@ -96,8 +96,34 @@ export function saveEarmoldOrder(
     const today = getLocalDateString()
     const paymentMethod = data.payment_method || 'cash'
 
-    let salesInvoiceId = data.sales_invoice_id || null
-    let isLabCostPaid = Number(data.is_lab_cost_paid || 0)
+    const existing = data.id
+      ? (db
+          .prepare(
+            'SELECT id, order_number, sales_invoice_id, is_lab_cost_paid FROM earmold_orders WHERE id = ?'
+          )
+          .get(data.id) as
+          | {
+              id: number
+              order_number: string
+              sales_invoice_id: number | null
+              is_lab_cost_paid: number
+            }
+          | undefined)
+      : undefined
+    if (data.id && !existing) {
+      throw new Error('طلب القالب غير موجود')
+    }
+
+    const orderNumber = existing?.order_number || data.order_number?.trim() || generateNextEarmoldNumber()
+    let salesInvoiceId =
+      data.sales_invoice_id !== undefined
+        ? data.sales_invoice_id || null
+        : existing?.sales_invoice_id || null
+    let isLabCostPaid = Number(
+      data.is_lab_cost_paid !== undefined
+        ? data.is_lab_cost_paid
+        : existing?.is_lab_cost_paid || 0
+    )
 
     // Optionally create a Sales Invoice for the Earmold service
     if (!salesInvoiceId && data.createSalesInvoiceForMold && custPrice > 0) {
@@ -157,7 +183,7 @@ export function saveEarmoldOrder(
         labCost,
         cust.id,
         paymentMethod,
-        `تكلفة معمل قوالب (${data.lab_name || 'المعمل'}) للمريض: ${cust.name} - ${data.mold_type || ''}`
+        `تكلفة معمل قوالب ${orderNumber} (${data.lab_name || 'المعمل'}) للمريض: ${cust.name} - ${data.mold_type || ''}`
       )
       isLabCostPaid = 1
     }
@@ -194,7 +220,6 @@ export function saveEarmoldOrder(
       )
       return listEarmoldOrders({ patient_id: cust.id }).find((o) => o.id === data.id)!
     } else {
-      const orderNumber = data.order_number?.trim() || generateNextEarmoldNumber()
       const info = db
         .prepare(
           `INSERT INTO earmold_orders (
@@ -348,7 +373,50 @@ export function remakeEarmoldOrder(payload: {
 }
 
 export function deleteEarmoldOrder(id: number): void {
-  db.prepare('DELETE FROM earmold_orders WHERE id = ?').run(id)
+  runTransaction(() => {
+    const order = db
+      .prepare(
+        'SELECT id, order_number, sales_invoice_id, is_lab_cost_paid FROM earmold_orders WHERE id = ?'
+      )
+      .get(id) as
+      | {
+          id: number
+          order_number: string
+          sales_invoice_id: number | null
+          is_lab_cost_paid: number
+        }
+      | undefined
+
+    if (!order) {
+      throw new Error('طلب القالب غير موجود')
+    }
+
+    // [FIN-16] Protect earmold orders that are billed via sales invoice or have treasury lab cost recorded
+    if (order.sales_invoice_id) {
+      throw new Error('لا يمكن حذف طلب القالب لارتباطه بفاتورة مبيعات')
+    }
+
+    if (Number(order.is_lab_cost_paid || 0) === 1) {
+      throw new Error('لا يمكن حذف طلب القالب بعد تسجيل سداد تكلفة المعمل في الخزينة')
+    }
+
+    const cleanOrderNumber = (order.order_number || '').trim()
+    if (cleanOrderNumber) {
+      const linkedTx = db
+        .prepare(
+          `SELECT id FROM treasury_transactions
+           WHERE category = 'مصروفات معمل قوالب'
+             AND description LIKE ?
+           LIMIT 1`
+        )
+        .get(`%${cleanOrderNumber}%`) as { id: number } | undefined
+      if (linkedTx) {
+        throw new Error('لا يمكن حذف طلب القالب لوجود قيد خزينة مرتبط به')
+      }
+    }
+
+    db.prepare('DELETE FROM earmold_orders WHERE id = ?').run(id)
+  })
 }
 
 // ==========================================
