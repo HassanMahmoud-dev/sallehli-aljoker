@@ -44,14 +44,13 @@ export function saveSupplier(data: Partial<Supplier>): Supplier {
     throw new Error('يرجى إدخال اسم المورد ورقم الهاتف')
   }
 
-  const balance = roundMoney(data.balance ?? 0)
   const supplierType = data.supplier_type === 'customer' ? 'customer' : 'company'
 
   if (data.id) {
     db.prepare(
       `UPDATE suppliers SET
         name = ?, company_name = ?, phone = ?, phone2 = ?, address = ?,
-        supplier_type = ?, customer_id = ?, balance = ?, notes = ?, is_active = ?
+        supplier_type = ?, customer_id = ?, notes = ?, is_active = ?
        WHERE id = ?`
     ).run(
       name,
@@ -61,13 +60,19 @@ export function saveSupplier(data: Partial<Supplier>): Supplier {
       data.address?.trim() || '',
       supplierType,
       data.customer_id || null,
-      balance,
       data.notes?.trim() || '',
       data.is_active !== undefined ? Number(data.is_active) : 1,
       data.id
     )
-    return listSuppliers().find((s) => s.id === data.id)!
+    const updated =
+      listSuppliers().find((s) => s.id === data.id) ||
+      (db.prepare('SELECT * FROM suppliers WHERE id = ?').get(data.id) as Supplier | undefined)
+    if (!updated) {
+      throw new Error('المورد غير موجود')
+    }
+    return updated
   } else {
+    const openingBalance = roundMoney(data.balance ?? 0)
     const info = db
       .prepare(
         `INSERT INTO suppliers (
@@ -82,7 +87,7 @@ export function saveSupplier(data: Partial<Supplier>): Supplier {
         data.address?.trim() || '',
         supplierType,
         data.customer_id || null,
-        balance,
+        openingBalance,
         data.notes?.trim() || '',
         data.is_active !== undefined ? Number(data.is_active) : 1
       )

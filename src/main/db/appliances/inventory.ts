@@ -16,52 +16,77 @@ export function listElectSpareParts(search = ''): SparePart[] {
 }
 
 export function saveElectSparePart(data: Partial<SparePart>): SparePart {
-  const db = getDb()
-  if (data.id) {
-    db.prepare(
-      `UPDATE elect_spare_parts
-       SET code = ?, name = ?, category = ?, brand = ?, purchase_price = ?, selling_price = ?,
-           quantity = ?, min_quantity = ?, location = ?, notes = ?, image_base64 = ?
-       WHERE id = ?`
-    ).run(
-      data.code?.trim(),
-      data.name?.trim(),
-      data.category?.trim() || 'عام',
-      data.brand?.trim() || 'عام',
-      Number(data.purchase_price ?? 0),
-      Number(data.selling_price ?? 0),
-      Number(data.quantity ?? 0),
-      Number(data.min_quantity ?? 3),
-      data.location?.trim() || '',
-      data.notes?.trim() || '',
-      data.image_base64 || '',
-      data.id
-    )
-    return db.prepare('SELECT * FROM elect_spare_parts WHERE id = ?').get(data.id) as SparePart
-  } else {
-    const code = data.code?.trim() || `PT-${Date.now().toString().slice(-5)}`
-    const info = db
-      .prepare(
-        `INSERT INTO elect_spare_parts (code, name, category, brand, purchase_price, selling_price, quantity, min_quantity, location, notes, image_base64)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        code,
-        data.name?.trim(),
+  return runTransaction(() => {
+    const db = getDb()
+    if (data.id) {
+      const existing = db
+        .prepare('SELECT * FROM elect_spare_parts WHERE id = ?')
+        .get(data.id) as SparePart | undefined
+      if (!existing) {
+        throw new Error('قطعة الغيار غير موجودة')
+      }
+      if (data.name !== undefined && !data.name.trim()) {
+        throw new Error('يرجى إدخال اسم قطعة الغيار')
+      }
+
+      const hasExplicitQuantity =
+        data.quantity !== undefined &&
+        data.quantity !== null &&
+        String(data.quantity).trim() !== '' &&
+        Number.isFinite(Number(data.quantity))
+      const nextQuantity = hasExplicitQuantity
+        ? Math.max(0, Math.round(Number(data.quantity)))
+        : existing.quantity
+
+      db.prepare(
+        `UPDATE elect_spare_parts
+         SET code = ?, name = ?, category = ?, brand = ?, purchase_price = ?, selling_price = ?,
+             quantity = ?, min_quantity = ?, location = ?, notes = ?, image_base64 = ?
+         WHERE id = ?`
+      ).run(
+        data.code?.trim() || existing.code,
+        data.name?.trim() || existing.name,
         data.category?.trim() || 'عام',
         data.brand?.trim() || 'عام',
         Number(data.purchase_price ?? 0),
         Number(data.selling_price ?? 0),
-        Number(data.quantity ?? 0),
+        nextQuantity,
         Number(data.min_quantity ?? 3),
         data.location?.trim() || '',
         data.notes?.trim() || '',
-        data.image_base64 || ''
+        data.image_base64 || '',
+        data.id
       )
-    return db
-      .prepare('SELECT * FROM elect_spare_parts WHERE id = ?')
-      .get(info.lastInsertRowid) as SparePart
-  }
+      return db.prepare('SELECT * FROM elect_spare_parts WHERE id = ?').get(data.id) as SparePart
+    } else {
+      const name = data.name?.trim()
+      if (!name) {
+        throw new Error('يرجى إدخال اسم قطعة الغيار')
+      }
+      const code = data.code?.trim() || `PT-${Date.now().toString().slice(-5)}`
+      const info = db
+        .prepare(
+          `INSERT INTO elect_spare_parts (code, name, category, brand, purchase_price, selling_price, quantity, min_quantity, location, notes, image_base64)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          code,
+          name,
+          data.category?.trim() || 'عام',
+          data.brand?.trim() || 'عام',
+          Number(data.purchase_price ?? 0),
+          Number(data.selling_price ?? 0),
+          Math.max(0, Math.round(Number(data.quantity ?? 0))),
+          Number(data.min_quantity ?? 3),
+          data.location?.trim() || '',
+          data.notes?.trim() || '',
+          data.image_base64 || ''
+        )
+      return db
+        .prepare('SELECT * FROM elect_spare_parts WHERE id = ?')
+        .get(info.lastInsertRowid) as SparePart
+    }
+  })
 }
 
 export function deleteElectSparePart(id: number): boolean {

@@ -210,22 +210,29 @@ export function saveProduct(
     const salePrice = roundMoney(data.sale_price)
     const packCostPrice = roundMoney(data.pack_cost_price || costPrice * packSize)
     const packSalePrice = roundMoney(data.pack_sale_price || salePrice * packSize)
-    const code = data.code?.trim() || `PR-${Date.now().toString().slice(-5)}`
     const extraDataJson = stringifyExtraData(data.extra_data)
 
     let productId = data.id
 
     if (productId) {
+      const existingProduct = db
+        .prepare('SELECT id, code FROM products WHERE id = ?')
+        .get(productId) as { id: number; code: string } | undefined
+      if (!existingProduct) {
+        throw new Error('المنتج غير موجود')
+      }
+      const updateCode = data.code?.trim() || existingProduct.code
+
       db.prepare(
         `UPDATE products SET
           code = ?, barcode = ?, name = ?, type = ?, sub_category = ?, brand = ?, model = ?,
           compatible_with = ?, track_serial = ?, has_variants = ?, unit_name = ?, pack_name = ?,
           pack_size = ?, cost_price = ?, sale_price = ?, pack_cost_price = ?, pack_sale_price = ?,
-          qty = ?, min_stock = ?, warranty_months = ?, image_base64 = ?, notes = ?,
+          min_stock = ?, warranty_months = ?, image_base64 = ?, notes = ?,
           extra_data = ?, is_active = ?
          WHERE id = ?`
       ).run(
-        code,
+        updateCode,
         data.barcode?.trim() || '',
         name,
         type,
@@ -242,7 +249,6 @@ export function saveProduct(
         salePrice,
         packCostPrice,
         packSalePrice,
-        isService ? 0 : Math.max(0, Math.round(Number(data.qty ?? 0))),
         isService ? 0 : Math.max(0, Math.round(Number(data.min_stock ?? 3))),
         Math.max(0, Math.round(Number(data.warranty_months ?? 12))),
         data.image_base64 || '',
@@ -252,6 +258,7 @@ export function saveProduct(
         productId
       )
     } else {
+      const code = data.code?.trim() || `PR-${Date.now().toString().slice(-5)}`
       const info = db
         .prepare(
           `INSERT INTO products (
@@ -308,7 +315,12 @@ export function saveProduct(
       for (const v of data.variants) {
         const vName = v.variant_name?.trim() || v.size?.trim() || v.color?.trim()
         if (!vName) continue
-        const vQty = Math.max(0, Math.round(Number(v.qty ?? 0)))
+        const hasExplicitVariantQty =
+          v.qty !== undefined &&
+          v.qty !== null &&
+          String(v.qty).trim() !== '' &&
+          Number.isFinite(Number(v.qty))
+        const vQty = hasExplicitVariantQty ? Math.max(0, Math.round(Number(v.qty))) : 0
         const vMin = Math.max(0, Math.round(Number(v.min_stock ?? 6)))
         const vCost = v.cost_price !== null && v.cost_price !== undefined ? roundMoney(v.cost_price) : null
         const vSale = v.sale_price !== null && v.sale_price !== undefined ? roundMoney(v.sale_price) : null
@@ -326,7 +338,7 @@ export function saveProduct(
             `UPDATE product_variants SET
               variant_name = ?, size = ?, color = ?, sku = ?, barcode = ?,
               cost_price = ?, sale_price = ?, pack_cost_price = ?, pack_sale_price = ?,
-              qty = ?, min_stock = ?, is_active = ?
+              qty = COALESCE(?, qty), min_stock = ?, is_active = ?
              WHERE id = ? AND product_id = ?`
           ).run(
             vName,
@@ -338,7 +350,7 @@ export function saveProduct(
             vSale,
             vPackCost,
             vPackSale,
-            vQty,
+            hasExplicitVariantQty ? vQty : null,
             vMin,
             v.is_active !== undefined ? Number(v.is_active) : 1,
             v.id,
@@ -391,14 +403,39 @@ export function saveProduct(
 
 export function deleteProduct(id: number): void {
   runTransaction(() => {
-    const soldSerial = db
-      .prepare("SELECT id FROM product_serials WHERE product_id = ? AND status != 'in_stock' LIMIT 1")
-      .get(id) as { id: number } | undefined
-    if (soldSerial) {
+    const referenceChecks: Array<{ sql: string; label: string }> = [
+      {
+        sql: "SELECT 1 FROM product_serials WHERE product_id = ? AND status != 'in_stock' LIMIT 1",
+        label: 'أرقام تسلسلية مباعة أو مرتبطة بعمليات سابقة'
+      },
+      {
+        sql: 'SELECT 1 FROM sales_items WHERE product_id = ? LIMIT 1',
+        label: 'فواتير مبيعات'
+      },
+      {
+        sql: 'SELECT 1 FROM purchase_items WHERE product_id = ? LIMIT 1',
+        label: 'فواتير مشتريات'
+      },
+      {
+        sql: 'SELECT 1 FROM ticket_parts WHERE product_id = ? LIMIT 1',
+        label: 'تذاكر صيانة'
+      },
+      {
+        sql: 'SELECT 1 FROM inventory_movements WHERE product_id = ? LIMIT 1',
+        label: 'حركات مخزنية'
+      }
+    ]
+
+    const linkedRefs = referenceChecks
+      .filter((check) => Boolean(db.prepare(check.sql).get(id)))
+      .map((check) => check.label)
+
+    if (linkedRefs.length > 0) {
       throw new Error(
-        'لا يمكن حذف هذا المنتج لوجود أرقام تسلسلية مباعة أو مرتبطة بعمليات سابقة. يمكنك تعطيل المنتج بدلاً من حذفه.'
+        `لا يمكن حذف هذا المنتج لارتباطه بـ (${linkedRefs.join('، ')}). يمكنك تعطيل المنتج بدلاً من حذفه.`
       )
     }
+
     db.prepare('DELETE FROM product_serials WHERE product_id = ?').run(id)
     db.prepare('DELETE FROM product_variants WHERE product_id = ?').run(id)
     db.prepare('DELETE FROM products WHERE id = ?').run(id)
