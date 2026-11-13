@@ -1,5 +1,5 @@
 appId: com.sallehli.aljoker
-productName: صلحلي - نظام الإدارة المتكامل
+productName: الجوكر-صلحلي-الاصدار v1.0
 compression: maximum
 electronLanguages:
   - ar
@@ -35,9 +35,9 @@ win:
       arch:
         - x64
 nsis:
-  artifactName: ${name}-v1.0-Setup-x64.${ext}
-  shortcutName: صلحلي
-  uninstallDisplayName: صلحلي v1.0 - نظام الإدارة المتكامل
+  artifactName: الجوكر-صلحلي-الاصدار-v1.0-Setup-x64.${ext}
+  shortcutName: الجوكر-صلحلي-الاصدار v1.0
+  uninstallDisplayName: الجوكر-صلحلي-الاصدار v1.0
   createDesktopShortcut: always
   oneClick: false
   allowToChangeInstallationDirectory: true
