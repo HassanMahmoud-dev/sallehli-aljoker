@@ -130,20 +130,22 @@ export const CHANNEL_PERMISSIONS: Record<string, ChannelPermission> = {
 
   // Super Admin Only
   'backup:restore': 'super_admin',
-  'update:check': 'super_admin',
-  'update:downloadAndInstall': 'super_admin',
-  'update:startDownload': 'super_admin',
-  'update:pauseDownload': 'super_admin',
-  'update:cancelDownload': 'super_admin',
-  'update:applyDownloaded': 'super_admin',
-  'update:getDownloadStatus': 'super_admin',
-  'update:installLocal': 'super_admin',
-  'update:getAutoResult': 'super_admin',
   'system:status': 'super_admin',
   'system:setBrowserConfig': 'super_admin',
   'system:setLanConfig': 'super_admin',
   'system:setAutoStart': 'super_admin',
   'db:reset': 'super_admin',
+
+  // Program Updates (super_admin, owner)
+  'update:check': 'manager',
+  'update:downloadAndInstall': 'manager',
+  'update:startDownload': 'manager',
+  'update:pauseDownload': 'manager',
+  'update:cancelDownload': 'manager',
+  'update:applyDownloaded': 'manager',
+  'update:getDownloadStatus': 'manager',
+  'update:installLocal': 'manager',
+  'update:getAutoResult': 'manager',
 
   // Business Profile & Demo Data Management (super_admin, owner)
   'business:get': 'manager',

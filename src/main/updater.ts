@@ -1057,7 +1057,7 @@ export async function verifyDownloadedInstaller(
 
 function launchInstallerAndQuit(installerPath: string): void {
   closeDatabase()
-  const child = spawn(installerPath, [], {
+  const child = spawn(installerPath, ['/S'], {
     detached: true,
     stdio: 'ignore'
   })
