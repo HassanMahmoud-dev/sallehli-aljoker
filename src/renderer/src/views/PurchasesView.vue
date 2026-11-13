@@ -772,15 +772,16 @@ onMounted(() => {
               <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                 المورد *
               </label>
-              <select
+              <SearchableSelect
                 v-model="form.supplier_id"
-                class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
-              >
-                <option :value="null">-- اختر المورد --</option>
-                <option v-for="s in suppliers" :key="s.id" :value="s.id">
-                  {{ s.name }} ({{ s.company_name || s.phone }}) - رصيد: {{ s.balance }} ج.م
-                </option>
-              </select>
+                placeholder="-- اختر المورد --"
+                :options="
+                  suppliers.map((s) => ({
+                    value: s.id,
+                    label: `${s.name} (${s.company_name || s.phone}) - رصيد: ${s.balance} ج.م`
+                  }))
+                "
+              />
             </div>
             <div>
               <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
@@ -850,21 +851,19 @@ onMounted(() => {
               <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                 إضافة صنف للفاتورة
               </label>
-              <select
+              <SearchableSelect
                 v-model="selectedProductId"
-                class="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
-              >
-                <option :value="null">-- اختر الصنف / الموديل --</option>
-                <option
-                  v-for="p in form.purchase_type === 'used_from_customer'
+                placeholder="-- اختر الصنف / الموديل --"
+                :options="
+                  (form.purchase_type === 'used_from_customer'
                     ? hearingAidProducts
-                    : nonServiceProducts"
-                  :key="p.id"
-                  :value="p.id"
-                >
-                  [{{ p.code }}] {{ p.name }} ({{ p.brand || 'عام' }}) — الرصيد: {{ p.qty }}
-                </option>
-              </select>
+                    : nonServiceProducts
+                  ).map((p) => ({
+                    value: p.id,
+                    label: `[${p.code}] ${p.name} (${p.brand || 'عام'}) — الرصيد: ${p.qty}`
+                  }))
+                "
+              />
             </div>
             <button
               type="button"

@@ -1236,15 +1236,11 @@ onMounted(loadData)
 
             <div v-if="subCategoryOptions.length > 0">
               <label class="block font-bold mb-1">التصنيف الفرعي</label>
-              <select
+              <SearchableSelect
                 v-model="form.sub_category"
-                class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
-              >
-                <option value="">— اختر التصنيف الفرعي —</option>
-                <option v-for="opt in subCategoryOptions" :key="opt" :value="opt">
-                  {{ opt }}
-                </option>
-              </select>
+                placeholder="— اختر التصنيف الفرعي —"
+                :options="subCategoryOptions"
+              />
             </div>
 
             <div v-if="form.type !== 'service'">

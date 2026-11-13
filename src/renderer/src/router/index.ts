@@ -1,22 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
 import LoginView from '@renderer/views/LoginView.vue'
-import DashboardView from '@renderer/views/DashboardView.vue'
-import TicketsView from '@renderer/views/TicketsView.vue'
-import CustomersView from '@renderer/views/CustomersView.vue'
-import ProductsView from '@renderer/views/ProductsView.vue'
-import SuppliersView from '@renderer/views/SuppliersView.vue'
-import PurchasesView from '@renderer/views/PurchasesView.vue'
-import SalesView from '@renderer/views/SalesView.vue'
-import FollowupsView from '@renderer/views/FollowupsView.vue'
-import TechniciansView from '@renderer/views/TechniciansView.vue'
-import InventoryView from '@renderer/views/InventoryView.vue'
-import TreasuryView from '@renderer/views/TreasuryView.vue'
-import ReportsView from '@renderer/views/ReportsView.vue'
-import SettingsView from '@renderer/views/SettingsView.vue'
-import SuperAdminView from '@renderer/views/SuperAdminView.vue'
-import SystemControlView from '@renderer/views/SystemControlView.vue'
-import ProgramSettingsView from '@renderer/views/ProgramSettingsView.vue'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -33,97 +17,97 @@ const router = createRouter({
     {
       path: '/dashboard',
       name: 'dashboard',
-      component: DashboardView,
+      component: () => import('@renderer/views/DashboardView.vue'),
       meta: { requiresAuth: true, module: 'dashboard' }
     },
     {
       path: '/tickets',
       name: 'tickets',
-      component: TicketsView,
+      component: () => import('@renderer/views/TicketsView.vue'),
       meta: { requiresAuth: true, module: 'tickets' }
     },
     {
       path: '/customers',
       name: 'customers',
-      component: CustomersView,
+      component: () => import('@renderer/views/CustomersView.vue'),
       meta: { requiresAuth: true, module: 'customers' }
     },
     {
       path: '/followups',
       name: 'followups',
-      component: FollowupsView,
+      component: () => import('@renderer/views/FollowupsView.vue'),
       meta: { requiresAuth: true, module: 'followups' }
     },
     {
       path: '/products',
       name: 'products',
-      component: ProductsView,
+      component: () => import('@renderer/views/ProductsView.vue'),
       meta: { requiresAuth: true, module: 'products' }
     },
     {
       path: '/sales',
       name: 'sales',
-      component: SalesView,
+      component: () => import('@renderer/views/SalesView.vue'),
       meta: { requiresAuth: true, module: 'sales' }
     },
     {
       path: '/purchases',
       name: 'purchases',
-      component: PurchasesView,
+      component: () => import('@renderer/views/PurchasesView.vue'),
       meta: { requiresAuth: true, module: 'purchases' }
     },
     {
       path: '/suppliers',
       name: 'suppliers',
-      component: SuppliersView,
+      component: () => import('@renderer/views/SuppliersView.vue'),
       meta: { requiresAuth: true, module: 'suppliers' }
     },
     {
       path: '/technicians',
       name: 'technicians',
-      component: TechniciansView,
+      component: () => import('@renderer/views/TechniciansView.vue'),
       meta: { requiresAuth: true, module: 'technicians' }
     },
     {
       path: '/inventory',
       name: 'inventory',
-      component: InventoryView,
+      component: () => import('@renderer/views/InventoryView.vue'),
       meta: { requiresAuth: true, module: 'inventory' }
     },
     {
       path: '/treasury',
       name: 'treasury',
-      component: TreasuryView,
+      component: () => import('@renderer/views/TreasuryView.vue'),
       meta: { requiresAuth: true, requiresFinancials: true, module: 'treasury' }
     },
     {
       path: '/reports',
       name: 'reports',
-      component: ReportsView,
+      component: () => import('@renderer/views/ReportsView.vue'),
       meta: { requiresAuth: true, requiresFinancials: true, module: 'reports' }
     },
     {
       path: '/settings',
       name: 'settings',
-      component: SettingsView,
+      component: () => import('@renderer/views/SettingsView.vue'),
       meta: { requiresAuth: true, requiresManager: true, module: 'settings' }
     },
     {
       path: '/program-settings',
       name: 'program-settings',
-      component: ProgramSettingsView,
+      component: () => import('@renderer/views/ProgramSettingsView.vue'),
       meta: { requiresAuth: true, requiresSuperAdmin: true }
     },
     {
       path: '/super-admin',
       name: 'super-admin',
-      component: SuperAdminView,
+      component: () => import('@renderer/views/SuperAdminView.vue'),
       meta: { requiresAuth: true, requiresManageUsers: true }
     },
     {
       path: '/system-control',
       name: 'system-control',
-      component: SystemControlView,
+      component: () => import('@renderer/views/SystemControlView.vue'),
       meta: { requiresAuth: true, requiresSuperAdmin: true }
     }
   ]

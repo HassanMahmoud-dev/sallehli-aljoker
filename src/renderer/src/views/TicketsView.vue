@@ -1586,21 +1586,11 @@ onMounted(async () => {
             <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
               <div>
                 <label class="block font-bold mb-1">{{ t('deviceType') }} *</label>
-                <select
-                  v-model="form.appliance_type"
-                  class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
-                >
-                  <option v-for="tVal in availableDeviceTypes" :key="tVal" :value="tVal">{{ tVal }}</option>
-                </select>
+                <SearchableSelect v-model="form.appliance_type" :options="availableDeviceTypes" />
               </div>
               <div>
                 <label class="block font-bold mb-1">{{ t('brand') }} *</label>
-                <select
-                  v-model="form.brand"
-                  class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
-                >
-                  <option v-for="bVal in availableBrands" :key="bVal" :value="bVal">{{ bVal }}</option>
-                </select>
+                <SearchableSelect v-model="form.brand" :options="availableBrands" />
               </div>
               <div>
                 <label class="block font-bold mb-1">الموديل / السعة</label>
@@ -1663,15 +1653,16 @@ onMounted(async () => {
               </div>
               <div>
                 <label class="block font-bold mb-1">تعيين الفني المسؤول</label>
-                <select
+                <SearchableSelect
                   v-model="form.technician_id"
-                  class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
-                >
-                  <option :value="null">-- لم يعين بعد --</option>
-                  <option v-for="tech in technicians" :key="tech.id" :value="tech.id">
-                    {{ tech.name }} ({{ tech.specialty }})
-                  </option>
-                </select>
+                  placeholder="-- لم يعين بعد --"
+                  :options="
+                    technicians.map((tech) => ({
+                      value: tech.id,
+                      label: `${tech.name} (${tech.specialty})`
+                    }))
+                  "
+                />
               </div>
               <div>
                 <label class="block font-bold mb-1">تاريخ الزيارة / الاستلام</label>
@@ -1824,21 +1815,17 @@ onMounted(async () => {
             <div class="flex flex-wrap items-end gap-2">
               <div class="flex-1 min-w-[240px]">
                 <label class="block font-bold mb-1">اختر من {{ t('partsStore') }}</label>
-                <select
+                <SearchableSelect
                   v-model="selectedPartId"
-                  class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700"
-                >
-                  <option :value="null">-- اختر صنفاً لإضافته --</option>
-                  <option
-                    v-for="p in spareParts"
-                    :key="p.id"
-                    :value="p.id"
-                    :disabled="p.quantity <= 0"
-                  >
-                    [{{ p.code }}] {{ p.name }} — سعر البيع: {{ p.selling_price }} ج.م (المتاح:
-                    {{ p.quantity }})
-                  </option>
-                </select>
+                  placeholder="-- اختر صنفاً لإضافته --"
+                  :options="
+                    spareParts.map((p) => ({
+                      value: p.id,
+                      label: `[${p.code}] ${p.name} — سعر البيع: ${p.selling_price} ج.م (المتاح: ${p.quantity})`,
+                      disabled: p.quantity <= 0
+                    }))
+                  "
+                />
               </div>
 
               <div class="w-24">

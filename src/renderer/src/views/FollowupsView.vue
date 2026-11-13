@@ -1307,15 +1307,11 @@ async function handleDeleteImplant(id: number): Promise<void> {
         <form @submit.prevent="handleSaveFollowup" class="space-y-3.5">
           <div>
             <label class="block font-bold mb-1">المريض *</label>
-            <select
+            <SearchableSelect
               v-model="followupForm.patient_id"
-              required
-              class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold"
-            >
-              <option v-for="c in customers" :key="c.id" :value="c.id">
-                {{ c.name }} ({{ c.phone }})
-              </option>
-            </select>
+              placeholder="اختر المريض..."
+              :options="customers.map((c) => ({ value: c.id, label: `${c.name} (${c.phone})` }))"
+            />
           </div>
 
           <div class="grid grid-cols-2 gap-3">
@@ -1349,13 +1345,11 @@ async function handleDeleteImplant(id: number): Promise<void> {
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block font-bold mb-1">الأخصائي المشرف</label>
-              <select
+              <SearchableSelect
                 v-model="followupForm.technician_id"
-                class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold"
-              >
-                <option :value="null">بدون تحديد</option>
-                <option v-for="t in technicians" :key="t.id" :value="t.id">{{ t.name }}</option>
-              </select>
+                placeholder="بدون تحديد"
+                :options="technicians.map((t) => ({ value: t.id, label: t.name }))"
+              />
             </div>
 
             <div>
@@ -1494,15 +1488,11 @@ async function handleDeleteImplant(id: number): Promise<void> {
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block font-bold mb-1">المريض *</label>
-              <select
+              <SearchableSelect
                 v-model="earmoldForm.patient_id"
-                required
-                class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold"
-              >
-                <option v-for="c in customers" :key="c.id" :value="c.id">
-                  {{ c.name }} ({{ c.phone }})
-                </option>
-              </select>
+                placeholder="اختر المريض..."
+                :options="customers.map((c) => ({ value: c.id, label: `${c.name} (${c.phone})` }))"
+              />
             </div>
 
             <div>
@@ -1808,15 +1798,11 @@ async function handleDeleteImplant(id: number): Promise<void> {
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block font-bold mb-1">المريض *</label>
-              <select
+              <SearchableSelect
                 v-model="implantForm.patient_id"
-                required
-                class="w-full p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold"
-              >
-                <option v-for="c in customers" :key="c.id" :value="c.id">
-                  {{ c.name }} ({{ c.phone }})
-                </option>
-              </select>
+                placeholder="اختر المريض..."
+                :options="customers.map((c) => ({ value: c.id, label: `${c.name} (${c.phone})` }))"
+              />
             </div>
 
             <div>

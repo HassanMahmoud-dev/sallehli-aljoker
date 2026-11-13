@@ -2028,21 +2028,11 @@ onMounted(async () => {
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block font-bold mb-1">{{ t('deviceType') }} *</label>
-              <select
-                v-model="applianceForm.appliance_type"
-                class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold"
-              >
-                <option v-for="tVal in availableDeviceTypes" :key="tVal" :value="tVal">{{ tVal }}</option>
-              </select>
+              <SearchableSelect v-model="applianceForm.appliance_type" :options="availableDeviceTypes" />
             </div>
             <div>
               <label class="block font-bold mb-1">{{ t('brand') }} *</label>
-              <select
-                v-model="applianceForm.brand"
-                class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold"
-              >
-                <option v-for="bVal in availableBrands" :key="bVal" :value="bVal">{{ bVal }}</option>
-              </select>
+              <SearchableSelect v-model="applianceForm.brand" :options="availableBrands" />
             </div>
           </div>
 

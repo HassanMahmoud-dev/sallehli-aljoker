@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import { ensureWebApiBridge } from './utils/webApiBridge'
 import App from './App.vue'
 import router from './router'
+import SearchableSelect from './components/SearchableSelect.vue'
 import './assets/main.css'
 
 ensureWebApiBridge()
@@ -10,6 +11,7 @@ ensureWebApiBridge()
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
+app.component('SearchableSelect', SearchableSelect)
 app.mount('#app')
 
 // Highlight fields whose label is marked with "*" (required) even when they have no

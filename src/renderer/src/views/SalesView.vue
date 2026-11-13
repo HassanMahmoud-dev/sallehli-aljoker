@@ -1637,19 +1637,18 @@ onMounted(async () => {
               <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                 اختر السماعة / معالج القوقعة / القالب / الخدمة
               </label>
-              <select
+              <SearchableSelect
                 v-model="selectedDetailedProdId"
-                class="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm"
-              >
-                <option :value="null">-- اختر الصنف لإدراجه في الفاتورة --</option>
-                <option
-                  v-for="p in products.filter((x) => x.is_active)"
-                  :key="p.id"
-                  :value="p.id"
-                >
-                  [{{ p.code }}] {{ p.name }} — السعر: {{ p.sale_price }} ج.م (متاح: {{ p.qty }})
-                </option>
-              </select>
+                placeholder="-- اختر الصنف لإدراجه في الفاتورة --"
+                :options="
+                  products
+                    .filter((x) => x.is_active)
+                    .map((p) => ({
+                      value: p.id,
+                      label: `[${p.code}] ${p.name} — السعر: ${p.sale_price} ج.م (متاح: ${p.qty})`
+                    }))
+                "
+              />
             </div>
             <button
               type="button"
