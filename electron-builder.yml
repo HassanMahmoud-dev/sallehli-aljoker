@@ -1,5 +1,5 @@
 appId: com.sallehli.aljoker
-productName: الجوكر-صلحلي-الاصدار v1.1
+productName: الجوكر-صلحلي-الاصدار v1.1.1
 compression: maximum
 electronLanguages:
   - ar
@@ -35,9 +35,9 @@ win:
       arch:
         - x64
 nsis:
-  artifactName: الجوكر-صلحلي-الاصدار-v1.1-Setup-x64.${ext}
-  shortcutName: الجوكر-صلحلي-الاصدار v1.1
-  uninstallDisplayName: الجوكر-صلحلي-الاصدار v1.1
+  artifactName: الجوكر-صلحلي-الاصدار-v1.1.1-Setup-x64.${ext}
+  shortcutName: الجوكر-صلحلي-الاصدار v1.1.1
+  uninstallDisplayName: الجوكر-صلحلي-الاصدار v1.1.1
   createDesktopShortcut: always
   oneClick: false
   allowToChangeInstallationDirectory: true
