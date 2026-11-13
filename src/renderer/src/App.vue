@@ -241,7 +241,13 @@ onUnmounted(() => {
 <template>
   <div dir="rtl" class="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
     <!-- Login View (Full Screen without Sidebar) -->
-    <router-view v-if="!appStore.isAuthenticated || route.name === 'login'" />
+    <router-view v-if="!appStore.isAuthenticated || route.name === 'login'" v-slot="{ Component, route: currentRoute }">
+      <Transition name="page-fade" mode="out-in">
+        <div :key="currentRoute.path" class="page-transition-wrapper">
+          <component :is="Component" />
+        </div>
+      </Transition>
+    </router-view>
 
     <!-- Main Authenticated Application Layout -->
     <div v-else class="flex h-screen overflow-hidden relative">
@@ -641,7 +647,13 @@ onUnmounted(() => {
             تم اكتشاف تعديل غير مصرح به في إعداد نشاط البرنامج بقاعدة البيانات. يرجى تسجيل الدخول بحساب السوبر أدمن لإعادة التحقق من النشاط وفتح القفل.
           </p>
         </div>
-        <router-view v-else />
+        <router-view v-else v-slot="{ Component, route: currentRoute }">
+          <Transition name="page-reveal" mode="out-in">
+            <div :key="currentRoute.path" class="page-transition-wrapper">
+              <component :is="Component" />
+            </div>
+          </Transition>
+        </router-view>
       </main>
     </div>
 
