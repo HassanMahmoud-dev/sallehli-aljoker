@@ -188,7 +188,7 @@ export function saveSalesInvoice(
     const discount = roundMoney(data.discount ?? 0)
     const tradeInCredit = roundMoney(data.trade_in_credit ?? 0)
     const totalAmount = Math.max(0, roundMoney(subtotal - discount - tradeInCredit))
-    const paidAmount = roundMoney(data.paid_amount ?? totalAmount)
+    const paidAmount = Math.min(totalAmount, Math.max(0, roundMoney(data.paid_amount ?? totalAmount)))
     const remainingAmount = Math.max(0, roundMoney(totalAmount - paidAmount))
 
     if (remainingAmount > 0 && invoiceType === 'quick_pos' && !customerId && !customerPhone) {
@@ -291,6 +291,9 @@ export function saveSalesInvoice(
       let condition: 'new' | 'used' = it.condition === 'used' ? 'used' : 'new'
 
       if (prod.track_serial) {
+        if (qty !== 1) {
+          throw new Error(`الصنف (${prod.name}) يُباع بالسيريال: أضف كل سيريال كبند مستقل بكمية 1`)
+        }
         if (!serialId && serialNo) {
           const sLookup = db
             .prepare('SELECT * FROM product_serials WHERE serial_no = ? AND product_id = ?')

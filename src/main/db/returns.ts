@@ -63,6 +63,7 @@ export function createSalesReturn(
     const createdByName = callerSession?.full_name || callerSession?.username || ''
     const inv = getSalesInvoiceById(payload.invoice_id)
     if (!inv) throw new Error('فاتورة المبيعات غير موجودة')
+    if (inv.status === 'cancelled') throw new Error('لا يمكن عمل مرتجع على فاتورة ملغاة')
 
     const reqItems = (payload.items || []).filter((x) => Number(x.quantity || 0) > 0)
     if (reqItems.length === 0) {

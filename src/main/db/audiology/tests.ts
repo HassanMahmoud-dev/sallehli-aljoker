@@ -45,9 +45,15 @@ export function calculatePtaAndSuggestLoss(points: AudiogramPoint[]): {
       }
     }
 
+    // نقاط عدم الاستجابة (NR) تُحتسب عند 120 dB حتى لا يُقلَّل المتوسط
     const airAvg =
       Math.round(
-        (airPts.reduce((sum, p) => sum + Number(p.db_value), 0) / airPts.length) * 10
+        (allAirPts.reduce(
+          (sum, p) => sum + (Number(p.no_response || 0) === 1 ? 120 : Number(p.db_value)),
+          0
+        ) /
+          allAirPts.length) *
+          10
       ) / 10
 
     let degree = 'طبيعي (Normal)'
@@ -66,7 +72,7 @@ export function calculatePtaAndSuggestLoss(points: AudiogramPoint[]): {
         const abg = airAvg - boneAvg
         if (boneAvg <= 25 && abg >= 15) {
           type = 'ضعف سمعي توصيلي (Conductive)'
-        } else if (boneAvg > 25 && abg < 15) {
+        } else if (abg < 15) {
           type = 'ضعف سمعي حسي عصبي (Sensorineural)'
         } else {
           type = 'ضعف سمعي مختلط (Mixed)'
