@@ -1,8 +1,10 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electron'
-import { join, resolve } from 'path'
+import { join, resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
+import { execFileSync } from 'child_process'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { getMachineId } from './vendorLicense'
 import {
   initDatabase,
   loginUser,
@@ -613,8 +615,52 @@ function registerIpcHandlers(): void {
   registerRpcHandlers(wrappedHandlers)
 }
 
+function readRegistryInstallMachine(hive: 'HKCU' | 'HKLM'): string {
+  try {
+    const out = execFileSync('reg', ['query', `${hive}\\Software\\Sallehli`, '/v', 'InstallMachine'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 3000
+    })
+    const m = out.match(/InstallMachine\s+REG_SZ\s+([0-9a-fA-F-]{16,})/)
+    return m ? m[1].trim().toLowerCase() : ''
+  } catch {
+    return ''
+  }
+}
+
+function verifyMachineInstallationLock(): boolean {
+  if (!app.isPackaged || process.platform !== 'win32') return true
+
+  const currentMachineId = getMachineId().trim().toLowerCase()
+  if (!currentMachineId || currentMachineId.startsWith('fallback:')) return false
+
+  const lockPath = join(dirname(process.execPath), '.install-lock')
+  if (!existsSync(lockPath)) return false
+
+  try {
+    const fileMachineId = readFileSync(lockPath, 'utf8').trim().toLowerCase()
+    if (!fileMachineId || fileMachineId !== currentMachineId) return false
+  } catch {
+    return false
+  }
+
+  const hkcuId = readRegistryInstallMachine('HKCU')
+  const hklmId = readRegistryInstallMachine('HKLM')
+  return hkcuId === currentMachineId || hklmId === currentMachineId
+}
+
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.sallehli.aljoker')
+
+  if (!verifyMachineInstallationLock()) {
+    dialog.showErrorBox(
+      'جهاز غير مصرح',
+      'لا يمكن تشغيل البرنامج بعد نقل أو نسخ ملفاته إلى جهاز آخر.\nيرجى تثبيت البرنامج على هذا الجهاز باستخدام ملف التثبيت الرسمي.'
+    )
+    app.quit()
+    return
+  }
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

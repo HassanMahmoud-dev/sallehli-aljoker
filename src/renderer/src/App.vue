@@ -4,7 +4,8 @@ import { useRouter, useRoute } from 'vue-router'
 import { useAppStore } from '@renderer/stores/appStore'
 import { useTerms } from '@renderer/composables/useTerms'
 import { USER_ROLE_LABELS } from '@renderer/constants/appliances'
-import { swalConfirm } from '@renderer/utils/swal'
+import Swal, { swalConfirm } from '@renderer/utils/swal'
+import type { UpdateCheckResult } from '@shared/types'
 import PrintModal from '@renderer/components/PrintModal.vue'
 import UpdateModal from '@renderer/components/UpdateModal.vue'
 import BusinessSetupWizard from '@renderer/components/BusinessSetupWizard.vue'
@@ -211,11 +212,46 @@ onMounted(async () => {
     }
   }
 
+  let notifiedUpdateVersion = ''
+  const handleAutoUpdateFound = (res: UpdateCheckResult): void => {
+    if (!res?.updateAvailable) return
+    appStore.setAvailableUpdate(res)
+    const ver = res.latestVersion || ''
+    if (notifiedUpdateVersion === ver || appStore.updateModalOpen) return
+    notifiedUpdateVersion = ver
+
+    const dark = document.documentElement.classList.contains('dark')
+    Swal.fire({
+      toast: true,
+      position: 'top-start',
+      icon: 'info',
+      title: `يتوفر تحديث جديد (v${ver})`,
+      text: 'يمكنك تحميل وتثبيت التحديث الآن مع حفظ نسخة احتياطية.',
+      showConfirmButton: true,
+      confirmButtonText: 'تحديث الآن',
+      showCancelButton: true,
+      cancelButtonText: 'لاحقاً',
+      confirmButtonColor: '#4f46e5',
+      cancelButtonColor: '#64748b',
+      timer: 10000,
+      timerProgressBar: true,
+      background: dark ? '#0f172a' : '#ffffff',
+      color: dark ? '#f8fafc' : '#0f172a',
+      customClass: {
+        popup: 'rounded-2xl shadow-2xl border border-indigo-500/30 font-sans text-right',
+        confirmButton: 'rounded-xl font-bold px-3.5 py-1.5 text-xs cursor-pointer',
+        cancelButton: 'rounded-xl font-bold px-3.5 py-1.5 text-xs cursor-pointer'
+      }
+    }).then((result) => {
+      if (result.isConfirmed) {
+        appStore.openUpdateModal()
+      }
+    })
+  }
+
   if (window.api?.onUpdateAvailable) {
     unsubscribeUpdateAvailable = window.api.onUpdateAvailable((res) => {
-      if (res?.updateAvailable) {
-        appStore.setAvailableUpdate(res)
-      }
+      handleAutoUpdateFound(res)
     })
   }
 
@@ -223,7 +259,7 @@ onMounted(async () => {
     try {
       const autoRes = await window.api.getAutoUpdateResult()
       if (autoRes?.updateAvailable) {
-        appStore.setAvailableUpdate(autoRes)
+        handleAutoUpdateFound(autoRes)
       }
     } catch {
       // Ignore

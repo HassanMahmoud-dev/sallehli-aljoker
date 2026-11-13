@@ -3,7 +3,8 @@ Add-Type -AssemblyName System.Drawing
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $pkgPath = Join-Path $repoRoot "package.json"
 $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
-$versionText = if ($pkg.version -eq "1.0.0") { "v1.0" } else { "v$($pkg.version)" }
+$shortVer = if ($pkg.version -match '^(\d+\.\d+)\.0$') { $Matches[1] } else { $pkg.version }
+$versionText = "v$shortVer"
 
 $indexHtmlPath = Join-Path $repoRoot "src\renderer\index.html"
 if (Test-Path $indexHtmlPath) {

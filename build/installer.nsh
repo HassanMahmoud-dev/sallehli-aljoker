@@ -8,6 +8,11 @@ Var RadioAppliances
 Var RadioHearingAids
 Var ActivityChoice
 Var IsFirstInstall
+!else
+Var UninstModeDialog
+Var RadioKeepDb
+Var RadioFullDelete
+Var UninstFullDelete
 !endif
 
 !macro customHeader
@@ -99,6 +104,17 @@ FunctionEnd
 !macroend
 
 !macro customInstall
+  # ربط التثبيت ببصمة الجهاز لمنع تشغيل البرنامج عند نسخ ملفاته إلى جهاز آخر
+  SetRegView 64
+  ReadRegStr $1 HKLM "SOFTWARE\Microsoft\Cryptography" "MachineGuid"
+  ${If} $1 != ""
+    WriteRegStr HKCU "Software\Sallehli" "InstallMachine" "$1"
+    WriteRegStr HKLM "Software\Sallehli" "InstallMachine" "$1"
+    FileOpen $0 "$INSTDIR\.install-lock" w
+    FileWrite $0 "$1"
+    FileClose $0
+  ${EndIf}
+
   ${If} $ActivityChoice != ""
     # كتابة ملف الإعداد الأولي داخل مسار تثبيت البرنامج
     FileOpen $0 "$INSTDIR\initial-activity.json" w
@@ -106,9 +122,83 @@ FunctionEnd
     FileClose $0
 
     # وكتابة نسخة إضافية في مسار بيانات المستخدم %APPDATA%\sallehli
+    ${If} $installMode == "all"
+      SetShellVarContext current
+    ${EndIf}
     CreateDirectory "$APPDATA\sallehli"
     FileOpen $0 "$APPDATA\sallehli\initial-activity.json" w
     FileWrite $0 '{"business_type":"$ActivityChoice"}'
     FileClose $0
+    ${If} $installMode == "all"
+      SetShellVarContext all
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!ifdef BUILD_UNINSTALLER
+Function un.UninstallModePage
+  nsDialogs::Create 1018
+  Pop $UninstModeDialog
+  ${If} $UninstModeDialog == error
+    Abort
+  ${EndIf}
+
+  ${NSD_CreateLabel} 0 0 100% 24u "يرجى اختيار طريقة إلغاء تثبيت برنامج (صلحلي):"
+  Pop $0
+
+  ${NSD_CreateRadioButton} 10u 28u 95% 24u "1. الحذف مع الاحتفاظ بقاعدة البيانات على الجهاز (موصى به)$\r$\n    يحذف ملفات البرنامج فقط ويحافظ على بياناتك والنسخ الاحتياطية."
+  Pop $RadioKeepDb
+
+  ${NSD_CreateRadioButton} 10u 60u 95% 24u "2. الحذف الكامل من جذوره$\r$\n    يحذف ملفات البرنامج وقاعدة البيانات والنسخ الاحتياطية والإعدادات نهائياً."
+  Pop $RadioFullDelete
+
+  ${NSD_Check} $RadioKeepDb
+  StrCpy $UninstFullDelete "0"
+
+  nsDialogs::Show
+FunctionEnd
+
+Function un.UninstallModePageLeave
+  ${NSD_GetState} $RadioFullDelete $0
+  ${If} $0 == 1
+    StrCpy $UninstFullDelete "1"
+  ${Else}
+    StrCpy $UninstFullDelete "0"
+  ${EndIf}
+FunctionEnd
+!endif
+
+!macro customUnInit
+  StrCpy $UninstFullDelete "0"
+!macroend
+
+!macro customUnWelcomePage
+  !insertmacro MUI_UNPAGE_WELCOME
+  UninstPage custom un.UninstallModePage un.UninstallModePageLeave
+!macroend
+
+!macro customUnInstall
+  Delete "$INSTDIR\.install-lock"
+  Delete "$INSTDIR\initial-activity.json"
+
+  ${IfNot} ${isUpdated}
+    DeleteRegValue HKCU "Software\Sallehli" "InstallMachine"
+    DeleteRegValue HKLM "Software\Sallehli" "InstallMachine"
+
+    ${If} $UninstFullDelete == "1"
+      ${If} $installMode == "all"
+        SetShellVarContext current
+      ${EndIf}
+      RMDir /r "$APPDATA\sallehli"
+      !ifdef APP_PACKAGE_NAME
+        RMDir /r "$APPDATA\${APP_PACKAGE_NAME}"
+      !endif
+      RMDir /r "$LOCALAPPDATA\sallehli-updater"
+      ${If} $installMode == "all"
+        SetShellVarContext all
+      ${EndIf}
+      DeleteRegKey HKCU "Software\Sallehli"
+      DeleteRegKey HKLM "Software\Sallehli"
+    ${EndIf}
   ${EndIf}
 !macroend

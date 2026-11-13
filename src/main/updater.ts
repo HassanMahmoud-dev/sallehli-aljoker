@@ -1574,10 +1574,10 @@ export function startAutoUpdateScheduler(
     }
   }
 
-  // Initial check shortly after startup (checks if 24h passed or never checked; also checks for available update)
+  // Initial check immediately on startup
   setTimeout(() => {
     runAutoCheck(true)
-  }, 6000)
+  }, 1500)
 
   if (autoUpdateTimer) {
     clearInterval(autoUpdateTimer)
