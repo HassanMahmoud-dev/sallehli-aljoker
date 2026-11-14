@@ -521,7 +521,7 @@ onMounted(loadData)
             </div>
           </div>
 
-          <div class="grid grid-cols-4 gap-3">
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
               <label class="block font-bold mb-1">سعر الشراء</label>
               <input

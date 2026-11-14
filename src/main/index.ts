@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage, screen } from 'electron'
 import { join, resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { existsSync, readFileSync } from 'fs'
@@ -197,12 +197,15 @@ function createWindow(): void {
   const bState = getBusinessState()
   const iconFile = resolveSectorIcon(bState.type)
   const profile = getBusinessProfile(bState.type)
+  const workArea = screen.getPrimaryDisplay().workAreaSize
+  const initialWidth = Math.min(1400, workArea.width)
+  const initialHeight = Math.min(880, workArea.height)
 
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 880,
-    minWidth: 1120,
-    minHeight: 700,
+    width: initialWidth,
+    height: initialHeight,
+    minWidth: 360,
+    minHeight: 520,
     show: false,
     icon: iconFile,
     title: `${profile.appName} v${app.getVersion()} - ${profile.windowTitle}`,

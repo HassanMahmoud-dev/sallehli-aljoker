@@ -44,6 +44,25 @@ function loadInitialRememberedSession(): {
 }
 
 export type ThemeMode = 'light' | 'dark' | 'system'
+export type FontSizeMode = 'small' | 'medium' | 'large'
+
+const FONT_SIZE_PX_MAP: Record<FontSizeMode, number> = {
+  small: 14,
+  medium: 16,
+  large: 18
+}
+
+function loadInitialFontSize(): FontSizeMode {
+  try {
+    const saved = localStorage.getItem('sallehli_font_size')
+    if (saved === 'small' || saved === 'medium' || saved === 'large') {
+      return saved
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return 'medium'
+}
 
 export const useAppStore = defineStore('app', () => {
   const initialSession = loadInitialRememberedSession()
@@ -57,6 +76,9 @@ export const useAppStore = defineStore('app', () => {
     (localStorage.getItem('sallehli_theme') === 'dark' ? 'dark' : 'system')
   const themeMode = ref<ThemeMode>(savedThemeMode)
   const isDark = ref<boolean>(false)
+
+  // 3-Size Font Scale (Small / Medium / Large)
+  const fontSizeMode = ref<FontSizeMode>(loadInitialFontSize())
 
   const appVersion = ref<string>('v1.0')
 
@@ -293,6 +315,24 @@ export const useAppStore = defineStore('app', () => {
   function setThemeMode(mode: ThemeMode): void {
     themeMode.value = mode
     applyTheme()
+  }
+
+  function applyFontSize(): void {
+    const px = FONT_SIZE_PX_MAP[fontSizeMode.value] ?? 16
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.fontSize = `${px}px`
+      document.documentElement.dataset.fontSize = fontSizeMode.value
+    }
+    try {
+      localStorage.setItem('sallehli_font_size', fontSizeMode.value)
+    } catch {
+      // Ignore storage errors
+    }
+  }
+
+  function setFontSizeMode(mode: FontSizeMode): void {
+    fontSizeMode.value = mode
+    applyFontSize()
   }
 
   function toggleTheme(): void {
@@ -638,6 +678,7 @@ export const useAppStore = defineStore('app', () => {
     defaultPasswordBannerDismissed,
     themeMode,
     isDark,
+    fontSizeMode,
     appVersion,
     updateDownloadState,
     syncUpdateDownloadStatus,
@@ -699,6 +740,8 @@ export const useAppStore = defineStore('app', () => {
     toggleTheme,
     cycleTheme,
     setThemeMode,
+    applyFontSize,
+    setFontSizeMode,
     fetchVersion,
     fetchSystemStatus,
     loadSettings,

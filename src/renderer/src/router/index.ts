@@ -109,6 +109,12 @@ const router = createRouter({
       name: 'system-control',
       component: () => import('@renderer/views/SystemControlView.vue'),
       meta: { requiresAuth: true, requiresSuperAdmin: true }
+    },
+    {
+      path: '/profile',
+      name: 'profile',
+      component: () => import('@renderer/views/ProfileView.vue'),
+      meta: { requiresAuth: true }
     }
   ]
 })

@@ -40,7 +40,10 @@ import {
   Menu,
   PanelRightClose,
   PanelRightOpen,
-  ShieldAlert
+  ShieldAlert,
+  User as UserIcon,
+  ChevronsUpDown,
+  Type
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -49,6 +52,31 @@ const appStore = useAppStore()
 const { t } = useTerms()
 const mobileMenuOpen = ref(false)
 const sidebarCollapsed = ref<boolean>(localStorage.getItem('sallehli_sidebar_collapsed') === '1')
+const userMenuOpen = ref(false)
+const userMenuRef = ref<HTMLElement | null>(null)
+
+const userInitials = computed(() => {
+  const name = (appStore.currentUser?.full_name || appStore.currentUser?.username || 'U').trim()
+  const parts = name.split(/\s+/).filter(Boolean)
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase()
+  }
+  return name.slice(0, 2).toUpperCase()
+})
+
+function handleUserMenuOutsideClick(event: MouseEvent): void {
+  if (!userMenuOpen.value) return
+  const target = event.target as Node | null
+  if (userMenuRef.value && target && !userMenuRef.value.contains(target)) {
+    userMenuOpen.value = false
+  }
+}
+
+function handleUserMenuEscape(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && userMenuOpen.value) {
+    userMenuOpen.value = false
+  }
+}
 
 function toggleSidebar(): void {
   sidebarCollapsed.value = !sidebarCollapsed.value
@@ -63,6 +91,7 @@ watch(
   () => route.fullPath,
   () => {
     mobileMenuOpen.value = false
+    userMenuOpen.value = false
   }
 )
 
@@ -215,8 +244,11 @@ watch(
 
 onMounted(async () => {
   appStore.applyTheme()
+  appStore.applyFontSize()
   appStore.fetchVersion()
   appStore.fetchSystemStatus()
+  document.addEventListener('click', handleUserMenuOutsideClick)
+  document.addEventListener('keydown', handleUserMenuEscape)
 
   if (appStore.isAuthenticated) {
     const valid = await appStore.verifyRememberedSession()
@@ -281,6 +313,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('click', handleUserMenuOutsideClick)
+  document.removeEventListener('keydown', handleUserMenuEscape)
   if (unsubscribeUpdateAvailable) {
     unsubscribeUpdateAvailable()
   }
@@ -299,7 +333,7 @@ onUnmounted(() => {
     </router-view>
 
     <!-- Main Authenticated Application Layout -->
-    <div v-else class="flex h-screen overflow-hidden relative">
+    <div v-else class="flex h-dvh w-full overflow-hidden relative">
       <!-- Mobile Drawer Backdrop -->
       <div
         v-if="mobileMenuOpen"
@@ -310,7 +344,7 @@ onUnmounted(() => {
       <!-- Right Sidebar Navigation -->
       <aside
         :class="[
-          'no-print w-68 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 flex flex-col shrink-0 h-full overflow-hidden fixed inset-y-0 right-0 z-50 transition-all duration-200 lg:static',
+          'no-print w-72 max-w-[85vw] sm:w-68 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 flex flex-col shrink-0 h-full overflow-hidden fixed inset-y-0 right-0 z-50 transition-all duration-200 lg:static',
           mobileMenuOpen ? 'translate-x-0 shadow-2xl' : 'translate-x-full lg:translate-x-0 lg:shadow-none',
           sidebarCollapsed ? 'lg:w-0 lg:border-l-0 lg:overflow-hidden lg:opacity-0 lg:pointer-events-none' : 'lg:w-68'
         ]"
@@ -377,143 +411,184 @@ onUnmounted(() => {
           </router-link>
         </nav>
 
-        <!-- Bottom User Profile & Logout -->
-        <div class="p-4 border-t border-slate-200 dark:border-slate-800 space-y-2.5 shrink-0">
-          <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 space-y-1">
-            <div class="font-black text-xs text-slate-900 dark:text-white truncate">
-              {{ appStore.currentUser?.full_name }}
-            </div>
-            <div class="flex items-center justify-between gap-1">
-              <span
+        <!-- Unified Bottom User Menu (Dropdown) -->
+        <div ref="userMenuRef" class="p-3 border-t border-slate-200 dark:border-slate-800 shrink-0 relative">
+          <!-- Upward Dropdown Menu -->
+          <Transition name="page-fade">
+            <div
+              v-if="userMenuOpen"
+              class="absolute bottom-full mb-2 inset-x-3 z-50 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 shadow-2xl p-2 space-y-1.5"
+            >
+              <!-- Profile & Font Size Link -->
+              <router-link
+                to="/profile"
+                @click="userMenuOpen = false"
+                class="flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              >
+                <span class="flex items-center gap-2">
+                  <UserIcon class="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  <span>الملف الشخصي</span>
+                </span>
+                <span class="flex items-center gap-1 text-[10px] text-slate-400">
+                  <Type class="w-3 h-3" />
+                  <span>حجم الخط</span>
+                </span>
+              </router-link>
+
+              <!-- Quick Open in Browser / LAN Link (when LAN is enabled) -->
+              <button
+                v-if="primaryBrowserUrl"
+                type="button"
+                @click="openInBrowser(); userMenuOpen = false"
+                class="w-full flex items-center justify-between py-2 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/70 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-800/70 text-xs font-bold transition cursor-pointer"
+                :title="`فتح على المتصفح: ${primaryBrowserUrl}`"
+              >
+                <span class="flex items-center gap-1.5">
+                  <Globe class="w-3.5 h-3.5" />
+                  <span>فتح على المتصفح</span>
+                </span>
+                <span
+                  dir="ltr"
+                  class="font-mono text-[10px] px-1.5 py-0.5 rounded-md bg-white dark:bg-slate-900 truncate max-w-[105px]"
+                >
+                  {{ primaryBrowserUrl.replace('http://', '') }}
+                </span>
+              </button>
+
+              <!-- Quick Update Button -->
+              <button
+                type="button"
+                @click="appStore.openUpdateModal(); userMenuOpen = false"
                 :class="[
-                  'inline-block px-2 py-0.5 rounded-full text-[10px] font-bold truncate',
-                  USER_ROLE_LABELS[appStore.currentUser?.role || 'owner']?.badge
+                  'w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-bold transition cursor-pointer border',
+                  appStore.availableUpdate?.updateAvailable
+                    ? 'bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-500 shadow-md shadow-indigo-600/20'
+                    : 'bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:hover:bg-blue-900/70 dark:text-blue-300 border-blue-200/70 dark:border-blue-800/70'
                 ]"
               >
-                {{ USER_ROLE_LABELS[appStore.currentUser?.role || 'owner']?.label }}
-              </span>
-              <span class="text-[11px] font-mono text-slate-400 shrink-0">
-                @{{ appStore.currentUser?.username }}
-              </span>
+                <span class="flex items-center gap-1.5">
+                  <RefreshCw class="w-3.5 h-3.5" />
+                  <span>
+                    {{
+                      appStore.availableUpdate?.updateAvailable
+                        ? `تحديث متاح (v${appStore.availableUpdate.latestVersion})`
+                        : 'تحديث البرنامج'
+                    }}
+                  </span>
+                </span>
+                <span
+                  :class="[
+                    'font-mono text-[10px] px-1.5 py-0.5 rounded-md',
+                    appStore.availableUpdate?.updateAvailable
+                      ? 'bg-white/20 text-white'
+                      : 'bg-white dark:bg-slate-900'
+                  ]"
+                >
+                  {{ appStore.appVersion }}
+                </span>
+              </button>
+
+              <!-- 3-Mode Theme Selector (Light / Dark / System) -->
+              <div class="flex items-center p-1 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/60 text-[10px] font-bold">
+                <button
+                  type="button"
+                  @click="appStore.setThemeMode('light')"
+                  :class="[
+                    'flex-1 flex items-center justify-center gap-1 py-1 rounded-lg transition cursor-pointer',
+                    appStore.themeMode === 'light'
+                      ? 'bg-white dark:bg-slate-700 text-amber-600 dark:text-amber-400 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  ]"
+                  title="الوضع الفاتح"
+                >
+                  <Sun class="w-3 h-3" />
+                  <span>فاتح</span>
+                </button>
+
+                <button
+                  type="button"
+                  @click="appStore.setThemeMode('dark')"
+                  :class="[
+                    'flex-1 flex items-center justify-center gap-1 py-1 rounded-lg transition cursor-pointer',
+                    appStore.themeMode === 'dark'
+                      ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  ]"
+                  title="الوضع الداكن"
+                >
+                  <Moon class="w-3 h-3" />
+                  <span>داكن</span>
+                </button>
+
+                <button
+                  type="button"
+                  @click="appStore.setThemeMode('system')"
+                  :class="[
+                    'flex-1 flex items-center justify-center gap-1 py-1 rounded-lg transition cursor-pointer',
+                    appStore.themeMode === 'system'
+                      ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  ]"
+                  title="تلقائي بحسب نظام التشغيل"
+                >
+                  <Monitor class="w-3 h-3" />
+                  <span>النظام</span>
+                </button>
+              </div>
+
+              <!-- Logout Button -->
+              <button
+                type="button"
+                @click="userMenuOpen = false; handleLogout()"
+                class="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 dark:text-rose-300 text-xs font-bold transition cursor-pointer"
+                title="تسجيل الخروج"
+              >
+                <LogOut class="w-4 h-4" />
+                <span>تسجيل الخروج</span>
+              </button>
             </div>
-          </div>
+          </Transition>
 
-          <!-- Quick Open in Browser / LAN Link (when LAN is enabled) -->
-          <button
-            v-if="primaryBrowserUrl"
-            type="button"
-            @click="openInBrowser"
-            class="w-full flex items-center justify-between py-2 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/70 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-800/70 text-xs font-bold transition cursor-pointer"
-            :title="`فتح على المتصفح: ${primaryBrowserUrl}`"
-          >
-            <span class="flex items-center gap-1.5">
-              <Globe class="w-3.5 h-3.5" />
-              <span>فتح على المتصفح</span>
-            </span>
-            <span
-              dir="ltr"
-              class="font-mono text-[10px] px-1.5 py-0.5 rounded-md bg-white dark:bg-slate-900 truncate max-w-[115px]"
-            >
-              {{ primaryBrowserUrl.replace('http://', '') }}
-            </span>
-          </button>
-
-          <!-- Quick Update Button -->
+          <!-- Single Compact Trigger Button -->
           <button
             type="button"
-            @click="appStore.openUpdateModal"
-            :class="[
-              'w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-bold transition cursor-pointer border',
-              appStore.availableUpdate?.updateAvailable
-                ? 'bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-500 shadow-md shadow-indigo-600/20'
-                : 'bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:hover:bg-blue-900/70 dark:text-blue-300 border-blue-200/70 dark:border-blue-800/70'
-            ]"
+            @click="userMenuOpen = !userMenuOpen"
+            :aria-expanded="userMenuOpen"
+            class="w-full p-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-700/70 flex items-center gap-2.5 text-right transition cursor-pointer"
           >
-            <span class="flex items-center gap-1.5">
-              <RefreshCw class="w-3.5 h-3.5" />
-              <span>
-                {{
-                  appStore.availableUpdate?.updateAvailable
-                    ? `تحديث متاح (v${appStore.availableUpdate.latestVersion})`
-                    : 'تحديث البرنامج'
-                }}
-              </span>
-            </span>
-            <span
-              :class="[
-                'font-mono text-[10px] px-1.5 py-0.5 rounded-md',
-                appStore.availableUpdate?.updateAvailable
-                  ? 'bg-white/20 text-white'
-                  : 'bg-white dark:bg-slate-900'
-              ]"
-            >
-              {{ appStore.appVersion }}
-            </span>
-          </button>
-
-          <!-- 3-Mode Theme Selector (Light / Dark / System) -->
-          <div class="flex items-center p-1 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/60 text-[10px] font-bold">
-            <button
-              type="button"
-              @click="appStore.setThemeMode('light')"
-              :class="[
-                'flex-1 flex items-center justify-center gap-1 py-1 rounded-lg transition cursor-pointer',
-                appStore.themeMode === 'light'
-                  ? 'bg-white dark:bg-slate-700 text-amber-600 dark:text-amber-400 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              ]"
-              title="الوضع الفاتح"
-            >
-              <Sun class="w-3 h-3" />
-              <span>فاتح</span>
-            </button>
-
-            <button
-              type="button"
-              @click="appStore.setThemeMode('dark')"
-              :class="[
-                'flex-1 flex items-center justify-center gap-1 py-1 rounded-lg transition cursor-pointer',
-                appStore.themeMode === 'dark'
-                  ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              ]"
-              title="الوضع الداكن"
-            >
-              <Moon class="w-3 h-3" />
-              <span>داكن</span>
-            </button>
-
-            <button
-              type="button"
-              @click="appStore.setThemeMode('system')"
-              :class="[
-                'flex-1 flex items-center justify-center gap-1 py-1 rounded-lg transition cursor-pointer',
-                appStore.themeMode === 'system'
-                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-              ]"
-              title="تلقائي بحسب نظام التشغيل"
-            >
-              <Monitor class="w-3 h-3" />
-              <span>النظام</span>
-            </button>
-          </div>
-
-          <!-- Logout Button -->
-          <button
-            type="button"
-            @click="handleLogout"
-            class="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 text-xs font-bold transition cursor-pointer"
-            title="تسجيل الخروج"
-          >
-            <LogOut class="w-4 h-4" />
-            <span>تسجيل الخروج</span>
+            <div class="relative w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white font-black text-xs flex items-center justify-center shrink-0 shadow-xs">
+              {{ userInitials }}
+              <span
+                v-if="appStore.availableUpdate?.updateAvailable"
+                class="absolute -top-1 -left-1 w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-white dark:ring-slate-900 animate-pulse"
+                title="يتوفر تحديث جديد"
+              ></span>
+            </div>
+            <div class="min-w-0 flex-1 space-y-0.5">
+              <div class="font-black text-xs text-slate-900 dark:text-white truncate">
+                {{ appStore.currentUser?.full_name }}
+              </div>
+              <div class="flex items-center gap-1.5 min-w-0">
+                <span
+                  :class="[
+                    'inline-block px-1.5 py-0.5 rounded-full text-[9px] font-bold truncate max-w-[110px]',
+                    USER_ROLE_LABELS[appStore.currentUser?.role || 'owner']?.badge
+                  ]"
+                >
+                  {{ USER_ROLE_LABELS[appStore.currentUser?.role || 'owner']?.label }}
+                </span>
+                <span dir="ltr" class="text-[10px] font-mono text-slate-400 truncate">
+                  @{{ appStore.currentUser?.username }}
+                </span>
+              </div>
+            </div>
+            <ChevronsUpDown class="w-4 h-4 text-slate-400 shrink-0" />
           </button>
         </div>
       </aside>
 
       <!-- Main Viewport -->
-      <main class="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4">
+      <main class="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6 space-y-4">
         <!-- Desktop Expand Sidebar Header Bar (when collapsed) -->
         <div
           v-if="sidebarCollapsed"
@@ -542,19 +617,26 @@ onUnmounted(() => {
 
         <!-- Mobile / Tablet Header Bar -->
         <div
-          class="no-print flex items-center justify-between lg:hidden pb-3 mb-2 border-b border-slate-200 dark:border-slate-800"
+          class="no-print flex items-center justify-between gap-2 lg:hidden pb-3 mb-2 border-b border-slate-200 dark:border-slate-800"
         >
           <button
             type="button"
             @click="mobileMenuOpen = true"
-            class="flex items-center gap-2 px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 font-bold text-xs shadow-xs cursor-pointer"
+            class="flex items-center gap-2 px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 font-bold text-xs shadow-xs cursor-pointer shrink-0"
           >
             <Menu class="w-4 h-4 text-blue-600" />
-            <span>القائمة الرئيسية</span>
+            <span>القائمة</span>
           </button>
           <div class="font-black text-sm text-slate-900 dark:text-white truncate">
             {{ appStore.businessProfile.appName }}
           </div>
+          <router-link
+            to="/profile"
+            class="w-8 h-8 rounded-xl bg-blue-600 text-white font-black text-[11px] flex items-center justify-center shrink-0 shadow-xs"
+            title="الملف الشخصي"
+          >
+            {{ userInitials }}
+          </router-link>
         </div>
 
         <!-- Default Super Admin Password Warning Banner -->
