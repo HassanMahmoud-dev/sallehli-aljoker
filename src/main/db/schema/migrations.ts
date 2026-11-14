@@ -1,5 +1,5 @@
 import { getDb, runTransaction } from '../connection'
-import { hashPassword, signSubscription } from '../crypto'
+import { hashPassword, isHashedPassword, signSubscription } from '../crypto'
 
 interface TableColumnInfo {
   name: string
@@ -576,7 +576,7 @@ export function runMigrations(): void {
     }>
 
     for (const u of allUsers) {
-      const newHash = u.password_hash.startsWith('scrypt:')
+      const newHash = isHashedPassword(u.password_hash)
         ? u.password_hash
         : hashPassword(u.password_hash)
       const sig = u.subscription_sig || signSubscription(u.username, u.role, u.subscription_end)

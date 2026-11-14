@@ -5,6 +5,14 @@ export const PASSWORD_SALT = 'sallehli_aljoker_salt_v1_2026'
 export const LICENSE_HMAC_SECRET = 'sallehli_aljoker_license_secret_key_v1'
 export const BUSINESS_HMAC_SECRET = 'sallehli_aljoker_business_secret_key_v1_2026'
 
+/** Returns true when a stored password already uses a supported hash prefix (`scrypt2:` or legacy `scrypt:`). */
+export function isHashedPassword(storedHash: string): boolean {
+  return (
+    typeof storedHash === 'string' &&
+    (storedHash.startsWith('scrypt2:') || storedHash.startsWith('scrypt:'))
+  )
+}
+
 /** Hashes a password with a per-user 16-byte random salt using scrypt (`scrypt2:<salt>:<hash>`). */
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString('hex')
