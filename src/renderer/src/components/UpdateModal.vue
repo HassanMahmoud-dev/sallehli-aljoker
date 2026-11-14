@@ -26,7 +26,6 @@ const updateSourceUrl = ref('HassanMahmoud-dev/sallehli-aljoker')
 const isChecking = ref(false)
 const isInstallingLocal = ref(false)
 const isApplyingUpdate = ref(false)
-const showAdvancedUrl = ref(false)
 const showAllNotes = ref(false)
 
 const checkResult = ref<UpdateCheckResult | null>(null)
@@ -264,7 +263,7 @@ onMounted(() => {
           </div>
         </div>
 
-        <!-- Option 1: Online GitHub Releases Update -->
+        <!-- Option 1: Online Auto Update -->
         <div
           class="p-5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 space-y-4"
         >
@@ -272,31 +271,8 @@ onMounted(() => {
             <div class="flex items-center gap-2">
               <Globe class="w-4 h-4 text-blue-600" />
               <h3 class="font-black text-sm text-slate-900 dark:text-white">
-                1. التحديث التلقائي عبر الإنترنت (GitHub Releases)
+                1. التحديث التلقائي عبر الإنترنت
               </h3>
-            </div>
-            <button
-              type="button"
-              @click="showAdvancedUrl = !showAdvancedUrl"
-              class="text-[11px] text-slate-500 hover:text-slate-800 dark:hover:text-slate-300 underline cursor-pointer"
-            >
-              {{ showAdvancedUrl ? 'إخفاء الإعدادات المتقدمة' : 'إعدادات متقدمة (رابط التحديث)' }}
-            </button>
-          </div>
-
-          <!-- Advanced URL Input (Collapsed by default) -->
-          <div v-if="showAdvancedUrl" class="space-y-1.5 pt-1">
-            <label class="block font-bold text-slate-700 dark:text-slate-300 text-[11px]">
-              مصدر التحديثات (مستودع GitHub أو رابط مباشر):
-            </label>
-            <div class="flex gap-2">
-              <input
-                v-model="updateSourceUrl"
-                type="text"
-                dir="ltr"
-                placeholder="HassanMahmoud-dev/sallehli-aljoker"
-                class="flex-1 px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white font-mono focus:ring-2 focus:ring-blue-500 outline-none"
-              />
             </div>
           </div>
 

@@ -14,7 +14,8 @@ import {
   RefreshCw,
   Server,
   Smartphone,
-  Laptop
+  Laptop,
+  Zap
 } from 'lucide-vue-next'
 
 const appStore = useAppStore()
@@ -27,7 +28,8 @@ const status = ref<SystemControlStatus>({
   ips: [],
   urls: [],
   localUrl: 'http://localhost:4545',
-  autoStartWindows: false
+  autoStartWindows: false,
+  runInBackground: true
 })
 
 const portInput = ref<number>(4545)
@@ -110,6 +112,23 @@ async function handleToggleAutoStart(enabled: boolean): Promise<void> {
     )
   } catch (err) {
     swalError('تعذر تحديث إعداد الويندوز', err instanceof Error ? err.message : '')
+  }
+}
+
+async function handleToggleBackground(enabled: boolean): Promise<void> {
+  try {
+    await appStore.withLoading(async () => {
+      const res = await window.api.setBackgroundConfig(enabled)
+      status.value = res
+      appStore.systemStatus = res
+    }, 'جاري تحديث إعداد التشغيل في الخلفية...')
+    swalSuccess(
+      enabled
+        ? 'تم تفعيل العمل في الخلفية: سيبقى البرنامج جاهزاً في شريط المهام لفتح أسرع'
+        : 'تم إيقاف العمل في الخلفية: سيتم إغلاق البرنامج بالكامل عند إغلاق النافذة'
+    )
+  } catch (err) {
+    swalError('تعذر تحديث إعداد الخلفية', err instanceof Error ? err.message : '')
   }
 }
 
@@ -474,6 +493,74 @@ onMounted(loadStatus)
                 status.autoStartWindows
                   ? 'إيقاف التشغيل التلقائي مع الويندوز'
                   : 'تفعيل التشغيل التلقائي مع بداية الويندوز'
+              }}
+            </span>
+          </button>
+        </div>
+
+        <!-- Card 4: Background Mode & Performance -->
+        <div
+          class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-4"
+        >
+          <div class="flex items-center gap-3">
+            <div
+              :class="[
+                'w-11 h-11 rounded-2xl flex items-center justify-center shrink-0',
+                status.runInBackground
+                  ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400'
+                  : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+              ]"
+            >
+              <Zap class="w-6 h-6" />
+            </div>
+            <div>
+              <h3 class="font-black text-sm text-slate-900 dark:text-white">
+                4. العمل في الخلفية وتسريع الأداء
+              </h3>
+              <p class="text-[11px] text-slate-500 dark:text-slate-400">
+                إبقاء البرنامج نشطاً في شريط المهام لسرعة الفتح والاستجابة
+              </p>
+            </div>
+          </div>
+
+          <p class="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+            عند إغلاق النافذة، يظل <strong>{{ appStore.appName }}</strong> مفتوحاً في الخلفية بأقل استهلاك للموارد بحيث يفتح فوراً عند الحاجة مع بقاء خادم المتصفح والشبكة متاحاً دائماً (ويمكنك الإغلاق النهائي من أيقونة شريط المهام بجانب الساعة).
+          </p>
+
+          <div
+            class="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex items-center justify-between"
+          >
+            <span class="font-bold text-slate-800 dark:text-slate-200">
+              الحالة الحالية:
+            </span>
+            <span
+              :class="[
+                'px-2.5 py-1 rounded-full text-[11px] font-black',
+                status.runInBackground
+                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                  : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
+              ]"
+            >
+              {{ status.runInBackground ? 'مفعل (يعمل في الخلفية)' : 'غير مفعل (يغلق تماماً)' }}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            @click="handleToggleBackground(!status.runInBackground)"
+            :class="[
+              'w-full py-3 px-4 rounded-xl font-black text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-sm',
+              status.runInBackground
+                ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+                : 'bg-amber-600 hover:bg-amber-700 text-white'
+            ]"
+          >
+            <Zap class="w-4 h-4" />
+            <span>
+              {{
+                status.runInBackground
+                  ? 'إيقاف العمل في الخلفية'
+                  : 'تفعيل العمل في الخلفية'
               }}
             </span>
           </button>

@@ -15,6 +15,10 @@ export function createDatabaseConnection(filePath: string): DatabaseLike {
     const BetterSqlite3 = requireModule('better-sqlite3')
     const instance = new BetterSqlite3(filePath)
     instance.pragma('journal_mode = WAL')
+    instance.pragma('synchronous = NORMAL')
+    instance.pragma('temp_store = MEMORY')
+    instance.pragma('cache_size = -16000')
+    instance.pragma('busy_timeout = 5000')
     instance.pragma('foreign_keys = ON')
     return instance as DatabaseLike
   } catch {
@@ -22,6 +26,10 @@ export function createDatabaseConnection(filePath: string): DatabaseLike {
     const { DatabaseSync } = requireModule('node:sqlite')
     const instance = new DatabaseSync(filePath)
     instance.exec('PRAGMA journal_mode = WAL;')
+    instance.exec('PRAGMA synchronous = NORMAL;')
+    instance.exec('PRAGMA temp_store = MEMORY;')
+    instance.exec('PRAGMA cache_size = -16000;')
+    instance.exec('PRAGMA busy_timeout = 5000;')
     instance.exec('PRAGMA foreign_keys = ON;')
     return instance as DatabaseLike
   }

@@ -221,13 +221,16 @@ export const useAppStore = defineStore('app', () => {
   }
 
   async function withLoading<T>(fn: () => Promise<T>, text = 'جاري حفظ البيانات...'): Promise<T> {
-    startLoading(text)
-    const minWait = new Promise((resolve) => setTimeout(resolve, 260))
+    let shown = false
+    const showTimer = setTimeout(() => {
+      shown = true
+      startLoading(text)
+    }, 120)
     try {
-      const [res] = await Promise.all([fn(), minWait])
-      return res
+      return await fn()
     } finally {
-      stopLoading()
+      clearTimeout(showTimer)
+      if (shown) stopLoading()
     }
   }
 
@@ -250,7 +253,8 @@ export const useAppStore = defineStore('app', () => {
     auto_backup_keep_count: 10,
     lan_enabled: 1,
     lan_port: 4545,
-    auto_start_windows: 0
+    auto_start_windows: 0,
+    run_in_background: 1
   })
 
   // Print Modal State

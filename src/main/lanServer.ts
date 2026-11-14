@@ -247,6 +247,8 @@ export function getSystemControlStatus(): SystemControlStatus {
     // Fallback to DB setting
   }
 
+  const runInBackground = Boolean(settings.run_in_background ?? 1)
+
   return {
     browserEnabled,
     lanEnabled,
@@ -255,7 +257,8 @@ export function getSystemControlStatus(): SystemControlStatus {
     ips,
     urls,
     localUrl,
-    autoStartWindows
+    autoStartWindows,
+    runInBackground
   }
 }
 

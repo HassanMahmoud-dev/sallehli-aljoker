@@ -316,7 +316,7 @@ function resolveUpdateEndpoint(rawInput: string): {
 function fetchTextWithRedirects(url: string, maxRedirects = 5): Promise<string> {
   if (!isTrustedUpdateUrl(url)) {
     return Promise.reject(
-      new Error('رابط التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من GitHub الرسمية.')
+      new Error('رابط التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من خادم التحديثات الرسمي.')
     )
   }
 
@@ -418,8 +418,7 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
       success: false,
       updateAvailable: false,
       currentVersion,
-      message:
-        'يرجى إدخال اسم مستودع GitHub صالح (مثال: username/sallehli-aljoker) أو رابط HTTPS موثوق من GitHub.'
+      message: 'تعذر التحقق من مصدر التحديثات؛ يرجى المحاولة لاحقاً أو التواصل مع الدعم الفني.'
     }
   }
 
@@ -567,7 +566,7 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
         latestVersion,
         releaseNotes,
         publishedAt,
-        message: `يوجد إصدار جديد (v${latestVersion}) ولكن لم يتم العثور على ملف التثبيت (.exe) مرفقاً داخل الإصدار على GitHub Releases.`
+        message: `يوجد إصدار جديد (v${latestVersion}) ولكن ملف التثبيت (.exe) غير متاح حالياً.`
       }
     }
 
@@ -576,7 +575,7 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
         success: false,
         updateAvailable: false,
         currentVersion,
-        message: 'تم رفض رابط تحميل التحديث لأنه لا يبدأ بـ https:// أو لا ينتمي إلى نطاق GitHub الموثوق.'
+        message: 'تم رفض رابط تحميل التحديث لعدم توافقه مع مصدر التحديث الرسمي.'
       }
     }
 
@@ -1093,7 +1092,7 @@ export async function applyDownloadedUpdate(): Promise<{
     }
     return {
       success: false,
-      message: 'مصدر ملف التحديث غير موثوق أو انتهت صلاحيته؛ يرجى إعادة التحميل عبر HTTPS من GitHub.'
+      message: 'مصدر ملف التحديث غير موثوق أو انتهت صلاحيته؛ يرجى إعادة التحقق والتحميل مرة أخرى.'
     }
   }
 
@@ -1139,7 +1138,7 @@ function downloadFileWithResume(
 ): Promise<void> {
   if (!isTrustedUpdateUrl(url)) {
     return Promise.reject(
-      new Error('رابط تحميل التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من GitHub الرسمية.')
+      new Error('رابط تحميل التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من خادم التحديثات الرسمي.')
     )
   }
 
@@ -1330,7 +1329,7 @@ export async function startOnlineUpdateDownload(
   }
 
   if (!isTrustedUpdateUrl(downloadUrl)) {
-    const msg = 'رابط تحميل التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من GitHub الرسمية.'
+    const msg = 'رابط تحميل التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من خادم التحديثات الرسمي.'
     return { success: false, message: msg }
   }
 
@@ -1577,10 +1576,10 @@ export function startAutoUpdateScheduler(
     }
   }
 
-  // Initial check immediately on startup
+  // Initial check shortly after startup so UI renders smoothly on low-end PCs
   setTimeout(() => {
     runAutoCheck(true)
-  }, 1500)
+  }, 4000)
 
   if (autoUpdateTimer) {
     clearInterval(autoUpdateTimer)

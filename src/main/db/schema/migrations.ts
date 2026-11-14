@@ -588,6 +588,44 @@ export function runMigrations(): void {
         )
       }
     }
+
+    // 4. v1.1.5 Automatic Background Mode Activation for all updated & restored databases
+    const bgMigratedRow = db
+      .prepare("SELECT value FROM settings WHERE key = 'v115_background_mode_migrated'")
+      .get() as { value?: string } | undefined
+    if (!bgMigratedRow?.value) {
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('run_in_background', '1')").run()
+      db.prepare(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('v115_background_mode_migrated', '1')"
+      ).run()
+    }
+
+    // 5. Performance indexes on frequently queried real tables (for low-end devices)
+    const ensureIndex = (tableName: string, indexName: string, columnsSql: string): void => {
+      try {
+        const isRealTable = db
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+          .get(tableName)
+        if (!isRealTable) return
+        db.exec(`CREATE INDEX IF NOT EXISTS ${indexName} ON ${tableName} (${columnsSql});`)
+      } catch {
+        // Ignore if index creation cannot be applied on legacy schema
+      }
+    }
+
+    ensureIndex('customers', 'idx_customers_phone', 'phone')
+    ensureIndex('customer_appliances', 'idx_customer_appliances_customer', 'customer_id')
+    ensureIndex('maintenance_tickets', 'idx_tickets_created_at', 'created_at')
+    ensureIndex('maintenance_tickets', 'idx_tickets_status', 'status')
+    ensureIndex('maintenance_tickets', 'idx_tickets_customer', 'customer_id')
+    ensureIndex('maintenance_tickets', 'idx_tickets_technician', 'technician_id')
+    ensureIndex('ticket_parts', 'idx_ticket_parts_ticket', 'ticket_id')
+    ensureIndex('treasury_transactions', 'idx_treasury_created_at', 'created_at')
+    ensureIndex('treasury_transactions', 'idx_treasury_type', 'transaction_type')
+    ensureIndex('sales_invoices', 'idx_sales_created_at', 'created_at')
+    ensureIndex('sales_invoices', 'idx_sales_customer', 'customer_id')
+    ensureIndex('followups', 'idx_followups_status_due', 'status, due_date')
+    ensureIndex('earmold_orders', 'idx_earmolds_status', 'status')
   } finally {
     try {
       db.exec('PRAGMA foreign_keys = ON;')

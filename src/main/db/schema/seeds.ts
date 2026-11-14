@@ -61,7 +61,8 @@ export function seedDefaults(targetType?: BusinessType): void {
     update_url: 'HassanMahmoud-dev/sallehli-aljoker',
     auto_backup_enabled: 1,
     auto_backup_dir: getDefaultAutoBackupDir(),
-    auto_backup_keep_count: 10
+    auto_backup_keep_count: 10,
+    run_in_background: 1
   }
 
   const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')

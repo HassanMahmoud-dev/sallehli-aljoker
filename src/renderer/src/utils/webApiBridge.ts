@@ -215,6 +215,7 @@ export function ensureWebApiBridge(): void {
     setBrowserConfig: (enabled) => invokeHttp('system:setBrowserConfig', enabled),
     setLanConfig: (payload) => invokeHttp('system:setLanConfig', payload),
     setAutoStartWindows: (enabled) => invokeHttp('system:setAutoStart', enabled),
+    setBackgroundConfig: (enabled) => invokeHttp('system:setBackgroundConfig', enabled),
 
     // Business Profiles & Dynamic Lookups
     getBusinessPublic: () => invokeHttp('business:getPublic'),

@@ -420,6 +420,7 @@ export interface IElectronAPI {
   setBrowserConfig: (enabled: boolean) => Promise<SystemControlStatus>
   setLanConfig: (payload: { enabled: boolean; port?: number }) => Promise<SystemControlStatus>
   setAutoStartWindows: (enabled: boolean) => Promise<SystemControlStatus>
+  setBackgroundConfig: (enabled: boolean) => Promise<SystemControlStatus>
 
   // Business Profiles & Dynamic Lookups & Backup Ticket
   createBackupTicket: () => Promise<string | null>

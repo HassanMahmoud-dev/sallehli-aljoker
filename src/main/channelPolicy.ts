@@ -134,6 +134,7 @@ export const CHANNEL_PERMISSIONS: Record<string, ChannelPermission> = {
   'system:setBrowserConfig': 'super_admin',
   'system:setLanConfig': 'super_admin',
   'system:setAutoStart': 'super_admin',
+  'system:setBackgroundConfig': 'super_admin',
   'db:reset': 'super_admin',
 
   // Program Updates (super_admin, owner)

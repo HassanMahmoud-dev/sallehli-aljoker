@@ -93,6 +93,7 @@ export function getSettings(): CenterSettings {
     lan_enabled: Number(map.lan_enabled ?? 1),
     lan_port: Number(map.lan_port || 4545),
     auto_start_windows: Number(map.auto_start_windows ?? 0),
+    run_in_background: Number(map.run_in_background ?? 1),
     last_update_check_at: map.last_update_check_at || ''
   }
 }
@@ -121,7 +122,8 @@ const SYSTEM_SENSITIVE_SETTINGS_KEYS = new Set<keyof CenterSettings>([
   'auto_backup_enabled',
   'auto_backup_dir',
   'auto_backup_keep_count',
-  'auto_start_windows'
+  'auto_start_windows',
+  'run_in_background'
 ])
 
 /**

@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage, screen } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage, screen, Tray, Menu } from 'electron'
 import { join, resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { existsSync, readFileSync } from 'fs'
@@ -141,6 +141,15 @@ import { getBusinessProfile } from '../shared/businessProfiles'
 import type { BusinessType } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
+let tray: Tray | null = null
+let isQuitting = false
+let runInBackgroundEnabled = true
+let hasShownTrayBalloon = false
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+}
 
 function resolveSectorIcon(type: BusinessType): string | undefined {
   const candidates =
@@ -156,16 +165,117 @@ function resolveSectorIcon(type: BusinessType): string | undefined {
   return undefined
 }
 
-/** Updates window title and window/taskbar icon to match the active business sector. */
-function applyWindowBranding(type: BusinessType): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  const p = getBusinessProfile(type)
-  mainWindow.setTitle(`${p.appName} v${app.getVersion()} - ${p.windowTitle}`)
-  const iconPath = resolveSectorIcon(type)
-  if (iconPath) {
-    const img = nativeImage.createFromPath(iconPath)
-    if (!img.isEmpty()) mainWindow.setIcon(img)
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow(false)
+    return
   }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  if (!mainWindow.isVisible()) mainWindow.show()
+  if (!mainWindow.isMaximized()) mainWindow.maximize()
+  mainWindow.focus()
+  updateTrayMenu()
+}
+
+function hideMainWindowToTray(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.hide()
+  }
+  updateTrayMenu()
+}
+
+function updateTrayMenu(): void {
+  if (!tray) return
+  let browserEnabled = true
+  let lanPort = 4545
+  try {
+    const st = getSettings()
+    browserEnabled = Boolean(st.browser_enabled ?? 1)
+    lanPort = st.lan_port || 4545
+  } catch {
+    // Ignore if DB not ready
+  }
+  const isVisible = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible())
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: 'فتح البرنامج',
+      click: () => showMainWindow()
+    },
+    {
+      label: 'إخفاء في الخلفية',
+      enabled: isVisible,
+      click: () => hideMainWindowToTray()
+    },
+    { type: 'separator' }
+  ]
+  if (browserEnabled) {
+    template.push(
+      {
+        label: 'فتح عبر المتصفح',
+        click: () => {
+          void shell.openExternal(`http://localhost:${lanPort}`)
+        }
+      },
+      { type: 'separator' }
+    )
+  }
+  template.push({
+    label: 'إغلاق البرنامج نهائياً',
+    click: () => {
+      isQuitting = true
+      app.quit()
+    }
+  })
+  tray.setContextMenu(Menu.buildFromTemplate(template))
+}
+
+function syncTrayVisibility(type: BusinessType): void {
+  if (!runInBackgroundEnabled) {
+    if (tray) {
+      tray.destroy()
+      tray = null
+    }
+    return
+  }
+  const p = getBusinessProfile(type)
+  const iconPath = resolveSectorIcon(type)
+  const img = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty()
+  if (!tray) {
+    tray = new Tray(img)
+    tray.on('click', () => showMainWindow())
+    tray.on('double-click', () => showMainWindow())
+  } else if (!img.isEmpty()) {
+    tray.setImage(img)
+  }
+  tray.setToolTip(`${p.appName} v${app.getVersion()} - يعمل في الخلفية`)
+  updateTrayMenu()
+}
+
+function applyAutoStartSetting(openAtLogin: boolean, backgroundEnabled: boolean): void {
+  if (!app.isPackaged) return
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: Boolean(openAtLogin),
+      path: process.execPath,
+      args: openAtLogin && backgroundEnabled ? ['--background'] : []
+    })
+  } catch {
+    // Ignore in dev environment if unsupported
+  }
+}
+
+/** Updates window title, window/taskbar icon, and tray branding to match the active business sector. */
+function applyWindowBranding(type: BusinessType): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const p = getBusinessProfile(type)
+    mainWindow.setTitle(`${p.appName} v${app.getVersion()} - ${p.windowTitle}`)
+    const iconPath = resolveSectorIcon(type)
+    if (iconPath) {
+      const img = nativeImage.createFromPath(iconPath)
+      if (!img.isEmpty()) mainWindow.setIcon(img)
+    }
+  }
+  syncTrayVisibility(type)
 }
 
 /** Validates that a frame/navigation URL belongs strictly to this app's trusted renderer origin. */
@@ -193,7 +303,7 @@ function isTrustedIpcSender(event: Electron.IpcMainInvokeEvent): boolean {
   return isTrustedRendererUrl(frame.url)
 }
 
-function createWindow(): void {
+function createWindow(startHidden = false): void {
   const bState = getBusinessState()
   const iconFile = resolveSectorIcon(bState.type)
   const profile = getBusinessProfile(bState.type)
@@ -216,13 +326,40 @@ function createWindow(): void {
         : join(__dirname, '../preload/index.js'),
       sandbox: true,
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      backgroundThrottling: true
     }
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow?.show()
-    mainWindow?.maximize()
+    if (!startHidden) {
+      mainWindow?.show()
+      mainWindow?.maximize()
+    }
+    updateTrayMenu()
+  })
+
+  mainWindow.on('show', () => updateTrayMenu())
+  mainWindow.on('hide', () => updateTrayMenu())
+
+  mainWindow.on('close', (event) => {
+    if (!isQuitting && runInBackgroundEnabled) {
+      event.preventDefault()
+      hideMainWindowToTray()
+      if (!hasShownTrayBalloon && tray && process.platform === 'win32') {
+        hasShownTrayBalloon = true
+        const activeProfile = getBusinessProfile(getBusinessState().type)
+        tray.displayBalloon({
+          title: activeProfile.appName,
+          content: 'البرنامج يعمل في الخلفية لسرعة الاستجابة. اضغط على الأيقونة لإعادة الفتح أو للإغلاق النهائي.'
+        })
+      }
+    }
+  })
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+    updateTrayMenu()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -396,7 +533,13 @@ function registerIpcHandlers(): void {
     'app:version': () => app.getVersion(),
     'dashboard:stats': () => getDashboardStats(),
     'settings:get': () => getSettings(),
-    'settings:save': (ctx, settings) => saveSettings(settings, ctx.session ?? null),
+    'settings:save': (ctx, settings) => {
+      const updated = saveSettings(settings, ctx.session ?? null)
+      runInBackgroundEnabled = Boolean(updated.run_in_background ?? 1)
+      syncTrayVisibility(getBusinessState().type)
+      applyAutoStartSetting(Boolean(updated.auto_start_windows), runInBackgroundEnabled)
+      return updated
+    },
     'db:path': () => getDatabasePath(),
 
     // Backup & Restore & Auto-Backup
@@ -421,7 +564,10 @@ function registerIpcHandlers(): void {
       })
       if (canceled || filePaths.length === 0) return { success: false }
       restoreBackupFromFile(filePaths[0])
+      const restoredSettings = getSettings()
+      runInBackgroundEnabled = Boolean(restoredSettings.run_in_background ?? 1)
       applyWindowBranding(getBusinessState().type)
+      applyAutoStartSetting(Boolean(restoredSettings.auto_start_windows), runInBackgroundEnabled)
       return { success: true, filePath: filePaths[0] }
     },
     'backup:chooseDir': async () => {
@@ -463,7 +609,7 @@ function registerIpcHandlers(): void {
     'update:installLocal': async () => installUpdateFromLocalFile(mainWindow),
     'update:getAutoResult': () => getLastAutoUpdateResult(),
 
-    // Super Admin System Control (LAN & Browser Server + Windows Startup)
+    // Super Admin System Control (LAN & Browser Server + Windows Startup + Background Mode)
     'system:status': () => getSystemControlStatus(),
     'system:setBrowserConfig': async (_ctx, enabled: boolean) => {
       const updated = saveSettings({ browser_enabled: enabled ? 1 : 0 })
@@ -473,6 +619,7 @@ function registerIpcHandlers(): void {
       } else {
         await stopLanServer()
       }
+      updateTrayMenu()
       return getSystemControlStatus()
     },
     'system:setLanConfig': async (_ctx, payload: { enabled: boolean; port?: number }) => {
@@ -487,18 +634,19 @@ function registerIpcHandlers(): void {
       } else {
         await stopLanServer()
       }
+      updateTrayMenu()
       return getSystemControlStatus()
     },
     'system:setAutoStart': (_ctx, enabled: boolean) => {
       saveSettings({ auto_start_windows: enabled ? 1 : 0 })
-      try {
-        app.setLoginItemSettings({
-          openAtLogin: Boolean(enabled),
-          path: process.execPath
-        })
-      } catch {
-        // Ignore in dev environment if unsupported
-      }
+      applyAutoStartSetting(Boolean(enabled), runInBackgroundEnabled)
+      return getSystemControlStatus()
+    },
+    'system:setBackgroundConfig': (_ctx, enabled: boolean) => {
+      const updated = saveSettings({ run_in_background: enabled ? 1 : 0 })
+      runInBackgroundEnabled = Boolean(updated.run_in_background ?? 1)
+      syncTrayVisibility(getBusinessState().type)
+      applyAutoStartSetting(Boolean(updated.auto_start_windows), runInBackgroundEnabled)
       return getSystemControlStatus()
     },
 
@@ -653,67 +801,76 @@ function verifyMachineInstallationLock(): boolean {
   return hkcuId === currentMachineId || hklmId === currentMachineId
 }
 
-app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.sallehli.aljoker')
-
-  if (!verifyMachineInstallationLock()) {
-    dialog.showErrorBox(
-      'جهاز غير مصرح',
-      'لا يمكن تشغيل البرنامج بعد نقل أو نسخ ملفاته إلى جهاز آخر.\nيرجى تثبيت البرنامج على هذا الجهاز باستخدام ملف التثبيت الرسمي.'
-    )
-    app.quit()
-    return
-  }
-
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
+if (gotSingleInstanceLock) {
+  app.on('second-instance', () => {
+    showMainWindow()
   })
 
-  try {
-    initDatabase()
-  } catch (err) {
-    dialog.showErrorBox('تعذر تشغيل قاعدة البيانات', (err as Error).message)
-    app.quit()
-    return
-  }
-  registerIpcHandlers()
+  app.whenReady().then(async () => {
+    electronApp.setAppUserModelId('com.sallehli.aljoker')
 
-  const settings = getSettings()
-  if (Boolean(settings.browser_enabled ?? 1) || Boolean(settings.lan_enabled ?? 1)) {
-    await startLanServer(settings.lan_port || 4545)
-  }
+    if (!verifyMachineInstallationLock()) {
+      dialog.showErrorBox(
+        'جهاز غير مصرح',
+        'لا يمكن تشغيل البرنامج بعد نقل أو نسخ ملفاته إلى جهاز آخر.\nيرجى تثبيت البرنامج على هذا الجهاز باستخدام ملف التثبيت الرسمي.'
+      )
+      app.quit()
+      return
+    }
 
-  if (app.isPackaged && settings.auto_start_windows !== undefined) {
+    app.on('browser-window-created', (_, window) => {
+      optimizer.watchWindowShortcuts(window)
+    })
+
     try {
-      app.setLoginItemSettings({
-        openAtLogin: Boolean(settings.auto_start_windows),
-        path: process.execPath
-      })
-    } catch {
-      // Ignore
+      initDatabase()
+    } catch (err) {
+      dialog.showErrorBox('تعذر تشغيل قاعدة البيانات', (err as Error).message)
+      app.quit()
+      return
     }
-  }
+    registerIpcHandlers()
 
-  createWindow()
+    const settings = getSettings()
+    runInBackgroundEnabled = Boolean(settings.run_in_background ?? 1)
+    syncTrayVisibility(getBusinessState().type)
 
-  startAutoUpdateScheduler((result) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update:available', result)
+    if (Boolean(settings.browser_enabled ?? 1) || Boolean(settings.lan_enabled ?? 1)) {
+      await startLanServer(settings.lan_port || 4545)
     }
-  })
 
-  app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (settings.auto_start_windows !== undefined) {
+      applyAutoStartSetting(Boolean(settings.auto_start_windows), runInBackgroundEnabled)
+    }
+
+    const startHidden = process.argv.includes('--background') && runInBackgroundEnabled
+    createWindow(startHidden)
+
+    startAutoUpdateScheduler((result) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('update:available', result)
+      }
+    })
+
+    app.on('activate', function () {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+      else showMainWindow()
+    })
   })
-})
+}
 
 app.on('before-quit', () => {
+  isQuitting = true
   stopLanServer()
   runAutoBackup()
+  if (tray) {
+    tray.destroy()
+    tray = null
+  }
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && (!runInBackgroundEnabled || isQuitting)) {
     app.quit()
   }
 })

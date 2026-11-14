@@ -659,6 +659,7 @@ export interface CenterSettings {
   lan_enabled?: number
   lan_port?: number
   auto_start_windows?: number
+  run_in_background?: number
   last_update_check_at?: string
 }
 
@@ -671,6 +672,7 @@ export interface SystemControlStatus {
   urls: string[]
   localUrl: string
   autoStartWindows: boolean
+  runInBackground: boolean
 }
 
 export interface UpdateCheckResult {

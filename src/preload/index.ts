@@ -403,12 +403,13 @@ const api = {
     }
   },
 
-  // Super Admin System Control (LAN & Browser Server + Windows Auto-Start)
+  // Super Admin System Control (LAN & Browser Server + Windows Auto-Start + Background Mode)
   getSystemStatus: () => invoke('system:status'),
   setBrowserConfig: (enabled: boolean) => invoke('system:setBrowserConfig', enabled),
   setLanConfig: (payload: { enabled: boolean; port?: number }) =>
     invoke('system:setLanConfig', payload),
   setAutoStartWindows: (enabled: boolean) => invoke('system:setAutoStart', enabled),
+  setBackgroundConfig: (enabled: boolean) => invoke('system:setBackgroundConfig', enabled),
 
   // Business Profiles & Dynamic Lookups & Backup Ticket
   createBackupTicket: () => invoke('backup:createTicket'),
