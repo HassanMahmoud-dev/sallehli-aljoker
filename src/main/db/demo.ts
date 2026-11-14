@@ -1,11 +1,13 @@
 import { getDb, runTransaction, getDefaultAutoBackupDir } from './connection'
 import { readSetting, writeSetting, createBackupToFile } from './settings'
+import { getPatientAttachmentsDir } from './audiology/attachments'
 import { seedDefaults } from './schema/seeds'
 import { writeBusinessSignatures, getBusinessState } from './business'
 import { hashPassword, signSubscription } from './crypto'
+import { HEARING_AIDS_PROFILE } from '../../shared/businessProfiles'
 import type { BusinessType } from '../../shared/types'
-import { existsSync, mkdirSync } from 'fs'
-import { join } from 'path'
+import { existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from 'fs'
+import { join, resolve, sep } from 'path'
 
 let isDemoHiddenCache: boolean | null = null
 
@@ -143,6 +145,28 @@ export function getDemoDataStatus(): DemoDataStatus {
 export function removeDemoData(): { success: boolean; deletedCount: number; message: string } {
   const db = getDb()
   let deletedCount = 0
+
+  try {
+    const demoAttachmentRows = db
+      .prepare('SELECT stored_name FROM patient_attachments WHERE is_demo = 1')
+      .all() as Array<{ stored_name?: string }>
+    const attachDir = resolve(getPatientAttachmentsDir())
+    const attachPrefix = attachDir.endsWith(sep) ? attachDir : `${attachDir}${sep}`
+    for (const row of demoAttachmentRows) {
+      const storedName = String(row?.stored_name || '').trim()
+      if (!storedName || storedName.includes('\0')) continue
+      const fullPath = resolve(attachDir, storedName)
+      if (fullPath.startsWith(attachPrefix) && existsSync(fullPath)) {
+        try {
+          unlinkSync(fullPath)
+        } catch {
+          // Ignore single demo attachment file cleanup error
+        }
+      }
+    }
+  } catch {
+    // patient_attachments may be a view in appliances profile without is_demo column
+  }
 
   runTransaction(() => {
     db.exec('PRAGMA foreign_keys = OFF;')
@@ -1080,6 +1104,7 @@ export function seedDemoData(targetType?: BusinessType): {
  */
 export function resetDatabase(): { success: boolean; message: string; backupPath?: string } {
   const db = getDb()
+  const currentType: BusinessType = getBusinessState().type || 'appliances'
 
   // 1. أخذ نسخة احتياطية آمنة مسبقة فوراً قبل الحذف
   const backupDir = getDefaultAutoBackupDir()
@@ -1092,6 +1117,22 @@ export function resetDatabase(): { success: boolean; message: string; backupPath
     createBackupToFile(backupPath)
   } catch (err) {
     console.warn('Pre-reset backup failed:', err)
+  }
+
+  // تنظيف ملفات مرفقات المرضى اليتيمة على القرص بعد أخذ النسخة الاحتياطية
+  try {
+    const attachDir = getPatientAttachmentsDir()
+    if (existsSync(attachDir)) {
+      for (const entry of readdirSync(attachDir)) {
+        try {
+          rmSync(join(attachDir, entry), { recursive: true, force: true })
+        } catch {
+          // Ignore single file cleanup error
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to clean patient_attachments directory during reset:', err)
   }
 
   // 2. تفريغ الجداول التشغيلية بالكامل في معاملة واحدة آمنة
@@ -1179,11 +1220,16 @@ export function resetDatabase(): { success: boolean; message: string; backupPath
       // Ignore
     }
 
-    // إعادة ضبط الإعدادات والنشاط الأولي
-    const activeType: BusinessType = 'appliances'
+    // إعادة ضبط الإعدادات والنشاط مع الحفاظ على نشاط المركز الحالي
+    const activeType: BusinessType = currentType
     seedDefaults(activeType)
     writeBusinessSignatures(activeType)
     writeSetting('business_type', activeType)
+    if (activeType === 'hearing_aids') {
+      writeSetting('center_name', HEARING_AIDS_PROFILE.centerNameDefault)
+      writeSetting('center_subtitle', HEARING_AIDS_PROFILE.centerSubtitleDefault)
+      writeSetting('receipt_footer', HEARING_AIDS_PROFILE.receiptFooterDefault)
+    }
     writeSetting('hide_demo_data', '0')
     setDemoDataHiddenCache(false)
 

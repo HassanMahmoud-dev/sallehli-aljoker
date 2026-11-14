@@ -1057,13 +1057,16 @@ export async function verifyDownloadedInstaller(
 
 function launchInstallerAndQuit(installerPath: string): void {
   closeDatabase()
-  const child = spawn(installerPath, ['/S', '--force-run'], {
+  const child = spawn(installerPath, ['/S', '--updated', '--force-run'], {
     detached: true,
     stdio: 'ignore'
   })
   child.unref()
   setTimeout(() => {
     app.quit()
+    setTimeout(() => {
+      app.exit(0)
+    }, 1500)
   }, 400)
 }
 

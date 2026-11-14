@@ -49,6 +49,8 @@ export const useAppStore = defineStore('app', () => {
   const initialSession = loadInitialRememberedSession()
   const currentUser = ref<User | null>(initialSession.user)
   const sessionToken = ref<string | null>(initialSession.token)
+  const usingDefaultAdminPassword = ref<boolean>(false)
+  const defaultPasswordBannerDismissed = ref<boolean>(false)
 
   // 3-Mode Theme (Light / Dark / System)
   const savedThemeMode = (localStorage.getItem('sallehli_theme_mode') as ThemeMode) ||
@@ -439,9 +441,18 @@ export const useAppStore = defineStore('app', () => {
     user: User,
     _daysRemaining: number | null = null,
     rememberMe = false,
-    token?: string | null
+    token?: string | null,
+    usingDefaultPassword?: boolean
   ): void {
     currentUser.value = user
+    if (typeof usingDefaultPassword === 'boolean') {
+      usingDefaultAdminPassword.value = usingDefaultPassword
+      if (!usingDefaultPassword) {
+        defaultPasswordBannerDismissed.value = false
+      }
+    } else if (user.username !== 'admin' || user.role !== 'super_admin') {
+      usingDefaultAdminPassword.value = false
+    }
     if (token) {
       sessionToken.value = token
       window.api?.setSessionToken?.(token)
@@ -474,7 +485,8 @@ export const useAppStore = defineStore('app', () => {
         res.user,
         null,
         isRemembered,
-        res.token || sessionToken.value
+        res.token || sessionToken.value,
+        res.usingDefaultPassword
       )
       await loadSettings()
       return true
@@ -491,8 +503,19 @@ export const useAppStore = defineStore('app', () => {
     }
     currentUser.value = null
     sessionToken.value = null
+    usingDefaultAdminPassword.value = false
+    defaultPasswordBannerDismissed.value = false
     window.api?.setSessionToken?.('')
     localStorage.removeItem(REMEMBERED_SESSION_KEY)
+  }
+
+  function clearDefaultPasswordWarning(): void {
+    usingDefaultAdminPassword.value = false
+    defaultPasswordBannerDismissed.value = false
+  }
+
+  function dismissDefaultPasswordBanner(): void {
+    defaultPasswordBannerDismissed.value = true
   }
 
   function openPrintModal(
@@ -611,6 +634,8 @@ export const useAppStore = defineStore('app', () => {
   return {
     currentUser,
     sessionToken,
+    usingDefaultAdminPassword,
+    defaultPasswordBannerDismissed,
     themeMode,
     isDark,
     appVersion,
@@ -680,6 +705,8 @@ export const useAppStore = defineStore('app', () => {
     setSession,
     verifyRememberedSession,
     logout,
+    clearDefaultPasswordWarning,
+    dismissDefaultPasswordBanner,
     openPrintModal,
     openSalesPrintModal,
     openHearingTestPrintModal,

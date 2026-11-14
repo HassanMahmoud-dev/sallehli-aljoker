@@ -15,6 +15,7 @@ import { createTables } from './schema/tables'
 import { runMigrations } from './schema/migrations'
 import { seedDefaults } from './schema/seeds'
 import { signBusinessType, signBusinessTypeForMachine } from './crypto'
+import { HEARING_AIDS_PROFILE } from '../../shared/businessProfiles'
 import type { SessionInfo } from '../session'
 import type { BusinessType, CenterSettings } from '../../shared/types'
 
@@ -405,6 +406,55 @@ function snapshotBeforeMigration(dbFilePath: string): string | null {
   return snapshotPath
 }
 
+export function getExplicitInstallerBusinessType(): BusinessType | null {
+  // 1. التحقق من ملف التكوين الأولي initial-activity.json المكتوب بواسطة مثبت البرنامج في مسار بيانات المستخدم
+  try {
+    const userDataPath = join(app.getPath('userData'), 'initial-activity.json')
+    if (existsSync(userDataPath)) {
+      const content = JSON.parse(readFileSync(userDataPath, 'utf-8'))
+      if (content.business_type === 'appliances' || content.business_type === 'hearing_aids') {
+        return content.business_type as BusinessType
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2. التحقق من ملف التكوين الأولي بجوار ملفات البرنامج
+  try {
+    const appDirPath = join(app.getAppPath(), '..', 'initial-activity.json')
+    if (existsSync(appDirPath)) {
+      const content = JSON.parse(readFileSync(appDirPath, 'utf-8'))
+      if (content.business_type === 'appliances' || content.business_type === 'hearing_aids') {
+        return content.business_type as BusinessType
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3. التحقق من سجل النظام Windows Registry (المكتوب من معالج تثبيت NSIS)
+  if (process.platform === 'win32') {
+    try {
+      const { execSync } = requireModule('child_process')
+      const regOutput = execSync('reg query "HKCU\\Software\\Sallehli" /v BusinessType', {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+      if (regOutput.includes('hearing_aids')) {
+        return 'hearing_aids'
+      }
+      if (regOutput.includes('appliances')) {
+        return 'appliances'
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return null
+}
+
 export function resolveConfiguredBusinessType(): BusinessType {
   const db = getDb()
   // 1. أولاً: التحقق مما إذا كان نوع النشاط مسجلاً بالفعل في قاعدة البيانات (في جدول الإعدادات)
@@ -424,52 +474,7 @@ export function resolveConfiguredBusinessType(): BusinessType {
     // ignore
   }
 
-  // 2. التحقق من ملف التكوين الأولي initial-activity.json المكتوب بواسطة مثبت البرنامج في مسار بيانات المستخدم
-  try {
-    const userDataPath = join(app.getPath('userData'), 'initial-activity.json')
-    if (existsSync(userDataPath)) {
-      const content = JSON.parse(readFileSync(userDataPath, 'utf-8'))
-      if (content.business_type === 'appliances' || content.business_type === 'hearing_aids') {
-        return content.business_type as BusinessType
-      }
-    }
-  } catch {
-    // ignore
-  }
-
-  // 3. التحقق من ملف التكوين الأولي بجوار ملفات البرنامج
-  try {
-    const appDirPath = join(app.getAppPath(), '..', 'initial-activity.json')
-    if (existsSync(appDirPath)) {
-      const content = JSON.parse(readFileSync(appDirPath, 'utf-8'))
-      if (content.business_type === 'appliances' || content.business_type === 'hearing_aids') {
-        return content.business_type as BusinessType
-      }
-    }
-  } catch {
-    // ignore
-  }
-
-  // 4. التحقق من سجل النظام Windows Registry (المكتوب من معالج تثبيت NSIS)
-  if (process.platform === 'win32') {
-    try {
-      const { execSync } = requireModule('child_process')
-      const regOutput = execSync('reg query "HKCU\\Software\\Sallehli" /v BusinessType', {
-        encoding: 'utf-8',
-        stdio: ['ignore', 'pipe', 'ignore']
-      })
-      if (regOutput.includes('hearing_aids')) {
-        return 'hearing_aids'
-      }
-      if (regOutput.includes('appliances')) {
-        return 'appliances'
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  return 'appliances'
+  return getExplicitInstallerBusinessType() ?? 'appliances'
 }
 
 export function initDatabase(): void {
@@ -487,13 +492,14 @@ export function initDatabase(): void {
   setDb(db)
 
   try {
+    const explicitInstallerType = getExplicitInstallerBusinessType()
     const activeType = resolveConfiguredBusinessType()
     createTables(activeType)
 
-    // إذا كانت قاعدة بيانات جديدة فارغة، لا نسجل النشاط مسبقاً حتى ينطلق معالج الإعداد needsSetup
+    // إذا كانت قاعدة بيانات جديدة فارغة، لا نسجل النشاط مسبقاً إلا عند وجود اختيار صريح من المثبت أو قاعدة قديمة
     const existingType = readSetting('business_type')
+    let isLegacyDbWithData = false
     if (!existingType) {
-      let isLegacyDbWithData = false
       try {
         const otherUsersCount = (
           db.prepare("SELECT COUNT(*) as cnt FROM users WHERE username != 'admin'").get() as { cnt: number }
@@ -506,7 +512,7 @@ export function initDatabase(): void {
         // Ignore
       }
 
-      if (isLegacyDbWithData) {
+      if (isLegacyDbWithData || explicitInstallerType !== null) {
         writeSetting('business_type', activeType)
         writeSetting('business_type_sig', signBusinessType(activeType))
         writeSetting('business_type_msig', signBusinessTypeForMachine(activeType))
@@ -515,6 +521,11 @@ export function initDatabase(): void {
 
     runMigrations()
     seedDefaults()
+    if (!existingType && !isLegacyDbWithData && explicitInstallerType === 'hearing_aids') {
+      writeSetting('center_name', HEARING_AIDS_PROFILE.centerNameDefault)
+      writeSetting('center_subtitle', HEARING_AIDS_PROFILE.centerSubtitleDefault)
+      writeSetting('receipt_footer', HEARING_AIDS_PROFILE.receiptFooterDefault)
+    }
     writeSetting('last_run_version', app.getVersion())
   } catch (err) {
     // Automatic rollback: restore the pre-upgrade snapshot so no data is lost, then surface the error.

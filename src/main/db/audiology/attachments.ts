@@ -4,6 +4,8 @@ import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { db, runTransaction } from '../connection'
 import { getPatientAttachmentsDir } from '../settings'
+
+export { getPatientAttachmentsDir }
 import { listHearingTests } from './tests'
 import { listFollowups } from './followups'
 import { listEarmoldOrders } from './earmolds'

@@ -6,7 +6,8 @@ import {
   stringifyExtraData,
   getLocalDateString,
   getLocalDateTimeString,
-  generateNextNumber
+  generateNextNumber,
+  queryRowsInBatches
 } from './utils'
 import type {
   MaintenanceTicket,
@@ -626,6 +627,7 @@ export function listTickets(filters?: {
   status?: string
   service_type?: string
   technician_id?: number | null
+  limit?: number
 }): MaintenanceTicket[] {
   const q = `%${(filters?.search || '').trim()}%`
   let sql = `
@@ -665,17 +667,39 @@ export function listTickets(filters?: {
   }
 
   sql += ' ORDER BY mt.id DESC'
+  const limitNum = Number(filters?.limit)
+  if (Number.isFinite(limitNum) && limitNum > 0) {
+    sql += ' LIMIT ?'
+    params.push(Math.floor(limitNum))
+  }
+
   const rawRows = db.prepare(sql).all(...params) as Record<string, unknown>[]
   const rows = rawRows.map(normalizeTicketRow)
+  if (rows.length === 0) return rows
 
-  const getPartsStmt = db.prepare(
-    `SELECT *, COALESCE(is_restored, 0) as is_restored
-     FROM ticket_parts
-     WHERE ticket_id = ?
-     ORDER BY COALESCE(is_restored, 0) ASC, id ASC`
+  const ticketIds = rows.map((r) => r.id)
+  const allParts = queryRowsInBatches<TicketPartItem & { ticket_id: number }>(
+    db,
+    ticketIds,
+    (placeholders) =>
+      `SELECT *, COALESCE(is_restored, 0) as is_restored
+       FROM ticket_parts
+       WHERE ticket_id IN (${placeholders})
+       ORDER BY COALESCE(is_restored, 0) ASC, id ASC`
   )
+  const partsByTicketId = new Map<number, TicketPartItem[]>()
+  for (const part of allParts) {
+    const tId = Number(part.ticket_id)
+    const bucket = partsByTicketId.get(tId)
+    if (bucket) {
+      bucket.push(part)
+    } else {
+      partsByTicketId.set(tId, [part])
+    }
+  }
+
   for (const row of rows) {
-    row.parts = getPartsStmt.all(row.id) as TicketPartItem[]
+    row.parts = partsByTicketId.get(row.id) || []
   }
   return rows
 }

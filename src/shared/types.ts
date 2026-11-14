@@ -24,6 +24,7 @@ export interface AuthResponse {
   message?: string
   user?: User
   token?: string
+  usingDefaultPassword?: boolean
   subscriptionStatus?: {
     isExpired: boolean
     daysRemaining: number | null

@@ -100,10 +100,20 @@ async function handleSaveUser(): Promise<void> {
 
   try {
     const isEdit = Boolean(form.value.id)
+    const editedUsername = form.value.username.trim()
+    const editedPassword = form.value.password.trim()
     await appStore.withLoading(async () => {
       await window.api.saveUser({
-        ...form.value,
-              })
+        ...form.value
+      })
+      if (editedUsername === 'admin' && editedPassword) {
+        if (editedPassword !== '8520') {
+          appStore.clearDefaultPasswordWarning()
+        } else {
+          appStore.usingDefaultAdminPassword = true
+          appStore.defaultPasswordBannerDismissed = false
+        }
+      }
       modalOpen.value = false
       successMsg.value = 'تم حفظ بيانات المستخدم والصلاحية بنجاح'
       await loadUsers()

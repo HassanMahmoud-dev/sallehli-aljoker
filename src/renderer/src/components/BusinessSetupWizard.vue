@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useAppStore } from '@renderer/stores/appStore'
 import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import type { BusinessType } from '@shared/types'
@@ -7,8 +7,17 @@ import { BUSINESS_PROFILES } from '@shared/businessProfiles'
 import { Sparkles, Wrench, Ear, CheckCircle2 } from 'lucide-vue-next'
 
 const appStore = useAppStore()
-const selectedType = ref<BusinessType>('appliances')
+const selectedType = ref<BusinessType>(appStore.businessType || 'appliances')
 const isSaving = ref(false)
+
+watch(
+  () => appStore.businessType,
+  (nextType) => {
+    if (appStore.needsBusinessSetup && nextType) {
+      selectedType.value = nextType
+    }
+  }
+)
 
 async function handleConfirmSetup(): Promise<void> {
   const profile = BUSINESS_PROFILES[selectedType.value]

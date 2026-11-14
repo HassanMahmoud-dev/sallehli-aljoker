@@ -147,7 +147,8 @@ export function ensureWebApiBridge(): void {
 
     listPatientAttachments: (payload) => invokeHttp('attachments:list', payload),
     uploadPatientAttachment: (payload) => invokeHttp('attachments:upload', payload),
-    openPatientAttachment: (payload) => invokeHttp('attachments:open', payload),
+    openPatientAttachment: (payload) =>
+      invokeHttp('attachments:open', { ...payload, openExternal: false }),
     deletePatientAttachment: (id) => invokeHttp('attachments:delete', id),
 
     listTickets: (filters) => invokeHttp('tickets:list', filters),

@@ -29,15 +29,16 @@ Var UninstFullDelete
   StrCpy $ActivityChoice "appliances"
   StrCpy $IsFirstInstall "1"
 
-  ${IfNot} ${Silent}
-  ${AndIfNot} ${UAC_IsInnerInstance}
-    ReadRegStr $R0 HKCU "${UNINSTALL_REGISTRY_KEY}" "DisplayVersion"
-    ${If} $R0 == ""
-      ReadRegStr $R0 HKLM "${UNINSTALL_REGISTRY_KEY}" "DisplayVersion"
-    ${EndIf}
+  SetRegView 64
+  ReadRegStr $R0 HKCU "${UNINSTALL_REGISTRY_KEY}" "DisplayVersion"
+  ${If} $R0 == ""
+    ReadRegStr $R0 HKLM "${UNINSTALL_REGISTRY_KEY}" "DisplayVersion"
+  ${EndIf}
 
-    ${If} $R0 != ""
-      StrCpy $IsFirstInstall "0"
+  ${If} $R0 != ""
+    StrCpy $IsFirstInstall "0"
+    ${IfNot} ${Silent}
+    ${AndIfNot} ${UAC_IsInnerInstance}
       ${VersionCompare} "$R0" "${VERSION}" $R1
       ${If} $R1 == 2
         # Installed version ($R0) is older than installer version (${VERSION})
@@ -94,6 +95,7 @@ Function ActivitySelectPageLeave
   ${EndIf}
 
   # حفظ الاختيار في سجل النظام Windows Registry
+  SetRegView 64
   WriteRegStr HKCU "Software\Sallehli" "BusinessType" "$ActivityChoice"
   WriteRegStr HKLM "Software\Sallehli" "BusinessType" "$ActivityChoice"
 FunctionEnd
@@ -115,8 +117,9 @@ FunctionEnd
     FileClose $0
   ${EndIf}
 
-  ${If} $ActivityChoice != ""
-    # كتابة ملف الإعداد الأولي داخل مسار تثبيت البرنامج
+  ${If} $IsFirstInstall == "1"
+  ${AndIf} $ActivityChoice != ""
+    # كتابة ملف الإعداد الأولي داخل مسار تثبيت البرنامج عند التثبيت لأول مرة فقط
     FileOpen $0 "$INSTDIR\initial-activity.json" w
     FileWrite $0 '{"business_type":"$ActivityChoice"}'
     FileClose $0
@@ -133,6 +136,9 @@ FunctionEnd
       SetShellVarContext all
     ${EndIf}
   ${EndIf}
+
+  # ضمان تشغيل الملف التنفيذي مباشرة بعد التحديث أو التثبيت بدلاً من اختصار قائمة ابدأ
+  StrCpy $launchLink "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
 !macroend
 
 !ifdef BUILD_UNINSTALLER
@@ -178,6 +184,7 @@ FunctionEnd
 !macroend
 
 !macro customUnInstall
+  SetRegView 64
   Delete "$INSTDIR\.install-lock"
   Delete "$INSTDIR\initial-activity.json"
 

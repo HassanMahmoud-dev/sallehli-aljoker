@@ -79,6 +79,11 @@ export function loginUser(payload: LoginPayload): AuthResponse {
     }
   }
 
+  const usingDefaultPassword =
+    userRow.username === 'admin' &&
+    userRow.role === 'super_admin' &&
+    verifyPassword('8520', userRow.password_hash).valid
+
   const { password_hash: _, subscription_sig: __, ...safeUser } = userRow
   const token = randomBytes(32).toString('hex')
   const now = new Date()
@@ -92,7 +97,8 @@ export function loginUser(payload: LoginPayload): AuthResponse {
   return {
     success: true,
     user: safeUser,
-    token
+    token,
+    usingDefaultPassword
   }
 }
 
@@ -150,6 +156,11 @@ export function verifySession(identifier: string | number): AuthResponse {
     }
   }
 
+  const usingDefaultPassword =
+    userRow.username === 'admin' &&
+    userRow.role === 'super_admin' &&
+    verifyPassword('8520', userRow.password_hash).valid
+
   const { password_hash: _, subscription_sig: __, ...safeUser } = userRow
 
   createSessionInMemory(safeUser, sessionToken)
@@ -157,7 +168,8 @@ export function verifySession(identifier: string | number): AuthResponse {
   return {
     success: true,
     user: safeUser,
-    token: sessionToken
+    token: sessionToken,
+    usingDefaultPassword
   }
 }
 

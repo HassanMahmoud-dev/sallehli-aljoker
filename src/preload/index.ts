@@ -172,6 +172,7 @@ const api = {
     invoice_type?: string
     customer_id?: number | null
     only_with_remaining?: boolean
+    limit?: number
   }) => invoke('sales:list', filters),
   saveSalesInvoice: (
     data: Partial<SalesInvoice> & { items: SalesItem[]; recordInTreasury?: boolean }
@@ -326,6 +327,7 @@ const api = {
     status?: string
     service_type?: string
     technician_id?: number | null
+    limit?: number
   }) => invoke('tickets:list', filters),
   saveTicket: (
     data: Partial<MaintenanceTicket> & {

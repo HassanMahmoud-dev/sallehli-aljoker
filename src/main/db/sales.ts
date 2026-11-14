@@ -1,5 +1,12 @@
 import { db, runTransaction } from './connection'
-import { roundMoney, parseJsonObject, stringifyExtraData, getLocalDateString, generateNextNumber } from './utils'
+import {
+  roundMoney,
+  parseJsonObject,
+  stringifyExtraData,
+  getLocalDateString,
+  generateNextNumber,
+  queryRowsInBatches
+} from './utils'
 import { normalizeProductRow, syncProductQtyFromChildren } from './products'
 import { isDemoDataHidden } from './demo'
 import { getBusinessState } from './business'
@@ -25,11 +32,27 @@ export function normalizeSalesInvoiceRow(row: Record<string, unknown>): SalesInv
   }
 }
 
+function normalizeSalesItemRow(it: Record<string, unknown>): SalesItem {
+  return {
+    ...(it as unknown as SalesItem),
+    pack_size: Math.max(1, Number(it.pack_size || 1)),
+    quantity: Number(it.quantity || 1),
+    deducted_pieces_qty: Number(it.deducted_pieces_qty || 1),
+    unit_cost: roundMoney(it.unit_cost),
+    unit_price: roundMoney(it.unit_price),
+    discount: roundMoney(it.discount),
+    total_price: roundMoney(it.total_price),
+    warranty_months: Number(it.warranty_months || 0),
+    returned_qty: Number(it.returned_qty || 0)
+  }
+}
+
 export function listSalesInvoices(filters?: {
   search?: string
   invoice_type?: string
   customer_id?: number | null
   only_with_remaining?: boolean
+  limit?: number
 }): SalesInvoice[] {
   const q = `%${(filters?.search || '').trim()}%`
   let sql = `
@@ -67,29 +90,55 @@ export function listSalesInvoices(filters?: {
   }
 
   sql += ' ORDER BY si.id DESC'
+  const limitNum = Number(filters?.limit)
+  if (Number.isFinite(limitNum) && limitNum > 0) {
+    sql += ' LIMIT ?'
+    params.push(Math.floor(limitNum))
+  }
+
   const rawRows = db.prepare(sql).all(...params) as Record<string, unknown>[]
   const invoices = rawRows.map(normalizeSalesInvoiceRow)
+  if (invoices.length === 0) return invoices
 
-  const getItemsStmt = db.prepare('SELECT * FROM sales_items WHERE invoice_id = ? ORDER BY id ASC')
-  const getPaymentsStmt = db.prepare(
-    'SELECT * FROM sales_payments WHERE invoice_id = ? ORDER BY id ASC'
+  const invoiceIds = invoices.map((inv) => inv.id)
+  const rawItems = queryRowsInBatches<Record<string, unknown>>(
+    db,
+    invoiceIds,
+    (placeholders) =>
+      `SELECT * FROM sales_items WHERE invoice_id IN (${placeholders}) ORDER BY id ASC`
   )
+  const itemsByInvoiceId = new Map<number, SalesItem[]>()
+  for (const it of rawItems) {
+    const invId = Number(it.invoice_id)
+    const normalized = normalizeSalesItemRow(it)
+    const bucket = itemsByInvoiceId.get(invId)
+    if (bucket) {
+      bucket.push(normalized)
+    } else {
+      itemsByInvoiceId.set(invId, [normalized])
+    }
+  }
+
+  const allPayments = queryRowsInBatches<SalesPayment>(
+    db,
+    invoiceIds,
+    (placeholders) =>
+      `SELECT * FROM sales_payments WHERE invoice_id IN (${placeholders}) ORDER BY id ASC`
+  )
+  const paymentsByInvoiceId = new Map<number, SalesPayment[]>()
+  for (const pay of allPayments) {
+    const invId = Number(pay.invoice_id)
+    const bucket = paymentsByInvoiceId.get(invId)
+    if (bucket) {
+      bucket.push(pay)
+    } else {
+      paymentsByInvoiceId.set(invId, [pay])
+    }
+  }
 
   for (const inv of invoices) {
-    const rawItems = getItemsStmt.all(inv.id) as Record<string, unknown>[]
-    inv.items = rawItems.map((it) => ({
-      ...(it as unknown as SalesItem),
-      pack_size: Math.max(1, Number(it.pack_size || 1)),
-      quantity: Number(it.quantity || 1),
-      deducted_pieces_qty: Number(it.deducted_pieces_qty || 1),
-      unit_cost: roundMoney(it.unit_cost),
-      unit_price: roundMoney(it.unit_price),
-      discount: roundMoney(it.discount),
-      total_price: roundMoney(it.total_price),
-      warranty_months: Number(it.warranty_months || 0),
-      returned_qty: Number(it.returned_qty || 0)
-    }))
-    inv.payments = getPaymentsStmt.all(inv.id) as SalesPayment[]
+    inv.items = itemsByInvoiceId.get(inv.id) || []
+    inv.payments = paymentsByInvoiceId.get(inv.id) || []
   }
 
   return invoices
@@ -104,18 +153,7 @@ export function getSalesInvoiceById(id: number): SalesInvoice | undefined {
   const rawItems = db
     .prepare('SELECT * FROM sales_items WHERE invoice_id = ? ORDER BY id ASC')
     .all(inv.id) as Record<string, unknown>[]
-  inv.items = rawItems.map((it) => ({
-    ...(it as unknown as SalesItem),
-    pack_size: Math.max(1, Number(it.pack_size || 1)),
-    quantity: Number(it.quantity || 1),
-    deducted_pieces_qty: Number(it.deducted_pieces_qty || 1),
-    unit_cost: roundMoney(it.unit_cost),
-    unit_price: roundMoney(it.unit_price),
-    discount: roundMoney(it.discount),
-    total_price: roundMoney(it.total_price),
-    warranty_months: Number(it.warranty_months || 0),
-    returned_qty: Number(it.returned_qty || 0)
-  }))
+  inv.items = rawItems.map(normalizeSalesItemRow)
   inv.payments = db
     .prepare('SELECT * FROM sales_payments WHERE invoice_id = ? ORDER BY id ASC')
     .all(inv.id) as SalesPayment[]

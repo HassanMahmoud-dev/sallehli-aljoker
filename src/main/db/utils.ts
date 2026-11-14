@@ -103,4 +103,23 @@ export function generateNextNumber(
   return candidate
 }
 
+/** Executes a parameterized `IN (...)` query in bounded chunks to avoid SQLite parameter limits and N+1 loops. */
+export function queryRowsInBatches<T>(
+  db: { prepare: (sql: string) => { all: (...args: any[]) => any[] } },
+  ids: number[],
+  buildSql: (placeholders: string) => string,
+  chunkSize = 500
+): T[] {
+  if (!ids.length) return []
+  const uniqueIds = Array.from(new Set(ids))
+  const results: T[] = []
+  for (let i = 0; i < uniqueIds.length; i += chunkSize) {
+    const chunk = uniqueIds.slice(i, i + chunkSize)
+    const placeholders = chunk.map(() => '?').join(', ')
+    const rows = db.prepare(buildSql(placeholders)).all(...chunk) as T[]
+    results.push(...rows)
+  }
+  return results
+}
+
 

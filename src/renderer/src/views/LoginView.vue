@@ -60,7 +60,8 @@ async function handleLogin(): Promise<void> {
         res.user,
         res.subscriptionStatus?.daysRemaining ?? null,
         rememberMe.value,
-        res.token
+        res.token,
+        res.usingDefaultPassword
       )
       await appStore.loadSettings()
       swalSuccess(`مرحباً بك، ${res.user.full_name}`)

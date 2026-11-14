@@ -25,6 +25,11 @@ const LARGE_PAYLOAD_CHANNELS = new Set([
   'parts:save',
   'technicians:save'
 ])
+const HOST_ONLY_DIALOG_CHANNELS = new Set([
+  'backup:restore',
+  'backup:chooseDir',
+  'update:installLocal'
+])
 
 const LOGIN_WINDOW_MS = 60 * 1000
 const LOGIN_MAX_FAILURES = 10
@@ -444,6 +449,26 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       // If token provided separately in body, ensure args[0] is { _token: token }
       if (body?.token && (!args.length || typeof args[0] !== 'object' || !('_token' in (args[0] || {})))) {
         args = [{ _token: body.token }, ...args]
+      }
+
+      if (HOST_ONLY_DIALOG_CHANNELS.has(channel)) {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: 'هذه العملية تتطلب فتح نافذة ملفات النظام وهي متاحة فقط من البرنامج الرئيسي على جهاز السيرفر.'
+          })
+        )
+        return
+      }
+
+      if (channel === 'attachments:open') {
+        args = args.map((arg: unknown) => {
+          if (arg && typeof arg === 'object' && !Array.isArray(arg) && 'openExternal' in arg) {
+            return { ...(arg as Record<string, unknown>), openExternal: false }
+          }
+          return arg
+        })
       }
 
       const handler = rpcHandlers[channel]

@@ -37,7 +37,10 @@ import {
   X,
   Pause,
   CheckCircle2,
-  Menu
+  Menu,
+  PanelRightClose,
+  PanelRightOpen,
+  ShieldAlert
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -45,6 +48,16 @@ const route = useRoute()
 const appStore = useAppStore()
 const { t } = useTerms()
 const mobileMenuOpen = ref(false)
+const sidebarCollapsed = ref<boolean>(localStorage.getItem('sallehli_sidebar_collapsed') === '1')
+
+function toggleSidebar(): void {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  try {
+    localStorage.setItem('sallehli_sidebar_collapsed', sidebarCollapsed.value ? '1' : '0')
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 watch(
   () => route.fullPath,
@@ -297,8 +310,9 @@ onUnmounted(() => {
       <!-- Right Sidebar Navigation -->
       <aside
         :class="[
-          'no-print w-68 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 flex flex-col shrink-0 h-full overflow-hidden fixed inset-y-0 right-0 z-50 transition-transform duration-200 lg:static lg:translate-x-0',
-          mobileMenuOpen ? 'translate-x-0 shadow-2xl' : 'translate-x-full lg:shadow-none'
+          'no-print w-68 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 flex flex-col shrink-0 h-full overflow-hidden fixed inset-y-0 right-0 z-50 transition-all duration-200 lg:static',
+          mobileMenuOpen ? 'translate-x-0 shadow-2xl' : 'translate-x-full lg:translate-x-0 lg:shadow-none',
+          sidebarCollapsed ? 'lg:w-0 lg:border-l-0 lg:overflow-hidden lg:opacity-0 lg:pointer-events-none' : 'lg:w-68'
         ]"
       >
         <!-- Brand Header -->
@@ -328,10 +342,18 @@ onUnmounted(() => {
           <button
             type="button"
             @click="mobileMenuOpen = false"
-            class="lg:hidden p-1.5 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+            class="lg:hidden p-1.5 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
             title="إغلاق القائمة"
           >
             <X class="w-5 h-5" />
+          </button>
+          <button
+            type="button"
+            @click="toggleSidebar"
+            class="hidden lg:flex p-1.5 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-100 transition cursor-pointer shrink-0"
+            title="إغلاق القائمة الجانبية"
+          >
+            <PanelRightClose class="w-5 h-5" />
           </button>
         </div>
 
@@ -492,6 +514,32 @@ onUnmounted(() => {
 
       <!-- Main Viewport -->
       <main class="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4">
+        <!-- Desktop Expand Sidebar Header Bar (when collapsed) -->
+        <div
+          v-if="sidebarCollapsed"
+          class="no-print hidden lg:flex items-center justify-between pb-3 mb-2 border-b border-slate-200 dark:border-slate-800"
+        >
+          <button
+            type="button"
+            @click="toggleSidebar"
+            class="flex items-center gap-2 px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 font-bold text-xs shadow-xs transition cursor-pointer"
+            title="إظهار القائمة الجانبية"
+          >
+            <PanelRightOpen class="w-4 h-4 text-blue-600" />
+            <span>إظهار القائمة الجانبية</span>
+          </button>
+          <div class="flex items-center gap-2">
+            <span class="font-black text-sm text-slate-900 dark:text-white truncate">
+              {{ appStore.businessProfile.appName }}
+            </span>
+            <span
+              class="px-1.5 py-0.5 rounded-md bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 font-mono text-[10px] font-bold"
+            >
+              {{ appStore.appVersion }}
+            </span>
+          </div>
+        </div>
+
         <!-- Mobile / Tablet Header Bar -->
         <div
           class="no-print flex items-center justify-between lg:hidden pb-3 mb-2 border-b border-slate-200 dark:border-slate-800"
@@ -506,6 +554,38 @@ onUnmounted(() => {
           </button>
           <div class="font-black text-sm text-slate-900 dark:text-white truncate">
             {{ appStore.businessProfile.appName }}
+          </div>
+        </div>
+
+        <!-- Default Super Admin Password Warning Banner -->
+        <div
+          v-if="appStore.isSuperAdmin && appStore.usingDefaultAdminPassword && !appStore.defaultPasswordBannerDismissed"
+          class="no-print p-3.5 rounded-2xl bg-amber-600 text-white shadow-lg flex flex-wrap items-center justify-between gap-3 text-xs"
+        >
+          <div class="flex items-center gap-2.5">
+            <ShieldAlert class="w-5 h-5 text-amber-100 shrink-0" />
+            <div>
+              <span class="font-black">تنبيه أمان: حساب السوبر أدمن (admin) لا يزال يستخدم كلمة المرور الافتراضية!</span>
+              <span class="text-amber-100 mr-2">
+                يُنصح بتغيير كلمة المرور فوراً لحماية النظام خاصة عند تفعيل وضع الشبكة المحلية (LAN).
+              </span>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <router-link
+              to="/program-settings?tab=users"
+              class="px-3.5 py-1.5 rounded-xl bg-white text-amber-900 hover:bg-amber-50 font-black transition cursor-pointer"
+            >
+              تغيير كلمة المرور الآن
+            </router-link>
+            <button
+              type="button"
+              @click="appStore.dismissDefaultPasswordBanner"
+              class="p-1.5 rounded-lg hover:bg-white/15 text-white/80 hover:text-white cursor-pointer"
+              title="إخفاء التنبيه مؤقتاً"
+            >
+              <X class="w-4 h-4" />
+            </button>
           </div>
         </div>
 

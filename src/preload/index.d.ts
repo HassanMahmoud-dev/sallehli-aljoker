@@ -171,6 +171,7 @@ export interface IElectronAPI {
     invoice_type?: string
     customer_id?: number | null
     only_with_remaining?: boolean
+    limit?: number
   }) => Promise<SalesInvoice[]>
   saveSalesInvoice: (
     data: Partial<SalesInvoice> & { items: SalesItem[]; recordInTreasury?: boolean }
@@ -346,6 +347,7 @@ export interface IElectronAPI {
     status?: string
     service_type?: string
     technician_id?: number | null
+    limit?: number
   }) => Promise<MaintenanceTicket[]>
   saveTicket: (
     data: Partial<MaintenanceTicket> & {

@@ -1,6 +1,11 @@
 import { existsSync } from 'fs'
 import { getDb, runTransaction } from './connection'
-import { readSetting, writeSetting, createPreSwitchBackup } from './settings'
+import {
+  readSetting,
+  writeSetting,
+  createPreSwitchBackup,
+  resolveConfiguredBusinessType
+} from './settings'
 import { createTables } from './schema/tables'
 import { runMigrations } from './schema/migrations'
 import { seedDefaults } from './schema/seeds'
@@ -91,13 +96,15 @@ export function getBusinessState(): BusinessState {
     ).cnt
 
     if (dataCheck.empty && otherUsersCount === 0) {
+      const initialType = resolveConfiguredBusinessType()
+      const initialProfile = getBusinessProfile(initialType) || APPLIANCES_PROFILE
       return {
-        type: 'appliances',
+        type: initialType,
         locked: false,
         needsSetup: true,
-        appName: 'صلحلي',
+        appName: initialProfile.appName,
         licensedModules: [],
-        effectiveModules: APPLIANCES_PROFILE.modules
+        effectiveModules: initialProfile.modules
       }
     }
 
