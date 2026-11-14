@@ -340,3 +340,67 @@ export function switchBusinessType(
 
   return getBusinessState()
 }
+
+/**
+ * Automatically activates the business activity assigned to an owner user upon login/session verification.
+ */
+export function activateOwnerBusinessType(type: BusinessType, userId: number): BusinessState {
+  const validTypes: BusinessType[] = ['appliances', 'hearing_aids']
+  if (!validTypes.includes(type)) {
+    return getBusinessState()
+  }
+
+  const current = getBusinessState()
+  if (current.locked || current.needsSetup || current.type === type) {
+    return current
+  }
+
+  const db = getDb()
+  const fromType = current.type
+
+  runTransaction(() => {
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('business_type', type)
+    writeBusinessSignatures(type)
+    createTables(type)
+    runMigrations()
+    seedDefaults(type)
+
+    const curName = readSetting('center_name')
+    if (type === 'hearing_aids' && (!curName || curName === APPLIANCES_PROFILE.centerNameDefault)) {
+      const hearingProfile = HEARING_AIDS_PROFILE
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+        'center_name',
+        hearingProfile.centerNameDefault
+      )
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+        'center_subtitle',
+        hearingProfile.centerSubtitleDefault
+      )
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+        'receipt_footer',
+        hearingProfile.receiptFooterDefault
+      )
+    } else if (type === 'appliances' && (!curName || curName === HEARING_AIDS_PROFILE.centerNameDefault)) {
+      const appProfile = APPLIANCES_PROFILE
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+        'center_name',
+        appProfile.centerNameDefault
+      )
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+        'center_subtitle',
+        appProfile.centerSubtitleDefault
+      )
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+        'receipt_footer',
+        appProfile.receiptFooterDefault
+      )
+    }
+
+    db.prepare(
+      `INSERT INTO business_audit_log (user_id, from_type, to_type, had_data, notes)
+       VALUES (?, ?, ?, 1, 'تفعيل تلقائي للنشاط المخصص لحساب مالك البرنامج عند تسجيل الدخول')`
+    ).run(userId, fromType, type)
+  })
+
+  return getBusinessState()
+}

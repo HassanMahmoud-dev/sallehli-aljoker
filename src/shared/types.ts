@@ -6,6 +6,7 @@ export interface User {
   full_name: string
   phone: string
   role: UserRole
+  business_type?: BusinessType | null
   is_active: number // 1 or 0
   subscription_start?: string | null
   subscription_end?: string | null

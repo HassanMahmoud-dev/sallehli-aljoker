@@ -17,6 +17,7 @@ export function createSystemTables(): void {
       full_name TEXT NOT NULL,
       phone TEXT DEFAULT '',
       role TEXT NOT NULL CHECK(role IN ('super_admin', 'owner')),
+      business_type TEXT DEFAULT NULL,
       is_active INTEGER NOT NULL DEFAULT 1,
       subscription_start TEXT DEFAULT NULL,
       subscription_end TEXT DEFAULT NULL,

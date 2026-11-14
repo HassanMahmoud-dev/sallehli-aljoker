@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
-import type { User, UserRole } from '@shared/types'
+import type { User, UserRole, BusinessType } from '@shared/types'
 import { USER_ROLE_LABELS } from '@renderer/constants/appliances'
 import { useAppStore } from '@renderer/stores/appStore'
 import {
@@ -33,6 +33,7 @@ const form = ref<{
   full_name: string
   phone: string
   role: UserRole
+  business_type: BusinessType | ''
   is_active: number
   notes: string
 }>({
@@ -41,9 +42,15 @@ const form = ref<{
   full_name: '',
   phone: '',
   role: 'owner',
+  business_type: '',
   is_active: 1,
   notes: ''
 })
+
+const BUSINESS_ACTIVITY_LABELS: Record<BusinessType, string> = {
+  hearing_aids: 'نشاط مركز السماعات الطبية',
+  appliances: 'نشاط مركز صيانة الأجهزة الكهربائية'
+}
 
 async function loadUsers(): Promise<void> {
   users.value = await window.api.listUsers()
@@ -57,6 +64,7 @@ function openCreateModal(): void {
     full_name: '',
     phone: '',
     role: 'owner',
+    business_type: '',
     is_active: 1,
     notes: ''
   }
@@ -76,6 +84,7 @@ function openEditModal(u: User): void {
     full_name: u.full_name,
     phone: u.phone || '',
     role: u.role,
+    business_type: u.business_type || appStore.businessType,
     is_active: u.is_active,
     notes: u.notes || ''
   }
@@ -96,6 +105,11 @@ async function handleSaveUser(): Promise<void> {
     swalError('بيانات غير مكتملة', errorMsg.value)
     return
   }
+  if (!form.value.id && form.value.role === 'owner' && !form.value.business_type) {
+    errorMsg.value = 'يرجى اختيار النشاط المخصص لصلاحية مالك البرنامج'
+    swalError('بيانات غير مكتملة', errorMsg.value)
+    return
+  }
   
 
   try {
@@ -104,7 +118,8 @@ async function handleSaveUser(): Promise<void> {
     const editedPassword = form.value.password.trim()
     await appStore.withLoading(async () => {
       await window.api.saveUser({
-        ...form.value
+        ...form.value,
+        business_type: form.value.role === 'owner' ? (form.value.business_type || null) : null
       })
       if (editedUsername === 'admin' && editedPassword) {
         if (editedPassword !== '8520') {
@@ -249,14 +264,27 @@ onMounted(loadUsers)
                 </div>
               </td>
               <td class="py-3.5 px-4">
-                <span
-                  :class="[
-                    'px-2.5 py-1 rounded-full text-[11px] font-bold',
-                    USER_ROLE_LABELS[u.role]?.badge
-                  ]"
-                >
-                  {{ USER_ROLE_LABELS[u.role]?.label }}
-                </span>
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <span
+                    :class="[
+                      'px-2.5 py-1 rounded-full text-[11px] font-bold',
+                      USER_ROLE_LABELS[u.role]?.badge
+                    ]"
+                  >
+                    {{ USER_ROLE_LABELS[u.role]?.label }}
+                  </span>
+                  <span
+                    v-if="u.role === 'owner' && u.business_type"
+                    :class="[
+                      'px-2 py-0.5 rounded-full text-[10px] font-bold',
+                      u.business_type === 'hearing_aids'
+                        ? 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/50 dark:text-cyan-300'
+                        : 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300'
+                    ]"
+                  >
+                    {{ BUSINESS_ACTIVITY_LABELS[u.business_type] }}
+                  </span>
+                </div>
               </td>
               <td class="py-3.5 px-4">
                 <span
@@ -401,6 +429,52 @@ onMounted(loadUsers)
                 <option :value="0">موقوف مؤقتاً</option>
               </select>
             </div>
+          </div>
+
+          <!-- Owner Business Activity Selection -->
+          <div
+            v-if="form.role === 'owner'"
+            class="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2"
+          >
+            <label class="block font-bold text-slate-800 dark:text-slate-100">
+              النشاط المخصص لصلاحية مالك البرنامج *
+            </label>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                :disabled="Boolean(form.id)"
+                @click="!form.id && (form.business_type = 'hearing_aids')"
+                :class="[
+                  'text-right p-3 rounded-xl border-2 transition font-bold',
+                  form.business_type === 'hearing_aids'
+                    ? 'border-cyan-500 bg-cyan-50 dark:bg-cyan-950/40 text-cyan-800 dark:text-cyan-200'
+                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300',
+                  form.id ? 'opacity-75 cursor-not-allowed' : 'cursor-pointer hover:border-cyan-400'
+                ]"
+              >
+                نشاط مركز السماعات الطبية
+              </button>
+              <button
+                type="button"
+                :disabled="Boolean(form.id)"
+                @click="!form.id && (form.business_type = 'appliances')"
+                :class="[
+                  'text-right p-3 rounded-xl border-2 transition font-bold',
+                  form.business_type === 'appliances'
+                    ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200'
+                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300',
+                  form.id ? 'opacity-75 cursor-not-allowed' : 'cursor-pointer hover:border-amber-400'
+                ]"
+              >
+                نشاط مركز صيانة الأجهزة الكهربائية
+              </button>
+            </div>
+            <p v-if="form.id" class="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
+              لا يمكن تعديل النشاط المخصص لمالك البرنامج بعد الإنشاء.
+            </p>
+            <p v-else class="text-[11px] text-slate-500 dark:text-slate-400">
+              عند تسجيل دخول هذا المالك، سيتم فتح البرنامج تلقائياً على النشاط المختار فقط.
+            </p>
           </div>
 
           <div>

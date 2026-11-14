@@ -1,7 +1,7 @@
 import { randomBytes } from 'crypto'
 import { getDb } from './connection'
 import { hashPassword, verifyPassword } from './crypto'
-import { getBusinessState } from './business'
+import { getBusinessState, activateOwnerBusinessType } from './business'
 import {
   createSessionInMemory,
   getSessionFromMemory,
@@ -9,7 +9,7 @@ import {
   invalidateUserSessionsInMemory,
   type SessionInfo
 } from '../session'
-import type { User, UserRole, LoginPayload, AuthResponse } from '../../shared/types'
+import type { User, UserRole, BusinessType, LoginPayload, AuthResponse } from '../../shared/types'
 
 /** Removes expired persistent sessions from SQLite so stale tokens cannot accumulate. */
 export function cleanupExpiredSessions(referenceIso: string = new Date().toISOString()): number {
@@ -33,7 +33,7 @@ export function loginUser(payload: LoginPayload): AuthResponse {
 
   const userRow = db
     .prepare(
-      `SELECT id, username, password_hash, full_name, phone, role, is_active,
+      `SELECT id, username, password_hash, full_name, phone, role, business_type, is_active,
               subscription_start, subscription_end, subscription_sig, notes, created_at
        FROM users WHERE username = ?`
     )
@@ -77,6 +77,13 @@ export function loginUser(payload: LoginPayload): AuthResponse {
       message:
         'لم يتم استكمال الإعداد الأولي لنشاط البرنامج بعد. يرجى الدخول بحساب السوبر أدمن أولاً لتحديد نوع النشاط.'
     }
+  }
+
+  if (
+    userRow.role === 'owner' &&
+    (userRow.business_type === 'appliances' || userRow.business_type === 'hearing_aids')
+  ) {
+    activateOwnerBusinessType(userRow.business_type, userRow.id)
   }
 
   const usingDefaultPassword =
@@ -130,7 +137,7 @@ export function verifySession(identifier: string | number): AuthResponse {
 
   const userRow = db
     .prepare(
-      `SELECT id, username, password_hash, full_name, phone, role, is_active,
+      `SELECT id, username, password_hash, full_name, phone, role, business_type, is_active,
               subscription_start, subscription_end, subscription_sig, notes, created_at
        FROM users WHERE id = ?`
     )
@@ -154,6 +161,13 @@ export function verifySession(identifier: string | number): AuthResponse {
       message:
         'لم يتم استكمال الإعداد الأولي لنشاط البرنامج بعد. يرجى الدخول بحساب السوبر أدمن أولاً لتحديد نوع النشاط.'
     }
+  }
+
+  if (
+    userRow.role === 'owner' &&
+    (userRow.business_type === 'appliances' || userRow.business_type === 'hearing_aids')
+  ) {
+    activateOwnerBusinessType(userRow.business_type, userRow.id)
   }
 
   const usingDefaultPassword =
@@ -193,7 +207,7 @@ export function resolveSession(token?: string | null): SessionInfo | null {
   }
 
   const user = db
-    .prepare('SELECT id, username, full_name, phone, role, is_active FROM users WHERE id = ?')
+    .prepare('SELECT id, username, full_name, phone, role, business_type, is_active FROM users WHERE id = ?')
     .get(row.user_id) as User | undefined
 
   if (!user || !user.is_active) {
@@ -221,7 +235,7 @@ export function listUsers(): User[] {
   const db = getDb()
   return db
     .prepare(
-      `SELECT id, username, full_name, phone, role, is_active, subscription_start, subscription_end, notes, created_at
+      `SELECT id, username, full_name, phone, role, business_type, is_active, subscription_start, subscription_end, notes, created_at
        FROM users ORDER BY id ASC`
     )
     .all() as User[]
@@ -239,8 +253,16 @@ export function saveUser(
 
   if (data.id) {
     const existing = db
-      .prepare('SELECT id, username, role, is_active FROM users WHERE id = ?')
-      .get(data.id) as { id: number; username: string; role: UserRole; is_active: number } | undefined
+      .prepare('SELECT id, username, role, business_type, is_active FROM users WHERE id = ?')
+      .get(data.id) as
+      | {
+          id: number
+          username: string
+          role: UserRole
+          business_type: BusinessType | null
+          is_active: number
+        }
+      | undefined
 
     if (!existing) {
       throw new Error('المستخدم المطلوب تعديله غير موجود.')
@@ -260,13 +282,25 @@ export function saveUser(
       role = existing.role
     }
 
+    // Owner's assigned business_type cannot be modified after creation
+    let resolvedBusinessType: BusinessType | null = null
+    if (role === 'owner') {
+      if (existing.business_type === 'appliances' || existing.business_type === 'hearing_aids') {
+        resolvedBusinessType = existing.business_type
+      } else if (data.business_type === 'appliances' || data.business_type === 'hearing_aids') {
+        resolvedBusinessType = data.business_type
+      } else {
+        resolvedBusinessType = getBusinessState().type
+      }
+    }
+
     const hasNewPassword = Boolean(data.password && data.password.trim() !== '')
 
     if (hasNewPassword) {
       const hashed = hashPassword(data.password!.trim())
       db.prepare(
         `UPDATE users SET username = ?, password_hash = ?, full_name = ?, phone = ?, role = ?,
-         is_active = ?, notes = ?
+         business_type = ?, is_active = ?, notes = ?
          WHERE id = ?`
       ).run(
         username,
@@ -274,6 +308,7 @@ export function saveUser(
         data.full_name?.trim(),
         data.phone || '',
         role,
+        resolvedBusinessType,
         data.is_active ?? 1,
         data.notes || '',
         data.id
@@ -281,13 +316,14 @@ export function saveUser(
     } else {
       db.prepare(
         `UPDATE users SET username = ?, full_name = ?, phone = ?, role = ?,
-         is_active = ?, notes = ?
+         business_type = ?, is_active = ?, notes = ?
          WHERE id = ?`
       ).run(
         username,
         data.full_name?.trim(),
         data.phone || '',
         role,
+        resolvedBusinessType,
         data.is_active ?? 1,
         data.notes || '',
         data.id
@@ -308,7 +344,7 @@ export function saveUser(
 
     return db
       .prepare(
-        'SELECT id, username, full_name, phone, role, is_active, notes, created_at FROM users WHERE id = ?'
+        'SELECT id, username, full_name, phone, role, business_type, is_active, notes, created_at FROM users WHERE id = ?'
       )
       .get(data.id) as User
   } else {
@@ -317,11 +353,19 @@ export function saveUser(
       throw new Error('فقط السوبر أدمن يمكنه إنشاء حسابات مستخدمين جديدة.')
     }
 
+    let resolvedBusinessType: BusinessType | null = null
+    if (role === 'owner') {
+      if (data.business_type !== 'appliances' && data.business_type !== 'hearing_aids') {
+        throw new Error('يرجى تحديد نوع النشاط المخصص لمالك البرنامج.')
+      }
+      resolvedBusinessType = data.business_type
+    }
+
     const hashed = hashPassword(data.password?.trim() || '1234')
     const info = db
       .prepare(
-        `INSERT INTO users (username, password_hash, full_name, phone, role, is_active, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO users (username, password_hash, full_name, phone, role, business_type, is_active, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         username,
@@ -329,12 +373,13 @@ export function saveUser(
         data.full_name?.trim(),
         data.phone || '',
         role,
+        resolvedBusinessType,
         data.is_active ?? 1,
         data.notes || ''
       )
     return db
       .prepare(
-        'SELECT id, username, full_name, phone, role, is_active, notes, created_at FROM users WHERE id = ?'
+        'SELECT id, username, full_name, phone, role, business_type, is_active, notes, created_at FROM users WHERE id = ?'
       )
       .get(Number(info.lastInsertRowid)) as User
   }

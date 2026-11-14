@@ -235,6 +235,14 @@ export function runMigrations(): void {
     if (usersInfo.sql) {
       db.exec("UPDATE users SET role = 'owner' WHERE role NOT IN ('super_admin', 'owner');")
     }
+    ensureColumn('users', 'business_type', 'TEXT DEFAULT NULL')
+    const currentBtRow = db
+      .prepare("SELECT value FROM settings WHERE key = 'business_type'")
+      .get() as { value: string } | undefined
+    const defaultOwnerBt = currentBtRow?.value === 'hearing_aids' ? 'hearing_aids' : 'appliances'
+    db.prepare(
+      "UPDATE users SET business_type = ? WHERE role = 'owner' AND (business_type IS NULL OR business_type = '')"
+    ).run(defaultOwnerBt)
 
     // 2. Ensure new image & custom field extra_data columns across tables
     ensureColumn('elect_spare_parts', 'image_base64', "TEXT DEFAULT ''")

@@ -98,8 +98,16 @@ label.label-required::after {
 }
 
 /* Page Navigation Transitions & Gradual Content Reveal */
+/* Note: Do NOT set will-change: transform on .page-transition-wrapper permanently,
+   as it creates a containing block that traps position: fixed modals inside <main>. */
 .page-transition-wrapper {
   width: 100%;
+}
+
+.page-fade-enter-active,
+.page-fade-leave-active,
+.page-reveal-enter-active,
+.page-reveal-leave-active {
   will-change: opacity, transform;
 }
 
