@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog } from 'electron'
+import { app, BrowserWindow, dialog, net } from 'electron'
 import { join } from 'path'
 import {
   createReadStream,
@@ -313,10 +313,184 @@ function resolveUpdateEndpoint(rawInput: string): {
   }
 }
 
-function fetchTextWithRedirects(url: string, maxRedirects = 5): Promise<string> {
+class UpdateProtocolError extends Error {}
+
+export function sanitizeUpdateErrorMessage(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : ''
+  const upper = raw.toUpperCase()
+
+  if (
+    upper.includes('ENOTFOUND') ||
+    upper.includes('EAI_AGAIN') ||
+    upper.includes('ERR_NAME_NOT_RESOLVED') ||
+    upper.includes('ERR_INTERNET_DISCONNECTED') ||
+    upper.includes('ERR_NETWORK_CHANGED') ||
+    upper.includes('EHOSTUNREACH') ||
+    upper.includes('ENETUNREACH')
+  ) {
+    return 'تعذر الاتصال بخادم التحديثات، يرجى التأكد من اتصال الإنترنت والمحاولة مرة أخرى.'
+  }
+
+  if (upper.includes('ETIMEDOUT') || upper.includes('ERR_TIMED_OUT') || upper.includes('ESOCKETTIMEDOUT')) {
+    return 'انتهت مهلة الاتصال بخادم التحديثات، يرجى التحقق من اتصال الإنترنت والمحاولة مرة أخرى.'
+  }
+
+  if (
+    upper.includes('ECONNREFUSED') ||
+    upper.includes('ECONNRESET') ||
+    upper.includes('ERR_CONNECTION_') ||
+    upper.includes('CERT_') ||
+    upper.includes('ERR_CERT_') ||
+    upper.includes('UNABLE_TO_VERIFY')
+  ) {
+    return 'تعذر إنشاء اتصال آمن بخادم التحديثات حالياً، يرجى المحاولة مرة أخرى بعد قليل.'
+  }
+
+  if (!raw) return fallback
+
+  const cleaned = raw
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\b(?:[a-z0-9-]+\.)*github(?:usercontent)?\.com\b/gi, 'خادم التحديثات')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return cleaned || fallback
+}
+
+function resolveTrustedRedirectUrl(rawLocation: string, baseUrl: string, maxRedirects: number): string {
+  if (maxRedirects <= 0) {
+    throw new UpdateProtocolError('عدد كبير من عمليات إعادة التوجيه.')
+  }
+  const nextUrl = new URL(rawLocation, baseUrl).toString()
+  if (!isTrustedUpdateUrl(nextUrl)) {
+    throw new UpdateProtocolError('تم رفض إعادة التوجيه إلى نطاق غير موثوق أو غير مشفر.')
+  }
+  return nextUrl
+}
+
+function getMetadataHeaders(): Record<string, string> {
+  return {
+    'User-Agent': `Sallehli-Updater/${app.getVersion()}`,
+    Accept: 'application/vnd.github+json, application/json, text/plain, */*'
+  }
+}
+
+function fetchTextViaElectronNet(url: string, maxRedirects = 5): Promise<string> {
   if (!isTrustedUpdateUrl(url)) {
     return Promise.reject(
-      new Error('رابط التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من خادم التحديثات الرسمي.')
+      new UpdateProtocolError('رابط التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من خادم التحديثات الرسمي.')
+    )
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finishError = (err: unknown): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(err instanceof Error ? err : new Error(String(err)))
+    }
+
+    const request = net.request({ method: 'GET', url, redirect: 'manual' })
+    const headers = getMetadataHeaders()
+    for (const [k, v] of Object.entries(headers)) {
+      request.setHeader(k, v)
+    }
+
+    const timer = setTimeout(() => {
+      try {
+        request.abort()
+      } catch {
+        // Ignore
+      }
+      finishError(new Error('ETIMEDOUT'))
+    }, 15000)
+
+    request.on('redirect', (_statusCode, _method, redirectUrl) => {
+      try {
+        request.abort()
+      } catch {
+        // Ignore
+      }
+      try {
+        const nextUrl = resolveTrustedRedirectUrl(redirectUrl, url, maxRedirects)
+        settled = true
+        clearTimeout(timer)
+        fetchTextViaElectronNet(nextUrl, maxRedirects - 1).then(resolve, reject)
+      } catch (err) {
+        finishError(err)
+      }
+    })
+
+    request.on('response', (response) => {
+      const code = response.statusCode
+      const locationHeader = response.headers['location']
+      const location = Array.isArray(locationHeader) ? locationHeader[0] : locationHeader
+      if (code && [301, 302, 303, 307, 308].includes(code) && location) {
+        try {
+          const nextUrl = resolveTrustedRedirectUrl(location, url, maxRedirects)
+          settled = true
+          clearTimeout(timer)
+          fetchTextViaElectronNet(nextUrl, maxRedirects - 1).then(resolve, reject)
+        } catch (err) {
+          finishError(err)
+        }
+        return
+      }
+
+      if (code === 404) {
+        finishError(new UpdateProtocolError('لم يتم العثور على تحديثات متاحة على الخادم حالياً.'))
+        return
+      }
+
+      if (!code || code < 200 || code >= 300) {
+        finishError(new UpdateProtocolError(`فشل الاتصال بخادم التحديثات (كود الحالة: ${code})`))
+        return
+      }
+
+      const chunks: Buffer[] = []
+      let totalBytes = 0
+      const maxMetadataBytes = 2 * 1024 * 1024
+
+      response.on('data', (chunk: Buffer) => {
+        if (settled) return
+        totalBytes += chunk.length
+        if (totalBytes > maxMetadataBytes) {
+          try {
+            request.abort()
+          } catch {
+            // Ignore
+          }
+          finishError(new UpdateProtocolError('استجابة بيانات التحديث أكبر من الحد المسموح.'))
+          return
+        }
+        chunks.push(chunk)
+      })
+
+      response.on('end', () => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(Buffer.concat(chunks).toString('utf8'))
+      })
+
+      response.on('error', (err: Error) => {
+        finishError(err)
+      })
+    })
+
+    request.on('error', (err) => {
+      finishError(err)
+    })
+
+    request.end()
+  })
+}
+
+function fetchTextViaNodeHttps(url: string, maxRedirects = 5): Promise<string> {
+  if (!isTrustedUpdateUrl(url)) {
+    return Promise.reject(
+      new UpdateProtocolError('رابط التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من خادم التحديثات الرسمي.')
     )
   }
 
@@ -324,10 +498,7 @@ function fetchTextWithRedirects(url: string, maxRedirects = 5): Promise<string> 
     const req = https.get(
       url,
       {
-        headers: {
-          'User-Agent': `Sallehli-Updater/${app.getVersion()}`,
-          Accept: 'application/vnd.github+json, application/json, text/plain, */*'
-        },
+        headers: getMetadataHeaders(),
         timeout: 15000
       },
       (res) => {
@@ -336,36 +507,25 @@ function fetchTextWithRedirects(url: string, maxRedirects = 5): Promise<string> 
           [301, 302, 303, 307, 308].includes(res.statusCode) &&
           res.headers.location
         ) {
-          if (maxRedirects <= 0) {
-            res.resume()
-            reject(new Error('عدد كبير من عمليات إعادة التوجيه (Redirects).'))
-            return
-          }
-          const nextUrl = new URL(res.headers.location, url).toString()
           res.resume()
-          if (!isTrustedUpdateUrl(nextUrl)) {
-            reject(new Error('تم رفض إعادة التوجيه إلى نطاق غير موثوق أو غير مشفر.'))
-            return
+          try {
+            const nextUrl = resolveTrustedRedirectUrl(res.headers.location, url, maxRedirects)
+            fetchTextViaNodeHttps(nextUrl, maxRedirects - 1).then(resolve, reject)
+          } catch (err) {
+            reject(err)
           }
-          fetchTextWithRedirects(nextUrl, maxRedirects - 1)
-            .then(resolve)
-            .catch(reject)
           return
         }
 
         if (res.statusCode === 404) {
           res.resume()
-          reject(
-            new Error(
-              'لم يتم العثور على إصدارات منشورة (Releases) في هذا الرابط أو أن المستودع خاص (Private).'
-            )
-          )
+          reject(new UpdateProtocolError('لم يتم العثور على تحديثات متاحة على الخادم حالياً.'))
           return
         }
 
         if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
           res.resume()
-          reject(new Error(`فشل الاتصال بخادم التحديثات (كود الحالة: ${res.statusCode})`))
+          reject(new UpdateProtocolError(`فشل الاتصال بخادم التحديثات (كود الحالة: ${res.statusCode})`))
           return
         }
 
@@ -377,7 +537,7 @@ function fetchTextWithRedirects(url: string, maxRedirects = 5): Promise<string> 
           totalBytes += Buffer.byteLength(chunk, 'utf8')
           if (totalBytes > maxMetadataBytes) {
             res.destroy()
-            reject(new Error('استجابة بيانات التحديث أكبر من الحد المسموح.'))
+            reject(new UpdateProtocolError('استجابة بيانات التحديث أكبر من الحد المسموح.'))
             return
           }
           rawData += chunk
@@ -390,13 +550,50 @@ function fetchTextWithRedirects(url: string, maxRedirects = 5): Promise<string> 
 
     req.on('timeout', () => {
       req.destroy()
-      reject(new Error('انتهت مهلة الاتصال بالخادم، يرجى التأكد من اتصال الإنترنت.'))
+      reject(new Error('ETIMEDOUT'))
     })
 
     req.on('error', (err) => {
-      reject(new Error(`تعذر الاتصال بالإنترنت: ${err.message}`))
+      reject(err)
     })
   })
+}
+
+async function fetchTextWithRedirects(url: string, maxRedirects = 5): Promise<string> {
+  const canUseElectronNet = Boolean(app?.isReady?.() && typeof net?.request === 'function')
+  if (canUseElectronNet) {
+    try {
+      return await fetchTextViaElectronNet(url, maxRedirects)
+    } catch (electronErr) {
+      if (electronErr instanceof UpdateProtocolError) {
+        throw electronErr
+      }
+      try {
+        return await fetchTextViaNodeHttps(url, maxRedirects)
+      } catch (nodeErr) {
+        throw new Error(
+          sanitizeUpdateErrorMessage(
+            nodeErr || electronErr,
+            'تعذر الاتصال بخادم التحديثات، يرجى التأكد من اتصال الإنترنت والمحاولة مرة أخرى.'
+          )
+        )
+      }
+    }
+  }
+
+  try {
+    return await fetchTextViaNodeHttps(url, maxRedirects)
+  } catch (err) {
+    if (err instanceof UpdateProtocolError) {
+      throw err
+    }
+    throw new Error(
+      sanitizeUpdateErrorMessage(
+        err,
+        'تعذر الاتصال بخادم التحديثات، يرجى التأكد من اتصال الإنترنت والمحاولة مرة أخرى.'
+      )
+    )
+  }
 }
 
 export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCheckResult> {
@@ -602,7 +799,7 @@ export async function checkForOnlineUpdate(customUrl?: string): Promise<UpdateCh
       success: false,
       updateAvailable: false,
       currentVersion,
-      message: err instanceof Error ? err.message : 'حدث خطأ أثناء التحقق من التحديثات.'
+      message: sanitizeUpdateErrorMessage(err, 'حدث خطأ أثناء التحقق من التحديثات.')
     }
   }
 }
@@ -1130,7 +1327,83 @@ export async function applyDownloadedUpdate(): Promise<{
   }
 }
 
-function downloadFileWithResume(
+function createDownloadTracker(
+  startBytes: number,
+  totalBytes: number,
+  onProgress: (payload: UpdateProgressPayload) => void
+): { onChunk: (byteLength: number) => void; getTransferred: () => number; onCompleted: () => void } {
+  let transferredBytes = startBytes
+  const startTimeMs = Date.now()
+  let lastEmitMs = 0
+  let lastSampleMs = startTimeMs
+  let lastSampleBytes = startBytes
+  let smoothedSpeed = 0
+
+  return {
+    onChunk(byteLength: number): void {
+      transferredBytes += byteLength
+      const nowMs = Date.now()
+      const sampleDtSec = (nowMs - lastSampleMs) / 1000
+
+      if (sampleDtSec >= 0.25) {
+        const instantSpeed = (transferredBytes - lastSampleBytes) / sampleDtSec
+        smoothedSpeed =
+          smoothedSpeed > 0 ? smoothedSpeed * 0.65 + instantSpeed * 0.35 : instantSpeed
+        lastSampleMs = nowMs
+        lastSampleBytes = transferredBytes
+      } else if (smoothedSpeed === 0) {
+        const totalElapsedSec = Math.max(0.1, (nowMs - startTimeMs) / 1000)
+        smoothedSpeed = (transferredBytes - startBytes) / totalElapsedSec
+      }
+
+      if (nowMs - lastEmitMs >= 150 || (totalBytes > 0 && transferredBytes >= totalBytes)) {
+        lastEmitMs = nowMs
+        const percent =
+          totalBytes > 0 ? Math.min(100, Math.round((transferredBytes / totalBytes) * 100)) : 0
+        const remainingBytes = Math.max(0, totalBytes - transferredBytes)
+        const remainingSeconds =
+          smoothedSpeed > 0 && totalBytes > 0
+            ? Math.max(0, Math.ceil(remainingBytes / smoothedSpeed))
+            : null
+
+        onProgress({
+          percent,
+          transferredBytes,
+          totalBytes,
+          speedBytesPerSec: Math.round(smoothedSpeed),
+          remainingSeconds,
+          status: 'downloading'
+        })
+      }
+    },
+    getTransferred(): number {
+      return transferredBytes
+    },
+    onCompleted(): void {
+      onProgress({
+        percent: 100,
+        transferredBytes,
+        totalBytes: totalBytes || transferredBytes,
+        speedBytesPerSec: 0,
+        remainingSeconds: 0,
+        status: 'completed',
+        message: 'اكتمل تحميل التحديث وهو جاهز للتثبيت.'
+      })
+    }
+  }
+}
+
+function getDownloadHeaders(existingBytes: number): Record<string, string> {
+  const headers: Record<string, string> = {
+    'User-Agent': `Sallehli-Updater/${app.getVersion()}`
+  }
+  if (existingBytes > 0) {
+    headers['Range'] = `bytes=${existingBytes}-`
+  }
+  return headers
+}
+
+function downloadViaElectronNet(
   url: string,
   partPath: string,
   onProgress: (payload: UpdateProgressPayload) => void,
@@ -1138,47 +1411,224 @@ function downloadFileWithResume(
 ): Promise<void> {
   if (!isTrustedUpdateUrl(url)) {
     return Promise.reject(
-      new Error('رابط تحميل التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من خادم التحديثات الرسمي.')
+      new UpdateProtocolError('رابط تحميل التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من خادم التحديثات الرسمي.')
+    )
+  }
+
+  return new Promise((resolve, reject) => {
+    let isAborted = false
+    let settled = false
+    const existingBytes = existsSync(partPath) ? statSync(partPath).size : 0
+    const headers = getDownloadHeaders(existingBytes)
+
+    const request = net.request({ method: 'GET', url, redirect: 'manual' })
+    for (const [k, v] of Object.entries(headers)) {
+      request.setHeader(k, v)
+    }
+
+    let idleTimer: ReturnType<typeof setTimeout> | null = null
+    const resetIdleTimer = (): void => {
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => {
+        isAborted = true
+        activeAbortFn = null
+        try {
+          request.abort()
+        } catch {
+          // Ignore
+        }
+        if (!settled) {
+          settled = true
+          reject(new Error('ETIMEDOUT'))
+        }
+      }, 30000)
+    }
+
+    const cleanupError = (err: unknown): void => {
+      if (idleTimer) clearTimeout(idleTimer)
+      activeAbortFn = null
+      if (!isAborted && !settled) {
+        settled = true
+        reject(err instanceof Error ? err : new Error(String(err)))
+      }
+    }
+
+    activeAbortFn = () => {
+      isAborted = true
+      if (idleTimer) clearTimeout(idleTimer)
+      try {
+        request.abort()
+      } catch {
+        // Ignore
+      }
+    }
+
+    resetIdleTimer()
+
+    request.on('redirect', (_statusCode, _method, redirectUrl) => {
+      if (idleTimer) clearTimeout(idleTimer)
+      try {
+        request.abort()
+      } catch {
+        // Ignore
+      }
+      try {
+        const nextUrl = resolveTrustedRedirectUrl(redirectUrl, url, maxRedirects)
+        settled = true
+        downloadViaElectronNet(nextUrl, partPath, onProgress, maxRedirects - 1).then(resolve, reject)
+      } catch (err) {
+        cleanupError(err)
+      }
+    })
+
+    request.on('response', (res) => {
+      resetIdleTimer()
+      const code = res.statusCode
+      const locationHeader = res.headers['location']
+      const location = Array.isArray(locationHeader) ? locationHeader[0] : locationHeader
+
+      if (code && [301, 302, 303, 307, 308].includes(code) && location) {
+        if (idleTimer) clearTimeout(idleTimer)
+        try {
+          const nextUrl = resolveTrustedRedirectUrl(location, url, maxRedirects)
+          settled = true
+          downloadViaElectronNet(nextUrl, partPath, onProgress, maxRedirects - 1).then(resolve, reject)
+        } catch (err) {
+          cleanupError(err)
+        }
+        return
+      }
+
+      if (code === 416) {
+        if (idleTimer) clearTimeout(idleTimer)
+        try {
+          if (existsSync(partPath)) unlinkSync(partPath)
+        } catch {
+          // Ignore
+        }
+        settled = true
+        downloadViaElectronNet(url, partPath, onProgress, maxRedirects).then(resolve, reject)
+        return
+      }
+
+      if (!code || code < 200 || code >= 300) {
+        cleanupError(new UpdateProtocolError(`فشل الاتصال بخادم التحميل (كود الحالة: ${code})`))
+        return
+      }
+
+      const isPartial = code === 206
+      const streamFlags = isPartial ? 'a' : 'w'
+      const startBytes = isPartial ? existingBytes : 0
+      const clHeader = res.headers['content-length']
+      const clRaw = Array.isArray(clHeader) ? clHeader[0] : clHeader
+      const chunkTotal = parseInt(clRaw || '0', 10)
+      const totalBytes = chunkTotal > 0 ? startBytes + chunkTotal : startBytes
+
+      const tracker = createDownloadTracker(startBytes, totalBytes, onProgress)
+      const fileStream = createWriteStream(partPath, { flags: streamFlags })
+
+      activeAbortFn = () => {
+        isAborted = true
+        if (idleTimer) clearTimeout(idleTimer)
+        try {
+          request.abort()
+        } catch {
+          // Ignore
+        }
+        try {
+          fileStream.close()
+        } catch {
+          // Ignore
+        }
+      }
+
+      res.on('data', (chunk: Buffer) => {
+        if (isAborted || settled) return
+        resetIdleTimer()
+        tracker.onChunk(chunk.length)
+        if (!fileStream.write(chunk) && typeof (res as unknown as { pause?: () => void }).pause === 'function') {
+          ;(res as unknown as { pause: () => void }).pause()
+          fileStream.once('drain', () => {
+            if (typeof (res as unknown as { resume?: () => void }).resume === 'function') {
+              ;(res as unknown as { resume: () => void }).resume()
+            }
+          })
+        }
+      })
+
+      res.on('end', () => {
+        if (idleTimer) clearTimeout(idleTimer)
+        if (!isAborted) {
+          fileStream.end()
+        }
+      })
+
+      res.on('error', (err: Error) => {
+        try {
+          fileStream.close()
+        } catch {
+          // Ignore
+        }
+        cleanupError(err)
+      })
+
+      fileStream.on('finish', () => {
+        if (idleTimer) clearTimeout(idleTimer)
+        if (isAborted || settled) return
+        activeAbortFn = null
+        fileStream.close(() => {
+          settled = true
+          tracker.onCompleted()
+          resolve()
+        })
+      })
+
+      fileStream.on('error', (err) => {
+        cleanupError(err)
+      })
+    })
+
+    request.on('error', (err) => {
+      cleanupError(err)
+    })
+
+    request.end()
+  })
+}
+
+function downloadViaNodeHttps(
+  url: string,
+  partPath: string,
+  onProgress: (payload: UpdateProgressPayload) => void,
+  maxRedirects = 5
+): Promise<void> {
+  if (!isTrustedUpdateUrl(url)) {
+    return Promise.reject(
+      new UpdateProtocolError('رابط تحميل التحديث غير موثوق؛ يُسمح فقط بروابط HTTPS من خادم التحديثات الرسمي.')
     )
   }
 
   return new Promise((resolve, reject) => {
     let isAborted = false
     const existingBytes = existsSync(partPath) ? statSync(partPath).size : 0
-
-    const headers: Record<string, string> = {
-      'User-Agent': `Sallehli-Updater/${app.getVersion()}`
-    }
-
-    if (existingBytes > 0) {
-      headers['Range'] = `bytes=${existingBytes}-`
-    }
+    const headers = getDownloadHeaders(existingBytes)
 
     const req = https.get(url, { headers, timeout: 30000 }, (res) => {
-      // Handle HTTP redirects strictly within trusted HTTPS hosts
       if (
         res.statusCode &&
         [301, 302, 303, 307, 308].includes(res.statusCode) &&
         res.headers.location
       ) {
-        if (maxRedirects <= 0) {
-          res.resume()
-          reject(new Error('عدد كبير من عمليات إعادة التوجيه أثناء التحميل.'))
-          return
-        }
-        const nextUrl = new URL(res.headers.location, url).toString()
         res.resume()
-        if (!isTrustedUpdateUrl(nextUrl)) {
-          reject(new Error('تم رفض إعادة توجيه التحميل إلى نطاق غير موثوق أو غير مشفر.'))
-          return
+        try {
+          const nextUrl = resolveTrustedRedirectUrl(res.headers.location, url, maxRedirects)
+          downloadViaNodeHttps(nextUrl, partPath, onProgress, maxRedirects - 1).then(resolve, reject)
+        } catch (err) {
+          reject(err)
         }
-        downloadFileWithResume(nextUrl, partPath, onProgress, maxRedirects - 1)
-          .then(resolve)
-          .catch(reject)
         return
       }
 
-      // Range not satisfiable (e.g. file modified or already complete)
       if (res.statusCode === 416) {
         res.resume()
         try {
@@ -1186,15 +1636,13 @@ function downloadFileWithResume(
         } catch {
           // Ignore
         }
-        downloadFileWithResume(url, partPath, onProgress, maxRedirects)
-          .then(resolve)
-          .catch(reject)
+        downloadViaNodeHttps(url, partPath, onProgress, maxRedirects).then(resolve, reject)
         return
       }
 
       if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
         res.resume()
-        reject(new Error(`فشل الاتصال بخادم التحميل (كود الحالة: ${res.statusCode})`))
+        reject(new UpdateProtocolError(`فشل الاتصال بخادم التحميل (كود الحالة: ${res.statusCode})`))
         return
       }
 
@@ -1204,13 +1652,7 @@ function downloadFileWithResume(
       const chunkTotal = parseInt(res.headers['content-length'] || '0', 10)
       const totalBytes = chunkTotal > 0 ? startBytes + chunkTotal : startBytes
 
-      let transferredBytes = startBytes
-      const startTimeMs = Date.now()
-      let lastEmitMs = 0
-      let lastSampleMs = startTimeMs
-      let lastSampleBytes = startBytes
-      let smoothedSpeed = 0
-
+      const tracker = createDownloadTracker(startBytes, totalBytes, onProgress)
       const fileStream = createWriteStream(partPath, { flags: streamFlags })
 
       activeAbortFn = () => {
@@ -1230,40 +1672,7 @@ function downloadFileWithResume(
 
       res.on('data', (chunk: Buffer) => {
         if (isAborted) return
-        transferredBytes += chunk.length
-        const nowMs = Date.now()
-        const sampleDtSec = (nowMs - lastSampleMs) / 1000
-
-        if (sampleDtSec >= 0.25) {
-          const instantSpeed = (transferredBytes - lastSampleBytes) / sampleDtSec
-          smoothedSpeed =
-            smoothedSpeed > 0 ? smoothedSpeed * 0.65 + instantSpeed * 0.35 : instantSpeed
-          lastSampleMs = nowMs
-          lastSampleBytes = transferredBytes
-        } else if (smoothedSpeed === 0) {
-          const totalElapsedSec = Math.max(0.1, (nowMs - startTimeMs) / 1000)
-          smoothedSpeed = (transferredBytes - startBytes) / totalElapsedSec
-        }
-
-        if (nowMs - lastEmitMs >= 150 || (totalBytes > 0 && transferredBytes >= totalBytes)) {
-          lastEmitMs = nowMs
-          const percent =
-            totalBytes > 0 ? Math.min(100, Math.round((transferredBytes / totalBytes) * 100)) : 0
-          const remainingBytes = Math.max(0, totalBytes - transferredBytes)
-          const remainingSeconds =
-            smoothedSpeed > 0 && totalBytes > 0
-              ? Math.max(0, Math.ceil(remainingBytes / smoothedSpeed))
-              : null
-
-          onProgress({
-            percent,
-            transferredBytes,
-            totalBytes,
-            speedBytesPerSec: Math.round(smoothedSpeed),
-            remainingSeconds,
-            status: 'downloading'
-          })
-        }
+        tracker.onChunk(chunk.length)
       })
 
       res.pipe(fileStream)
@@ -1272,15 +1681,7 @@ function downloadFileWithResume(
         if (isAborted) return
         activeAbortFn = null
         fileStream.close(() => {
-          onProgress({
-            percent: 100,
-            transferredBytes,
-            totalBytes: totalBytes || transferredBytes,
-            speedBytesPerSec: 0,
-            remainingSeconds: 0,
-            status: 'completed',
-            message: 'اكتمل تحميل التحديث وهو جاهز للتثبيت.'
-          })
+          tracker.onCompleted()
           resolve()
         })
       })
@@ -1306,7 +1707,7 @@ function downloadFileWithResume(
       activeAbortFn = null
       req.destroy()
       if (!isAborted) {
-        reject(new Error('انتهت مهلة تحميل التحديث، يمكنك المحاولة مجدداً.'))
+        reject(new Error('ETIMEDOUT'))
       }
     })
 
@@ -1317,6 +1718,42 @@ function downloadFileWithResume(
       }
     })
   })
+}
+
+async function downloadFileWithResume(
+  url: string,
+  partPath: string,
+  onProgress: (payload: UpdateProgressPayload) => void,
+  maxRedirects = 5
+): Promise<void> {
+  const canUseElectronNet = Boolean(app?.isReady?.() && typeof net?.request === 'function')
+  if (canUseElectronNet) {
+    try {
+      await downloadViaElectronNet(url, partPath, onProgress, maxRedirects)
+      return
+    } catch (electronErr) {
+      if (electronErr instanceof UpdateProtocolError || downloadState.isPaused) {
+        throw electronErr
+      }
+      try {
+        await downloadViaNodeHttps(url, partPath, onProgress, maxRedirects)
+        return
+      } catch (nodeErr) {
+        throw new Error(
+          sanitizeUpdateErrorMessage(nodeErr || electronErr, 'تعذر تحميل ملف التحديث من الخادم.')
+        )
+      }
+    }
+  }
+
+  try {
+    await downloadViaNodeHttps(url, partPath, onProgress, maxRedirects)
+  } catch (err) {
+    if (err instanceof UpdateProtocolError || downloadState.isPaused) {
+      throw err
+    }
+    throw new Error(sanitizeUpdateErrorMessage(err, 'تعذر تحميل ملف التحديث من الخادم.'))
+  }
 }
 
 export async function startOnlineUpdateDownload(
@@ -1429,7 +1866,7 @@ export async function startOnlineUpdateDownload(
     }
 
     downloadState.isDownloading = false
-    const msg = err instanceof Error ? err.message : 'فشل تحميل التحديث.'
+    const msg = sanitizeUpdateErrorMessage(err, 'فشل تحميل التحديث.')
     downloadState.lastProgress = {
       percent: 0,
       transferredBytes: 0,
