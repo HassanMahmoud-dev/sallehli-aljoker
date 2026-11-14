@@ -1,5 +1,6 @@
 import { getDb, runTransaction } from '../connection'
 import { hashPassword, isHashedPassword, signSubscription } from '../crypto'
+import { APPLIANCES_PROFILE } from '../../../shared/businessProfiles'
 
 interface TableColumnInfo {
   name: string
@@ -253,6 +254,9 @@ export function runMigrations(): void {
     ensureColumn('customer_appliances', 'purchase_date', 'TEXT DEFAULT NULL')
     ensureColumn('maintenance_tickets', 'warranty_image', "TEXT DEFAULT ''")
     ensureColumn('maintenance_tickets', 'fault_images', "TEXT DEFAULT '[]'")
+    ensureColumn('maintenance_tickets', 'customer_code', "TEXT DEFAULT ''")
+    ensureColumn('maintenance_tickets', 'workshop_percent', 'REAL NOT NULL DEFAULT 0')
+    ensureColumn('customers', 'customer_code', "TEXT DEFAULT ''")
     ensureColumn('customers', 'extra_data', "TEXT NOT NULL DEFAULT '{}'")
     ensureColumn('customer_appliances', 'extra_data', "TEXT NOT NULL DEFAULT '{}'")
     ensureColumn('maintenance_tickets', 'extra_data', "TEXT NOT NULL DEFAULT '{}'")
@@ -294,6 +298,7 @@ export function runMigrations(): void {
     ensureColumn('maintenance_tickets', 'external_vendor', "TEXT DEFAULT ''")
     ensureColumn('maintenance_tickets', 'external_sent_date', 'TEXT DEFAULT NULL')
     ensureColumn('maintenance_tickets', 'external_expected_date', 'TEXT DEFAULT NULL')
+    ensureColumn('sales_invoices', 'expected_delivery_date', 'TEXT DEFAULT NULL')
     ensureColumn('maintenance_tickets', 'external_returned_date', 'TEXT DEFAULT NULL')
     ensureColumn('maintenance_tickets', 'external_cost', 'REAL NOT NULL DEFAULT 0')
     ensureColumn('maintenance_tickets', 'external_tracking_no', "TEXT DEFAULT ''")
@@ -614,18 +619,98 @@ export function runMigrations(): void {
     }
 
     ensureIndex('customers', 'idx_customers_phone', 'phone')
+    ensureIndex('customers', 'idx_customers_name', 'name')
+    ensureIndex('customers', 'idx_customers_code', 'customer_code')
     ensureIndex('customer_appliances', 'idx_customer_appliances_customer', 'customer_id')
     ensureIndex('maintenance_tickets', 'idx_tickets_created_at', 'created_at')
     ensureIndex('maintenance_tickets', 'idx_tickets_status', 'status')
+    ensureIndex('maintenance_tickets', 'idx_tickets_status_created', 'status, created_at')
     ensureIndex('maintenance_tickets', 'idx_tickets_customer', 'customer_id')
     ensureIndex('maintenance_tickets', 'idx_tickets_technician', 'technician_id')
     ensureIndex('ticket_parts', 'idx_ticket_parts_ticket', 'ticket_id')
+    ensureIndex('inventory_movements', 'idx_inv_movements_created', 'created_at')
+    ensureIndex('inventory_movements', 'idx_inv_movements_ticket', 'ticket_id')
     ensureIndex('treasury_transactions', 'idx_treasury_created_at', 'created_at')
     ensureIndex('treasury_transactions', 'idx_treasury_type', 'transaction_type')
+    ensureIndex('treasury_transactions', 'idx_treasury_ticket', 'ticket_id')
+    ensureIndex('treasury_transactions', 'idx_treasury_sales_inv', 'sales_invoice_id')
+    ensureIndex('treasury_transactions', 'idx_treasury_purchase_inv', 'purchase_invoice_id')
+    ensureIndex('treasury_transactions', 'idx_treasury_customer', 'customer_id')
+    ensureIndex('treasury_transactions', 'idx_treasury_supplier', 'supplier_id')
     ensureIndex('sales_invoices', 'idx_sales_created_at', 'created_at')
     ensureIndex('sales_invoices', 'idx_sales_customer', 'customer_id')
+    ensureIndex('sales_invoices', 'idx_sales_status', 'status')
+    ensureIndex('sales_items', 'idx_sales_items_invoice', 'invoice_id')
+    ensureIndex('sales_items', 'idx_sales_items_product', 'product_id')
+    ensureIndex('sales_payments', 'idx_sales_payments_invoice', 'invoice_id')
+    ensureIndex('sales_payments', 'idx_sales_payments_customer', 'customer_id')
+    ensureIndex('purchase_invoices', 'idx_purchases_created_at', 'created_at')
+    ensureIndex('purchase_invoices', 'idx_purchases_supplier', 'supplier_id')
+    ensureIndex('purchase_items', 'idx_purchase_items_invoice', 'invoice_id')
+    ensureIndex('supplier_payments', 'idx_supplier_payments_supplier', 'supplier_id')
+    ensureIndex('product_variants', 'idx_product_variants_product', 'product_id')
+    ensureIndex('product_serials', 'idx_product_serials_product', 'product_id')
+    ensureIndex('product_serials', 'idx_product_serials_status', 'status')
+    ensureIndex('product_serials', 'idx_product_serials_customer', 'customer_id')
+    ensureIndex('hearing_tests', 'idx_hearing_tests_customer_date', 'customer_id, test_date')
     ensureIndex('followups', 'idx_followups_status_due', 'status, due_date')
+    ensureIndex('followups', 'idx_followups_customer', 'customer_id')
     ensureIndex('earmold_orders', 'idx_earmolds_status', 'status')
+    ensureIndex('earmold_orders', 'idx_earmolds_customer', 'customer_id')
+    ensureIndex('user_sessions', 'idx_user_sessions_expires', 'expires_at')
+    ensureIndex('product_serials', 'idx_product_serials_serial_product', 'serial_no, product_id')
+    ensureIndex('inventory_movements', 'idx_inv_movements_product', 'product_id')
+    ensureIndex('sales_invoices', 'idx_sales_status_created', 'status, created_at')
+    ensureIndex('purchase_items', 'idx_purchase_items_product', 'product_id')
+    ensureIndex('supplier_payments', 'idx_supplier_payments_created', 'created_at')
+    ensureIndex('maintenance_tickets', 'idx_tickets_number', 'ticket_number')
+    ensureIndex('elect_spare_parts', 'idx_elect_spare_parts_code', 'code')
+    ensureIndex('medicalmain_spare_parts', 'idx_medical_spare_parts_code', 'code')
+    ensureIndex('customer_appliances', 'idx_customer_appliances_serial', 'serial_number')
+
+    // 6. v1.2.2 Sync expanded Egyptian appliance brands & split part categories
+    const v122LookupsRow = db
+      .prepare("SELECT value FROM settings WHERE key = 'v122_appliances_lookups_migrated'")
+      .get() as { value?: string } | undefined
+    if (!v122LookupsRow?.value) {
+      const hasLookupsTable = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'lookup_items'")
+        .get()
+      if (hasLookupsTable) {
+        runTransaction(() => {
+          // Remove combined categories that are now split
+          db.prepare(
+            `DELETE FROM lookup_items
+             WHERE business_type = 'appliances'
+               AND category = 'part_category'
+               AND value IN ('كروت إلكترونية وحساسات', 'بوتاجازات وسخانات')`
+          ).run()
+
+          const insertLookup = db.prepare(
+            `INSERT OR IGNORE INTO lookup_items (category, value, sort_order, is_active, business_type)
+             VALUES (?, ?, ?, 1, 'appliances')`
+          )
+          const updateOrder = db.prepare(
+            `UPDATE lookup_items SET sort_order = ?
+             WHERE business_type = 'appliances' AND category = ? AND value = ?`
+          )
+
+          APPLIANCES_PROFILE.defaultPartCategories.forEach((cat, idx) => {
+            insertLookup.run('part_category', cat, idx)
+            updateOrder.run(idx, 'part_category', cat)
+          })
+
+          APPLIANCES_PROFILE.defaultBrands.forEach((brand, idx) => {
+            insertLookup.run('brand', brand, idx)
+          })
+          updateOrder.run(APPLIANCES_PROFILE.defaultBrands.length, 'brand', 'أخرى')
+
+          db.prepare(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('v122_appliances_lookups_migrated', '1')"
+          ).run()
+        })
+      }
+    }
   } finally {
     try {
       db.exec('PRAGMA foreign_keys = ON;')

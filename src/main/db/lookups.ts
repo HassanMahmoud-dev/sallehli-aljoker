@@ -13,7 +13,7 @@ export function listLookupItems(category?: string, businessType?: BusinessType):
     params.push(category)
   }
 
-  query += ' ORDER BY sort_order ASC, value ASC'
+  query += ' ORDER BY sort_order ASC, value ASC LIMIT 500'
   return db.prepare(query).all(...params) as LookupItem[]
 }
 
@@ -86,7 +86,7 @@ export function listCustomFieldDefs(
     params.push(entity)
   }
 
-  query += ' ORDER BY sort_order ASC, id ASC'
+  query += ' ORDER BY sort_order ASC, id ASC LIMIT 500'
   const rows = db.prepare(query).all(...params) as Record<string, unknown>[]
   return rows.map(normalizeCustomFieldRow)
 }

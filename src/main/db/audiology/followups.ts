@@ -16,6 +16,7 @@ export function listFollowups(filters?: {
   filter_mode?: 'all' | 'today' | 'overdue' | 'upcoming' | 'completed'
   type?: string
   search?: string
+  limit?: number
 }): FollowupItem[] {
   const today = getLocalDateString()
   const clauses: string[] = ['1=1']
@@ -56,6 +57,10 @@ export function listFollowups(filters?: {
     clauses.push('f.is_demo = 0')
   }
 
+  const limitNum = Number(filters?.limit)
+  const safeLimit = Number.isFinite(limitNum) && limitNum > 0 ? Math.min(2000, Math.floor(limitNum)) : 300
+  params.push(safeLimit)
+
   const rows = db
     .prepare(
       `SELECT f.*,
@@ -70,7 +75,8 @@ export function listFollowups(filters?: {
        LEFT JOIN customer_appliances ca ON ca.id = f.device_id
        LEFT JOIN technicians t ON t.id = f.technician_id
        WHERE ${clauses.join(' AND ')}
-       ORDER BY CASE WHEN f.status = 'pending' THEN 0 ELSE 1 END ASC, f.due_date ASC, f.id DESC`
+       ORDER BY CASE WHEN f.status = 'pending' THEN 0 ELSE 1 END ASC, f.due_date ASC, f.id DESC
+       LIMIT ?`
     )
     .all(...params) as Record<string, unknown>[]
 

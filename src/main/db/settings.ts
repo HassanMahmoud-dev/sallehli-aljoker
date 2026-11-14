@@ -186,15 +186,28 @@ export function saveSettings(
   return getSettings()
 }
 
-export function createBackupToFile(destinationPath: string): void {
-  const db = getDb()
-  const dbFilePath = getDatabasePath()
+function snapshotDatabaseConsistent(db: ReturnType<typeof getDb>, dbFilePath: string, destinationPath: string): void {
+  try {
+    if (existsSync(destinationPath)) {
+      unlinkSync(destinationPath)
+    }
+    db.prepare('VACUUM INTO ?').run(destinationPath)
+    return
+  } catch {
+    // Fallback if VACUUM INTO is unavailable or fails (e.g. inside an active transaction)
+  }
   try {
     db.exec('PRAGMA wal_checkpoint(TRUNCATE);')
   } catch {
     // Ignore if checkpoint not supported
   }
   copyFileSync(dbFilePath, destinationPath)
+}
+
+export function createBackupToFile(destinationPath: string): void {
+  const db = getDb()
+  const dbFilePath = getDatabasePath()
+  snapshotDatabaseConsistent(db, dbFilePath, destinationPath)
   try {
     const attachDir = getPatientAttachmentsDir()
     const files = existsSync(attachDir) ? readdirSync(attachDir) : []
@@ -275,13 +288,8 @@ export function restoreBackupFromFile(sourcePath: string): void {
   const dbFilePath = getDatabasePath()
   const currentDb = getDb()
 
-  try {
-    currentDb.exec('PRAGMA wal_checkpoint(TRUNCATE);')
-  } catch {
-    // Ignore
-  }
   if (existsSync(dbFilePath)) {
-    copyFileSync(dbFilePath, safetySnapshot)
+    snapshotDatabaseConsistent(currentDb, dbFilePath, safetySnapshot)
   }
 
   currentDb.close()

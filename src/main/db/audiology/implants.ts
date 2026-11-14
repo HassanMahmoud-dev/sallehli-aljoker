@@ -39,6 +39,7 @@ export function normalizeImplantRow(row: Record<string, unknown>): CochlearImpla
 export function listImplants(filters?: {
   patient_id?: number
   search?: string
+  limit?: number
 }): CochlearImplant[] {
   const clauses: string[] = ['1=1']
   const params: unknown[] = []
@@ -58,6 +59,10 @@ export function listImplants(filters?: {
     clauses.push('imp.is_demo = 0')
   }
 
+  const limitNum = Number(filters?.limit)
+  const safeLimit = Number.isFinite(limitNum) && limitNum > 0 ? Math.min(2000, Math.floor(limitNum)) : 300
+  params.push(safeLimit)
+
   const rows = db
     .prepare(
       `SELECT imp.*,
@@ -66,7 +71,8 @@ export function listImplants(filters?: {
        FROM implants imp
        LEFT JOIN customers c ON c.id = imp.patient_id
        WHERE ${clauses.join(' AND ')}
-       ORDER BY imp.id DESC`
+       ORDER BY imp.id DESC
+       LIMIT ?`
     )
     .all(...params) as Record<string, unknown>[]
 

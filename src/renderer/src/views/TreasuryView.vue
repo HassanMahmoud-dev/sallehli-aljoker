@@ -214,6 +214,38 @@ async function handleDeleteTransaction(tx: TreasuryTransactionRow): Promise<void
   }
 }
 
+const shiftModalOpen = ref(false)
+const actualCashCounted = ref(0)
+const shiftNotes = ref('')
+
+const todayStr = computed(() => new Date().toISOString().slice(0, 10))
+const todayStats = computed(() => {
+  const t = todayStr.value
+  let income = 0
+  let expense = 0
+  let commissions = 0
+  for (const tx of transactions.value) {
+    if (!tx.created_at?.startsWith(t)) continue
+    if (tx.category === 'تحويل بين الخزائن') continue
+    if (tx.transaction_type === 'income') income += Number(tx.amount || 0)
+    else if (tx.transaction_type === 'expense') expense += Number(tx.amount || 0)
+    else if (tx.transaction_type === 'tech_commission') commissions += Number(tx.amount || 0)
+  }
+  return { income, expense, commissions }
+})
+
+const shiftCashDiff = computed(() => Number(actualCashCounted.value || 0) - Number(balances.value.cash || 0))
+
+function openShiftModal(): void {
+  actualCashCounted.value = Number(balances.value.cash || 0)
+  shiftNotes.value = ''
+  shiftModalOpen.value = true
+}
+
+function printShiftReport(): void {
+  window.print()
+}
+
 onMounted(loadData)
 </script>
 
@@ -234,6 +266,14 @@ onMounted(loadData)
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          @click="openShiftModal"
+          class="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-md cursor-pointer"
+        >
+          <Wallet class="w-4 h-4" />
+          إقفال وردية / جرد خزينة يومي
+        </button>
         <button
           type="button"
           @click="openTransferModal"
@@ -534,7 +574,7 @@ onMounted(loadData)
     <!-- Add Transaction Modal -->
     <div
       v-if="modalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 text-xs"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 text-xs"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
@@ -621,7 +661,7 @@ onMounted(loadData)
     <!-- Transfer Between Wallets Modal -->
     <div
       v-if="transferModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 text-xs"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 text-xs"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
@@ -711,6 +751,122 @@ onMounted(loadData)
             </button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Daily Shift Closing / Cash Reconciliation Modal -->
+    <div
+      v-if="shiftModalOpen"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 text-xs"
+    >
+      <div
+        class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden"
+      >
+        <div
+          class="px-6 py-4 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800/60 flex items-center justify-between"
+        >
+          <h3 class="font-bold text-sm text-amber-900 dark:text-amber-200">
+            إقفال وردية / جرد خزينة يومي ({{ todayStr }})
+          </h3>
+          <button @click="shiftModalOpen = false" class="cursor-pointer">
+            <X class="w-4 h-4" />
+          </button>
+        </div>
+
+        <div class="p-6 space-y-4">
+          <div class="grid grid-cols-3 gap-3 text-center">
+            <div class="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40">
+              <div class="text-[11px] text-slate-500">إيرادات اليوم</div>
+              <div class="font-black text-emerald-600 text-sm mt-0.5">
+                {{ todayStats.income }} ج.م
+              </div>
+            </div>
+            <div class="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40">
+              <div class="text-[11px] text-slate-500">مصروفات اليوم</div>
+              <div class="font-black text-rose-600 text-sm mt-0.5">
+                {{ todayStats.expense }} ج.م
+              </div>
+            </div>
+            <div class="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/40">
+              <div class="text-[11px] text-slate-500">عمولات اليوم</div>
+              <div class="font-black text-blue-600 text-sm mt-0.5">
+                {{ todayStats.commissions }} ج.م
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-3"
+          >
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-slate-600 dark:text-slate-300">
+                رصيد الكاش الدفتري بالنظام:
+              </span>
+              <span class="font-black text-base text-slate-900 dark:text-white">
+                {{ balances.cash }} ج.م
+              </span>
+            </div>
+
+            <div>
+              <label class="block font-bold mb-1">الجرد الفعلي للنقدية في الدرج (ج.م) *</label>
+              <input
+                v-model.number="actualCashCounted"
+                type="number"
+                min="0"
+                class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-black text-base"
+              />
+            </div>
+
+            <div
+              :class="[
+                'p-3 rounded-xl font-black flex items-center justify-between',
+                shiftCashDiff === 0
+                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                  : shiftCashDiff > 0
+                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
+                    : 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
+              ]"
+            >
+              <span>نتيجة الجرد:</span>
+              <span>
+                {{
+                  shiftCashDiff === 0
+                    ? 'مطابق تماماً (0 ج.م)'
+                    : shiftCashDiff > 0
+                      ? `زيادة (+${shiftCashDiff} ج.م)`
+                      : `عجز (${shiftCashDiff} ج.م)`
+                }}
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <label class="block font-bold mb-1">ملاحظات الوردية</label>
+            <input
+              v-model="shiftNotes"
+              type="text"
+              placeholder="ملاحظات إقفال الوردية أو سبب الفارق إن وجد..."
+              class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"
+            />
+          </div>
+
+          <div class="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              @click="printShiftReport"
+              class="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 font-bold cursor-pointer"
+            >
+              طباعة الملخص
+            </button>
+            <button
+              type="button"
+              @click="shiftModalOpen = false"
+              class="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold cursor-pointer"
+            >
+              إغلاق
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>

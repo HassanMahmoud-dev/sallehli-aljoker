@@ -23,6 +23,7 @@ export function listEarmoldOrders(filters?: {
   status?: string
   overdue_only?: boolean
   search?: string
+  limit?: number
 }): EarmoldOrder[] {
   const today = getLocalDateString()
   const clauses: string[] = ['1=1']
@@ -53,6 +54,10 @@ export function listEarmoldOrders(filters?: {
     clauses.push('eo.is_demo = 0')
   }
 
+  const limitNum = Number(filters?.limit)
+  const safeLimit = Number.isFinite(limitNum) && limitNum > 0 ? Math.min(2000, Math.floor(limitNum)) : 300
+  params.push(safeLimit)
+
   const rows = db
     .prepare(
       `SELECT eo.*,
@@ -69,7 +74,8 @@ export function listEarmoldOrders(filters?: {
        LEFT JOIN sales_invoices si ON si.id = eo.sales_invoice_id
        LEFT JOIN earmold_orders orig ON orig.id = eo.remake_of_id
        WHERE ${clauses.join(' AND ')}
-       ORDER BY eo.id DESC`
+       ORDER BY eo.id DESC
+       LIMIT ?`
     )
     .all(...params) as Record<string, unknown>[]
 

@@ -649,7 +649,10 @@ onMounted(loadReport)
                 <th class="py-3.5 px-4">نسبة العمولة</th>
                 <th class="py-3.5 px-4">الراتب الثابت</th>
                 <th class="py-3.5 px-4">طلبات منجزة بالفترة</th>
+                <th class="py-3.5 px-4">مرتجعات الضمان</th>
+                <th class="py-3.5 px-4">مؤشر الجودة</th>
                 <th class="py-3.5 px-4">إجمالي مصنعية الفترة</th>
+                <th class="py-3.5 px-4">صافي ربحية الفني</th>
                 <th class="py-3.5 px-4">عمولة الفترة</th>
                 <th class="py-3.5 px-4">منصرف بالفترة</th>
                 <th class="py-3.5 px-4">الرصيد المتبقي للفني</th>
@@ -683,8 +686,28 @@ onMounted(loadReport)
                 <td class="py-3.5 px-4 font-bold text-indigo-600">
                   {{ stmt.completed_tickets_count }} طلب
                 </td>
+                <td class="py-3.5 px-4 font-bold text-rose-600">
+                  {{ (stmt as any).warranty_returns_count ?? 0 }}
+                </td>
+                <td class="py-3.5 px-4">
+                  <span
+                    :class="[
+                      'px-2 py-0.5 rounded-full text-[11px] font-black',
+                      ((stmt as any).quality_score ?? 100) >= 90
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                        : ((stmt as any).quality_score ?? 100) >= 75
+                          ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                          : 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                    ]"
+                  >
+                    {{ (stmt as any).quality_score ?? 100 }}%
+                  </span>
+                </td>
                 <td class="py-3.5 px-4 font-bold">
                   {{ Math.round(stmt.period_labor_and_inspection) }} ج.م
+                </td>
+                <td class="py-3.5 px-4 font-black text-teal-600">
+                  {{ Math.round((stmt as any).period_net_profit ?? 0) }} ج.م
                 </td>
                 <td class="py-3.5 px-4 font-bold text-emerald-600">
                   {{ Math.round(stmt.period_earned_commission) }} ج.م
@@ -751,14 +774,6 @@ onMounted(loadReport)
                       >
                         <CheckCircle2 class="w-3.5 h-3.5" />
                         تحصيل المتبقي
-                      </button>
-                      <button
-                        type="button"
-                        @click="appStore.sendWhatsAppToCustomer(r)"
-                        class="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 cursor-pointer"
-                        title="إرسال مطالبة عبر واتساب"
-                      >
-                        <MessageCircle class="w-4 h-4" />
                       </button>
                     </div>
                   </td>
@@ -900,7 +915,12 @@ onMounted(loadReport)
                 </div>
                 <div class="text-slate-500">عدد البلاغات: {{ item.count }}</div>
               </div>
-              <div class="font-black text-emerald-600">{{ item.revenue }} ج.م</div>
+              <div class="text-left">
+                <div class="font-black text-emerald-600">إيراد: {{ Math.round(item.revenue) }} ج.م</div>
+                <div class="text-[11px] font-bold text-teal-600">
+                  صافي ربح: {{ Math.round((item as any).profit ?? 0) }} ج.م
+                </div>
+              </div>
             </div>
             <div v-if="report.topAppliances.length === 0" class="text-slate-400 py-6 text-center">
               لا توجد بيانات في هذه الفترة
@@ -922,7 +942,12 @@ onMounted(loadReport)
                 <div class="font-bold text-slate-900 dark:text-white">{{ item.brand }}</div>
                 <div class="text-slate-500">عدد البلاغات: {{ item.count }}</div>
               </div>
-              <div class="font-black text-indigo-600">{{ item.revenue }} ج.م</div>
+              <div class="text-left">
+                <div class="font-black text-indigo-600">إيراد: {{ Math.round(item.revenue) }} ج.م</div>
+                <div class="text-[11px] font-bold text-teal-600">
+                  صافي ربح: {{ Math.round((item as any).profit ?? 0) }} ج.م
+                </div>
+              </div>
             </div>
             <div v-if="report.topBrands.length === 0" class="text-slate-400 py-6 text-center">
               لا توجد بيانات في هذه الفترة
@@ -968,7 +993,7 @@ onMounted(loadReport)
     <!-- Collect Receivable Modal -->
     <div
       v-if="collectModalOpen && (ticketToCollect || salesInvoiceToCollect)"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 text-xs"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 text-xs"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"

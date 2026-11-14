@@ -97,6 +97,7 @@ interface ExistingTicketRow {
   id: number
   ticket_number: string
   customer_id: number
+  customer_code: string
   customer_name: string
   customer_phone: string
   customer_phone2: string
@@ -116,6 +117,7 @@ interface ExistingTicketRow {
   scheduled_date: string
   inspection_fee: number
   labor_cost: number
+  workshop_percent: number
   discount: number
   paid_amount: number
   payment_method: MaintenanceTicket['payment_method']
@@ -627,6 +629,8 @@ export function listTickets(filters?: {
   status?: string
   service_type?: string
   technician_id?: number | null
+  warranty_returns_only?: boolean
+  active_warranty_only?: boolean
   limit?: number
 }): MaintenanceTicket[] {
   const q = `%${(filters?.search || '').trim()}%`
@@ -641,10 +645,11 @@ export function listTickets(filters?: {
       mt.appliance_type LIKE ? OR
       mt.brand LIKE ? OR
       mt.serial_number LIKE ? OR
+      mt.previous_ticket_number LIKE ? OR
       mt.extra_data LIKE ?
     )
   `
-  const params: unknown[] = [q, q, q, q, q, q, q]
+  const params: unknown[] = [q, q, q, q, q, q, q, q]
 
   if (filters?.status && filters.status !== 'all') {
     sql += ' AND mt.status = ?'
@@ -658,6 +663,14 @@ export function listTickets(filters?: {
     sql += ' AND mt.technician_id = ?'
     params.push(filters.technician_id)
   }
+  if (filters?.warranty_returns_only) {
+    sql += " AND (mt.priority = 'warranty_return' OR mt.is_under_previous_warranty = 1)"
+  }
+  if (filters?.active_warranty_only) {
+    const today = new Date().toISOString().slice(0, 10)
+    sql += " AND mt.warranty_end_date IS NOT NULL AND mt.warranty_end_date >= ? AND mt.status != 'cancelled'"
+    params.push(today)
+  }
 
   const bType = getBusinessState().type
   if (isDemoDataHidden()) {
@@ -666,12 +679,10 @@ export function listTickets(filters?: {
     sql += ` AND (mt.is_demo = 0 OR mt.business_type = '${bType}' OR mt.business_type IS NULL OR mt.business_type = '')`
   }
 
-  sql += ' ORDER BY mt.id DESC'
+  sql += ' ORDER BY mt.id DESC LIMIT ?'
   const limitNum = Number(filters?.limit)
-  if (Number.isFinite(limitNum) && limitNum > 0) {
-    sql += ' LIMIT ?'
-    params.push(Math.floor(limitNum))
-  }
+  const safeLimit = Number.isFinite(limitNum) && limitNum > 0 ? Math.min(2000, Math.floor(limitNum)) : 300
+  params.push(safeLimit)
 
   const rawRows = db.prepare(sql).all(...params) as Record<string, unknown>[]
   const rows = rawRows.map(normalizeTicketRow)
@@ -727,6 +738,8 @@ export function saveTicket(
     let customerId =
       data.customer_id !== undefined ? Number(data.customer_id) : oldTicket?.customer_id
 
+    let customerCode =
+      data.customer_code !== undefined ? data.customer_code.trim() : oldTicket?.customer_code || ''
     let customerName =
       data.customer_name !== undefined ? data.customer_name.trim() : oldTicket?.customer_name || ''
     let customerPhone =
@@ -744,43 +757,54 @@ export function saveTicket(
 
     if (!customerId) {
       const existingCust = db
-        .prepare('SELECT id, name, phone, phone2, area, address FROM customers WHERE phone = ? LIMIT 1')
+        .prepare('SELECT id, customer_code, name, phone, phone2, area, address FROM customers WHERE phone = ? LIMIT 1')
         .get(customerPhone) as
-        | { id: number; name: string; phone: string; phone2: string; area: string; address: string }
+        | { id: number; customer_code: string; name: string; phone: string; phone2: string; area: string; address: string }
         | undefined
 
       if (existingCust) {
         customerId = existingCust.id
         db.prepare(
           `UPDATE customers SET
+             customer_code = COALESCE(NULLIF(?, ''), customer_code),
              name = COALESCE(NULLIF(?, ''), name),
              phone2 = COALESCE(NULLIF(?, ''), phone2),
              area = COALESCE(NULLIF(?, ''), area),
              address = COALESCE(NULLIF(?, ''), address)
            WHERE id = ?`
-        ).run(customerName, customerPhone2, customerArea, customerAddress, customerId)
+        ).run(customerCode, customerName, customerPhone2, customerArea, customerAddress, customerId)
+        customerCode = customerCode || existingCust.customer_code || ''
         customerName = customerName || existingCust.name
         customerPhone = customerPhone || existingCust.phone
       } else {
         const custInfo = db
           .prepare(
-            'INSERT INTO customers (name, phone, phone2, area, address) VALUES (?, ?, ?, ?, ?)'
+            'INSERT INTO customers (customer_code, name, phone, phone2, area, address) VALUES (?, ?, ?, ?, ?, ?)'
           )
-          .run(customerName, customerPhone, customerPhone2, customerArea, customerAddress)
+          .run(customerCode, customerName, customerPhone, customerPhone2, customerArea, customerAddress)
         customerId = Number(custInfo.lastInsertRowid)
       }
-    } else if (!customerName || !customerPhone) {
-      const existingCust = db
-        .prepare('SELECT name, phone, phone2, area, address FROM customers WHERE id = ?')
-        .get(customerId) as
-        | { name: string; phone: string; phone2: string; area: string; address: string }
-        | undefined
-      if (existingCust) {
-        customerName = customerName || existingCust.name
-        customerPhone = customerPhone || existingCust.phone
-        customerPhone2 = customerPhone2 || existingCust.phone2 || ''
-        customerArea = customerArea || existingCust.area || ''
-        customerAddress = customerAddress || existingCust.address || ''
+    } else {
+      if (customerCode) {
+        db.prepare("UPDATE customers SET customer_code = ? WHERE id = ? AND (customer_code IS NULL OR customer_code = '')").run(
+          customerCode,
+          customerId
+        )
+      }
+      if (!customerName || !customerPhone || !customerCode) {
+        const existingCust = db
+          .prepare('SELECT customer_code, name, phone, phone2, area, address FROM customers WHERE id = ?')
+          .get(customerId) as
+          | { customer_code: string; name: string; phone: string; phone2: string; area: string; address: string }
+          | undefined
+        if (existingCust) {
+          customerCode = customerCode || existingCust.customer_code || ''
+          customerName = customerName || existingCust.name
+          customerPhone = customerPhone || existingCust.phone
+          customerPhone2 = customerPhone2 || existingCust.phone2 || ''
+          customerArea = customerArea || existingCust.area || ''
+          customerAddress = customerAddress || existingCust.address || ''
+        }
       }
     }
 
@@ -820,7 +844,12 @@ export function saveTicket(
     const inspectionFee = roundMoney(
       data.inspection_fee !== undefined ? data.inspection_fee : oldTicket?.inspection_fee ?? 0
     )
-    const laborCost = roundMoney(
+    const workshopPercent = roundMoney(
+      data.workshop_percent !== undefined
+        ? data.workshop_percent
+        : oldTicket?.workshop_percent ?? 0
+    )
+    const rawLaborCost = roundMoney(
       data.labor_cost !== undefined ? data.labor_cost : oldTicket?.labor_cost ?? 0
     )
     const discount = roundMoney(
@@ -917,6 +946,12 @@ export function saveTicket(
         partsCostTotal = roundMoney(partsCostTotal + qty * uCost)
       }
     }
+
+    const useWorkshopPercent =
+      data.workshop_percent !== undefined || Number(oldTicket?.workshop_percent || 0) > 0
+    const laborCost = useWorkshopPercent
+      ? roundMoney((inspectionFee + partsSellingTotal) * (workshopPercent / 100))
+      : rawLaborCost
 
     const totalAmount = Math.max(
       0,
@@ -1070,11 +1105,11 @@ export function saveTicket(
     if (oldTicket) {
       db.prepare(
         `UPDATE maintenance_tickets SET
-          customer_id = ?, customer_name = ?, customer_phone = ?, customer_phone2 = ?,
+          customer_id = ?, customer_code = ?, customer_name = ?, customer_phone = ?, customer_phone2 = ?,
           customer_area = ?, customer_address = ?, appliance_type = ?, brand = ?, model = ?,
           serial_number = ?, service_type = ?, status = ?, priority = ?, complaint = ?,
           diagnosis = ?, technician_id = ?, scheduled_date = ?, inspection_fee = ?,
-          labor_cost = ?, parts_total = ?, parts_cost_total = ?, discount = ?,
+          labor_cost = ?, workshop_percent = ?, parts_total = ?, parts_cost_total = ?, discount = ?,
           total_amount = ?, paid_amount = ?, remaining_amount = ?, payment_method = ?,
           warranty_months = ?, warranty_start_date = ?, warranty_end_date = ?,
           is_under_previous_warranty = ?, previous_ticket_number = ?,
@@ -1092,6 +1127,7 @@ export function saveTicket(
          WHERE id = ?`
       ).run(
         customerId,
+        customerCode,
         customerName,
         customerPhone,
         customerPhone2,
@@ -1110,6 +1146,7 @@ export function saveTicket(
         scheduledDate,
         inspectionFee,
         laborCost,
+        workshopPercent,
         partsSellingTotal,
         partsCostTotal,
         discount,
@@ -1152,10 +1189,10 @@ export function saveTicket(
       const info = db
         .prepare(
           `INSERT INTO maintenance_tickets (
-            ticket_number, customer_id, customer_name, customer_phone, customer_phone2,
+            ticket_number, customer_id, customer_code, customer_name, customer_phone, customer_phone2,
             customer_area, customer_address, appliance_type, brand, model, serial_number,
             service_type, status, priority, complaint, diagnosis, technician_id, scheduled_date,
-            inspection_fee, labor_cost, parts_total, parts_cost_total, discount, total_amount,
+            inspection_fee, labor_cost, workshop_percent, parts_total, parts_cost_total, discount, total_amount,
             paid_amount, remaining_amount, payment_method, warranty_months,
             warranty_start_date, warranty_end_date, is_under_previous_warranty, previous_ticket_number,
             warranty_image, fault_images, extra_data, notes,
@@ -1165,11 +1202,12 @@ export function saveTicket(
             loaner_serial_id, loaner_serial_no, loaner_product_name,
             loaner_handed_at, loaner_returned_at,
             commission_rate, commission_amount, created_by_id, created_by_name
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           ticketNumber,
           customerId,
+          customerCode,
           customerName,
           customerPhone,
           customerPhone2,
@@ -1188,6 +1226,7 @@ export function saveTicket(
           scheduledDate,
           inspectionFee,
           laborCost,
+          workshopPercent,
           partsSellingTotal,
           partsCostTotal,
           discount,

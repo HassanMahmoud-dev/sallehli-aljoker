@@ -6,7 +6,185 @@ import { listFollowups, listEarmoldOrders } from './audiology'
 import { getBusinessState } from './business'
 import { isDemoDataHidden } from './demo'
 import { getOperatingTreasurySummary } from './treasury'
-import type { DashboardStats, SparePart, SalesInvoice } from '../../shared/types'
+import type {
+  DashboardStats,
+  SparePart,
+  SalesInvoice,
+  UpcomingDeliveryAlert
+} from '../../shared/types'
+
+function addDaysToIso(isoDate: string, days: number): string {
+  const d = new Date(isoDate + 'T00:00:00')
+  d.setDate(d.getDate() + days)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function diffDaysIso(todayIso: string, targetIso: string): number {
+  const t1 = new Date(todayIso + 'T00:00:00').getTime()
+  const t2 = new Date(targetIso + 'T00:00:00').getTime()
+  return Math.round((t2 - t1) / (1000 * 60 * 60 * 24))
+}
+
+export function getUpcomingDeliveries(daysAhead = 2): UpcomingDeliveryAlert[] {
+  const today = getLocalDateString()
+  const limitDate = addDaysToIso(today, daysAhead)
+  const alerts: UpcomingDeliveryAlert[] = []
+  const bType = getBusinessState().type
+  const dFilter = isDemoDataHidden()
+    ? ' AND is_demo = 0'
+    : ` AND (is_demo = 0 OR business_type = '${bType}' OR business_type IS NULL OR business_type = '')`
+  const simpleDemoFilter = isDemoDataHidden() ? ' AND is_demo = 0' : ''
+
+  // 1. External repairs (sent_to_lab)
+  try {
+    const extRows = db
+      .prepare(
+        `SELECT id, ticket_number, customer_name, customer_phone, appliance_type, external_expected_date
+         FROM maintenance_tickets
+         WHERE status = 'sent_to_lab'
+           AND external_expected_date IS NOT NULL
+           AND external_expected_date != ''
+           AND external_expected_date <= ?${dFilter}
+         ORDER BY external_expected_date ASC`
+      )
+      .all(limitDate) as Array<{
+      id: number
+      ticket_number: string
+      customer_name: string
+      customer_phone: string
+      appliance_type: string
+      external_expected_date: string
+    }>
+    for (const r of extRows) {
+      alerts.push({
+        key: `external-${r.id}`,
+        kind: 'external_repair',
+        kindLabel: 'صيانة خارجية بالمعمل',
+        customerName: r.customer_name,
+        customerPhone: r.customer_phone || '',
+        title: `${r.ticket_number} (${r.appliance_type})`,
+        dueDate: r.external_expected_date,
+        daysLeft: diffDaysIso(today, r.external_expected_date)
+      })
+    }
+  } catch {
+    // Ignore
+  }
+
+  // 2. Hearing aids specific: Earmolds, Followups, Sales Invoices expected_delivery_date
+  if (bType === 'hearing_aids') {
+    try {
+      const earmoldRows = db
+        .prepare(
+          `SELECT eo.id, eo.order_number, eo.ear_side, eo.expected_date, c.name as customer_name, c.phone as customer_phone
+           FROM earmold_orders eo
+           LEFT JOIN customers c ON c.id = eo.customer_id
+           WHERE eo.status = 'sent_to_lab'
+             AND eo.expected_date IS NOT NULL
+             AND eo.expected_date != ''
+             AND eo.expected_date <= ?${isDemoDataHidden() ? ' AND eo.is_demo = 0' : ''}
+           ORDER BY eo.expected_date ASC`
+        )
+        .all(limitDate) as Array<{
+        id: number
+        order_number: string
+        ear_side: string
+        expected_date: string
+        customer_name: string
+        customer_phone: string
+      }>
+      for (const r of earmoldRows) {
+        alerts.push({
+          key: `earmold-${r.id}`,
+          kind: 'earmold',
+          kindLabel: 'قالب أذن بالمعمل',
+          customerName: r.customer_name || 'عميل',
+          customerPhone: r.customer_phone || '',
+          title: `${r.order_number} (${r.ear_side || 'قالب'})`,
+          dueDate: r.expected_date,
+          daysLeft: diffDaysIso(today, r.expected_date)
+        })
+      }
+    } catch {
+      // Ignore
+    }
+
+    try {
+      const followupRows = db
+        .prepare(
+          `SELECT f.id, f.title, f.due_date, c.name as customer_name, c.phone as customer_phone
+           FROM followups f
+           LEFT JOIN customers c ON c.id = f.customer_id
+           WHERE f.status = 'pending'
+             AND f.due_date IS NOT NULL
+             AND f.due_date != ''
+             AND f.due_date <= ?${simpleDemoFilter.replace('is_demo', 'f.is_demo')}
+           ORDER BY f.due_date ASC`
+        )
+        .all(limitDate) as Array<{
+        id: number
+        title: string
+        due_date: string
+        customer_name: string
+        customer_phone: string
+      }>
+      for (const r of followupRows) {
+        alerts.push({
+          key: `followup-${r.id}`,
+          kind: 'followup',
+          kindLabel: 'موعد متابعة / ضبط',
+          customerName: r.customer_name || 'عميل',
+          customerPhone: r.customer_phone || '',
+          title: r.title || 'جلسة متابعة',
+          dueDate: r.due_date,
+          daysLeft: diffDaysIso(today, r.due_date)
+        })
+      }
+    } catch {
+      // Ignore
+    }
+
+    try {
+      const saleRows = db
+        .prepare(
+          `SELECT id, invoice_number, customer_name, customer_phone, expected_delivery_date
+           FROM sales_invoices
+           WHERE status != 'cancelled'
+             AND expected_delivery_date IS NOT NULL
+             AND expected_delivery_date != ''
+             AND expected_delivery_date >= ?
+             AND expected_delivery_date <= ?${dFilter}
+           ORDER BY expected_delivery_date ASC`
+        )
+        .all(today, limitDate) as Array<{
+        id: number
+        invoice_number: string
+        customer_name: string
+        customer_phone: string
+        expected_delivery_date: string
+      }>
+      for (const r of saleRows) {
+        alerts.push({
+          key: `sale-${r.id}`,
+          kind: 'sale',
+          kindLabel: 'تسليم طلبية سماعة',
+          customerName: r.customer_name || 'عميل',
+          customerPhone: r.customer_phone || '',
+          title: `فاتورة ${r.invoice_number}`,
+          dueDate: r.expected_delivery_date,
+          daysLeft: diffDaysIso(today, r.expected_delivery_date)
+        })
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  return alerts.sort((a, b) => a.daysLeft - b.daysLeft)
+}
 
 export function getDashboardStats(): DashboardStats {
   const today = getLocalDateString()
@@ -335,6 +513,40 @@ export function getDashboardStats(): DashboardStats {
       monthTechCommissions
   )
 
+  const todayDeliveriesAgg = db
+    .prepare(
+      `SELECT COUNT(*) as cnt, COALESCE(SUM(total_cost), 0) as total
+       FROM maintenance_tickets
+       WHERE status = 'delivered' AND date(delivered_at) = ?${dFilter}`
+    )
+    .get(today) as { cnt: number; total: number }
+
+  const monthWarrantyReturnsAgg = db
+    .prepare(
+      `SELECT COUNT(*) as cnt, COALESCE(SUM(parts_cost_total), 0) as total
+       FROM maintenance_tickets
+       WHERE (priority = 'warranty_return' OR is_under_previous_warranty = 1)
+         AND status != 'cancelled'
+         AND strftime('%Y-%m', created_at) = ?${dFilter}`
+    )
+    .get(monthPrefix) as { cnt: number; total: number }
+
+  let monthSalesReturnsCount = 0
+  let monthSalesReturnsTotal = 0
+  try {
+    const srAgg = db
+      .prepare(
+        `SELECT COUNT(*) as cnt, COALESCE(SUM(total_refund), 0) as total
+         FROM sales_returns
+         WHERE strftime('%Y-%m', created_at) = ?${dFilter}`
+      )
+      .get(monthPrefix) as { cnt: number; total: number }
+    monthSalesReturnsCount = Number(srAgg?.cnt || 0)
+    monthSalesReturnsTotal = Number(srAgg?.total || 0)
+  } catch {
+    // Ignore if sales_returns table does not exist in this profile
+  }
+
   return {
     totalTicketsToday,
     openTicketsCount,
@@ -350,6 +562,12 @@ export function getDashboardStats(): DashboardStats {
     monthPartsCost,
     monthTechCommissions,
     monthNetProfit,
+    todayDeliveriesCount: Number(todayDeliveriesAgg?.cnt || 0),
+    todayDeliveriesTotal: roundMoney(Number(todayDeliveriesAgg?.total || 0)),
+    monthReturnsCount: Number(monthWarrantyReturnsAgg?.cnt || 0) + monthSalesReturnsCount,
+    monthReturnsAmount: roundMoney(
+      Number(monthWarrantyReturnsAgg?.total || 0) + monthSalesReturnsTotal
+    ),
     todaySalesCount,
     todaySalesRevenue,
     monthSalesCount,
@@ -368,6 +586,7 @@ export function getDashboardStats(): DashboardStats {
     readyEarmoldsWaitingDeliveryCount,
     upcomingFollowups,
     activeEarmoldAlerts,
+    upcomingDeliveries: getUpcomingDeliveries(2),
     recentTickets,
     lowStockParts
   }

@@ -206,7 +206,7 @@ onMounted(() => {
 <template>
   <div
     v-if="appStore.updateModalOpen"
-    class="no-print fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4"
+    class="no-print fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
   >
     <div
       class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden text-xs"

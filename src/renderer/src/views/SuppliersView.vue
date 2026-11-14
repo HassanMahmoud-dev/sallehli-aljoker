@@ -369,7 +369,7 @@ onMounted(loadData)
     <!-- MODAL 1: ADD / EDIT SUPPLIER -->
     <div
       v-if="modalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden"
@@ -486,7 +486,7 @@ onMounted(loadData)
     <!-- MODAL 2: PAY SUPPLIER -->
     <div
       v-if="payModalOpen && supplierToPay"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
@@ -575,7 +575,7 @@ onMounted(loadData)
     <!-- MODAL 3: SUPPLIER STATEMENT -->
     <div
       v-if="statementModalOpen && activeStatement"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 overflow-y-auto"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 overflow-y-auto"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden"

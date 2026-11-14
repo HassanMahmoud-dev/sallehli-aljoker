@@ -122,4 +122,12 @@ export function queryRowsInBatches<T>(
   return results
 }
 
+/** Clamps a list query limit to a safe positive integer range [1, maxLimit]. */
+export function clampLimit(limit: unknown, defaultLimit = 300, maxLimit = 2000): number {
+  const n = Number(limit)
+  if (!Number.isFinite(n) || n <= 0) return defaultLimit
+  return Math.min(maxLimit, Math.max(1, Math.floor(n)))
+}
+
+
 

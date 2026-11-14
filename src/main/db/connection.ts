@@ -18,6 +18,7 @@ export function createDatabaseConnection(filePath: string): DatabaseLike {
     instance.pragma('synchronous = NORMAL')
     instance.pragma('temp_store = MEMORY')
     instance.pragma('cache_size = -16000')
+    instance.pragma('mmap_size = 268435456')
     instance.pragma('busy_timeout = 5000')
     instance.pragma('foreign_keys = ON')
     return instance as DatabaseLike
@@ -29,6 +30,7 @@ export function createDatabaseConnection(filePath: string): DatabaseLike {
     instance.exec('PRAGMA synchronous = NORMAL;')
     instance.exec('PRAGMA temp_store = MEMORY;')
     instance.exec('PRAGMA cache_size = -16000;')
+    instance.exec('PRAGMA mmap_size = 268435456;')
     instance.exec('PRAGMA busy_timeout = 5000;')
     instance.exec('PRAGMA foreign_keys = ON;')
     return instance as DatabaseLike
@@ -114,9 +116,31 @@ export function runTransaction<T>(fn: () => T): T {
   }
 }
 
+const statementCache = new WeakMap<DatabaseLike, Map<string, ReturnType<DatabaseLike['prepare']>>>()
+
+export function prepareCached(sql: string): ReturnType<DatabaseLike['prepare']> {
+  const instance = getDb()
+  let cache = statementCache.get(instance)
+  if (!cache) {
+    cache = new Map()
+    statementCache.set(instance, cache)
+  }
+  let stmt = cache.get(sql)
+  if (!stmt) {
+    stmt = instance.prepare(sql)
+    cache.set(sql, stmt)
+  }
+  return stmt
+}
+
 export function closeDatabase(): void {
   transactionDepth = 0
   if (!dbInstance) return
+  try {
+    dbInstance.exec('PRAGMA optimize;')
+  } catch {
+    // Ignore
+  }
   try {
     dbInstance.exec('PRAGMA wal_checkpoint(TRUNCATE);')
   } catch {

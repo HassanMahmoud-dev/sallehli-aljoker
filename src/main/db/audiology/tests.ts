@@ -127,6 +127,7 @@ export function normalizeHearingTestRow(row: Record<string, unknown>): HearingTe
 export function listHearingTests(filters?: {
   patient_id?: number
   search?: string
+  limit?: number
 }): HearingTest[] {
   const clauses: string[] = ['1=1']
   const params: unknown[] = []
@@ -144,6 +145,10 @@ export function listHearingTests(filters?: {
     clauses.push('ht.is_demo = 0')
   }
 
+  const limitNum = Number(filters?.limit)
+  const safeLimit = Number.isFinite(limitNum) && limitNum > 0 ? Math.min(2000, Math.floor(limitNum)) : 300
+  params.push(safeLimit)
+
   const rows = db
     .prepare(
       `SELECT ht.*,
@@ -154,7 +159,8 @@ export function listHearingTests(filters?: {
        FROM hearing_tests ht
        LEFT JOIN customers c ON c.id = ht.patient_id
        WHERE ${clauses.join(' AND ')}
-       ORDER BY ht.test_date DESC, ht.id DESC`
+       ORDER BY ht.test_date DESC, ht.id DESC
+       LIMIT ?`
     )
     .all(...params) as Record<string, unknown>[]
 

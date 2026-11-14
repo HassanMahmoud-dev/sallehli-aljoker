@@ -14,12 +14,12 @@ import {
   deleteMedicalSparePart
 } from './hearing_aids/inventory'
 
-export function listSpareParts(search = ''): SparePart[] {
+export function listSpareParts(search = '', limit = 500): SparePart[] {
   const bState = getBusinessState()
   if (bState.type === 'hearing_aids') {
-    return listMedicalSpareParts(search)
+    return listMedicalSpareParts(search, limit)
   }
-  return listElectSpareParts(search)
+  return listElectSpareParts(search, limit)
 }
 
 export function saveSparePart(data: Partial<SparePart>): SparePart {

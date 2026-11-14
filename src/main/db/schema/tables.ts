@@ -33,6 +33,7 @@ export function createSystemTables(): void {
 
     CREATE TABLE IF NOT EXISTS customers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_code TEXT DEFAULT '',
       name TEXT NOT NULL,
       phone TEXT NOT NULL,
       phone2 TEXT DEFAULT '',

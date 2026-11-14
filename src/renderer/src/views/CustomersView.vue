@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { plain } from '@renderer/utils/plain'
+import { debounce } from '@renderer/utils/debounce'
 import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -91,6 +92,7 @@ const availableBrands = computed(() => {
 const customerTableFields = computed(() => appStore.getTableCustomFields('customer'))
 
 const form = ref<Partial<Customer>>({
+  customer_code: '',
   name: '',
   phone: '',
   phone2: '',
@@ -117,8 +119,12 @@ async function loadCustomers(): Promise<void> {
   customers.value = await window.api.listCustomers(searchQuery.value)
 }
 
-watch(searchQuery, () => {
+const debouncedLoadCustomers = debounce(() => {
   loadCustomers()
+}, 250)
+
+watch(searchQuery, () => {
+  debouncedLoadCustomers()
 })
 
 // Patient Medical Profile State (Phase 4)
@@ -166,6 +172,7 @@ async function refreshPatientBundle(): Promise<void> {
 
 function openCreateModal(): void {
   form.value = {
+    customer_code: '',
     name: '',
     phone: '',
     phone2: '',
@@ -188,6 +195,7 @@ function openCreateModal(): void {
 function openEditModal(c: Customer): void {
   form.value = {
     ...c,
+    customer_code: c.customer_code || '',
     birth_date: c.birth_date || '',
     gender: c.gender || '',
     occupation: c.occupation || '',
@@ -565,9 +573,10 @@ function openWhatsAppChat(phone: string, name: string): void {
 onMounted(async () => {
   await loadCustomers()
   try {
+    const canUseProducts = appStore.businessProfile.modules.includes('products')
     const [techs, prods] = await Promise.all([
       window.api.listTechnicians(),
-      window.api.listProducts()
+      canUseProducts ? window.api.listProducts() : Promise.resolve([])
     ])
     technicians.value = techs
     products.value = prods
@@ -688,14 +697,6 @@ onMounted(async () => {
                 </button>
                 <button
                   type="button"
-                  @click="openWhatsAppChat(c.phone, c.name)"
-                  class="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 cursor-pointer"
-                  title="مراسلة واتساب"
-                >
-                  <MessageCircle class="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
                   @click="openEditModal(c)"
                   class="p-1.5 rounded-lg bg-slate-100 hover:bg-amber-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 cursor-pointer"
                 >
@@ -719,7 +720,7 @@ onMounted(async () => {
     <!-- Create / Edit Customer Modal -->
     <div
       v-if="modalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-h-[90vh] overflow-y-auto"
@@ -734,14 +735,25 @@ onMounted(async () => {
           <button @click="modalOpen = false" class="cursor-pointer"><X class="w-4 h-4" /></button>
         </div>
         <form @submit.prevent="handleSaveCustomer" class="p-6 space-y-3.5 text-xs">
-          <div>
-            <label class="block font-bold mb-1">اسم العميل / المريض *</label>
-            <input
-              v-model="form.name"
-              required
-              type="text"
-              class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold"
-            />
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label class="block font-bold mb-1">كود العميل</label>
+              <input
+                v-model="form.customer_code"
+                type="text"
+                placeholder="مثال: C-101"
+                class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono font-bold"
+              />
+            </div>
+            <div class="sm:col-span-2">
+              <label class="block font-bold mb-1">اسم العميل / المريض *</label>
+              <input
+                v-model="form.name"
+                required
+                type="text"
+                class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold"
+              />
+            </div>
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
@@ -915,7 +927,7 @@ onMounted(async () => {
     <!-- ============================================================ -->
     <div
       v-if="historyModalOpen && selectedCustomer"
-      class="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/75 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/75 p-4"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-h-[90vh] flex flex-col overflow-hidden text-xs"
@@ -981,15 +993,6 @@ onMounted(async () => {
                   >
                     <PlusCircle class="w-3.5 h-3.5" />
                     فحص سمع جديد
-                  </button>
-
-                  <button
-                    type="button"
-                    @click="openWhatsAppChat(selectedCustomer.phone, selectedCustomer.name)"
-                    class="p-2 rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 cursor-pointer"
-                    title="مراسلة واتساب"
-                  >
-                    <MessageCircle class="w-4 h-4" />
                   </button>
                 </div>
               </div>
@@ -1864,7 +1867,7 @@ onMounted(async () => {
     <!-- ======================================================== -->
     <div
       v-if="hearingTestModalOpen && selectedCustomer"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-4 overflow-y-auto"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 overflow-y-auto"
     >
       <div class="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-5xl my-8 overflow-hidden">
         <HearingTestForm
@@ -1885,7 +1888,7 @@ onMounted(async () => {
     <!-- ======================================================== -->
     <div
       v-if="previewTestModalOpen && testToPreview"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4"
     >
       <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-3xl p-6 space-y-4 text-xs">
         <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -1931,7 +1934,7 @@ onMounted(async () => {
     <!-- ======================================================== -->
     <div
       v-if="uploadAttachmentModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4"
     >
       <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-md p-6 space-y-4 text-xs">
         <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -2004,7 +2007,7 @@ onMounted(async () => {
     <!-- ============================================================ -->
     <div
       v-if="applianceModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-xs p-4 text-xs"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 text-xs"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden"
@@ -2180,7 +2183,7 @@ onMounted(async () => {
     <!-- Safe Non-Image Attachment Preview Modal -->
     <div
       v-if="attachmentPreviewModalOpen && attachmentPreview"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden text-xs"

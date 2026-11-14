@@ -84,6 +84,7 @@ export interface CustomFieldDef {
 
 export interface Customer {
   id: number
+  customer_code?: string
   name: string
   phone: string
   phone2: string
@@ -418,6 +419,7 @@ export interface SalesPayment {
 
 export interface SalesInvoice {
   id: number
+  expected_delivery_date?: string | null
   invoice_number: string
   invoice_type: 'regular' | 'quick_pos' | 'exchange'
   customer_id: number | null
@@ -542,6 +544,7 @@ export interface MaintenanceTicket {
   id: number
   ticket_number: string
   customer_id: number
+  customer_code?: string
   customer_name: string
   customer_phone: string
   customer_phone2: string
@@ -562,6 +565,7 @@ export interface MaintenanceTicket {
   scheduled_date: string
   inspection_fee: number
   labor_cost: number
+  workshop_percent?: number
   parts_total: number
   parts_cost_total: number
   discount: number
@@ -708,6 +712,17 @@ export interface UpdateDownloadStatus {
   version?: string
 }
 
+export interface UpcomingDeliveryAlert {
+  key: string
+  kind: 'earmold' | 'followup' | 'external_repair' | 'sale'
+  kindLabel: string
+  customerName: string
+  customerPhone: string
+  title: string
+  dueDate: string
+  daysLeft: number
+}
+
 export interface DashboardStats {
   totalTicketsToday: number
   openTicketsCount: number
@@ -723,6 +738,11 @@ export interface DashboardStats {
   monthPartsCost: number
   monthTechCommissions: number
   monthNetProfit: number
+  todayDeliveriesCount?: number
+  todayDeliveriesTotal?: number
+  monthReturnsCount?: number
+  monthReturnsAmount?: number
+  upcomingDeliveries?: UpcomingDeliveryAlert[]
   recentTickets: MaintenanceTicket[]
   lowStockParts: SparePart[]
   // Phase 3W: Hearing Aids Sales, Products & External Repair stats

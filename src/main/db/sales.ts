@@ -89,12 +89,10 @@ export function listSalesInvoices(filters?: {
     sql += ` AND (si.is_demo = 0 OR si.business_type = '${bType}' OR si.business_type IS NULL OR si.business_type = '')`
   }
 
-  sql += ' ORDER BY si.id DESC'
+  sql += ' ORDER BY si.id DESC LIMIT ?'
   const limitNum = Number(filters?.limit)
-  if (Number.isFinite(limitNum) && limitNum > 0) {
-    sql += ' LIMIT ?'
-    params.push(Math.floor(limitNum))
-  }
+  const safeLimit = Number.isFinite(limitNum) && limitNum > 0 ? Math.min(2000, Math.floor(limitNum)) : 300
+  params.push(safeLimit)
 
   const rawRows = db.prepare(sql).all(...params) as Record<string, unknown>[]
   const invoices = rawRows.map(normalizeSalesInvoiceRow)
@@ -241,8 +239,8 @@ export function saveSalesInvoice(
         `INSERT INTO sales_invoices (
           invoice_number, invoice_type, customer_id, customer_name, customer_phone,
           subtotal, discount, trade_in_credit, total_amount, paid_amount, remaining_amount,
-          payment_method, status, parent_invoice_id, notes, extra_data, created_by_id, created_by_name
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?)`
+          payment_method, status, parent_invoice_id, expected_delivery_date, notes, extra_data, created_by_id, created_by_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?)`
       )
       .run(
         invoiceNumber,
@@ -258,6 +256,7 @@ export function saveSalesInvoice(
         remainingAmount,
         paymentMethod,
         data.parent_invoice_id || null,
+        data.expected_delivery_date || null,
         data.notes?.trim() || '',
         stringifyExtraData(data.extra_data),
         createdById,

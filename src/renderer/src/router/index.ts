@@ -27,6 +27,12 @@ const router = createRouter({
       meta: { requiresAuth: true, module: 'tickets' }
     },
     {
+      path: '/warranty-returns',
+      name: 'warranty-returns',
+      component: () => import('@renderer/views/WarrantyReturnsView.vue'),
+      meta: { requiresAuth: true, module: 'tickets' }
+    },
+    {
       path: '/customers',
       name: 'customers',
       component: () => import('@renderer/views/CustomersView.vue'),

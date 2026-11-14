@@ -43,7 +43,7 @@ function triggerPrint(): void {
 <template>
   <div
     v-if="appStore.printModalOpen && (ticket || salesInv || hearingTest || earmold)"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-xs p-4 overflow-y-auto"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 overflow-y-auto"
   >
     <div
       class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[94vh] flex flex-col overflow-hidden"
@@ -613,7 +613,9 @@ function triggerPrint(): void {
                 <span class="font-bold">{{ ticket.inspection_fee }} ج.م</span>
               </div>
               <div class="flex justify-between">
-                <span class="text-slate-600">تكلفة المصنعية والإصلاح:</span>
+                <span class="text-slate-600">
+                  {{ ticket.workshop_percent ? `نسبة الورشة (${ticket.workshop_percent}%):` : 'تكلفة المصنعية والإصلاح:' }}
+                </span>
                 <span class="font-bold">{{ ticket.labor_cost }} ج.م</span>
               </div>
               <div class="flex justify-between">
@@ -764,7 +766,7 @@ function triggerPrint(): void {
               <span>{{ ticket.inspection_fee }} ج.م</span>
             </div>
             <div class="flex justify-between">
-              <span>المصنعية:</span>
+              <span>{{ ticket.workshop_percent ? `نسبة الورشة (${ticket.workshop_percent}%):` : 'المصنعية:' }}</span>
               <span>{{ ticket.labor_cost }} ج.م</span>
             </div>
             <div v-if="ticket.parts_total > 0" class="flex justify-between">

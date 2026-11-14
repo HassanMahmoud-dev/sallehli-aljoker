@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { plain } from '@renderer/utils/plain'
 import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import type { SparePart, InventoryMovement, Technician } from '@shared/types'
 import { useAppStore } from '@renderer/stores/appStore'
 import { useTerms } from '@renderer/composables/useTerms'
@@ -60,6 +60,78 @@ const moveForm = ref<{
   notes: '',
   recordInTreasury: true
 })
+
+const showLowStockOnly = ref(false)
+const quickRestockModalOpen = ref(false)
+const quickRestockRecordInTreasury = ref(true)
+const quickRestockRows = ref<
+  Array<{
+    part_id: number
+    code: string
+    name: string
+    current_qty: number
+    min_qty: number
+    add_qty: number
+    purchase_price: number
+    selected: boolean
+  }>
+>([])
+
+const lowStockParts = computed(() => parts.value.filter((p) => p.quantity <= p.min_quantity))
+const displayedParts = computed(() => (showLowStockOnly.value ? lowStockParts.value : parts.value))
+
+function openQuickRestockModal(): void {
+  quickRestockRows.value = lowStockParts.value.map((p) => ({
+    part_id: p.id,
+    code: p.code,
+    name: p.name,
+    current_qty: p.quantity,
+    min_qty: p.min_quantity,
+    add_qty: Math.max(1, p.min_quantity * 2 - p.quantity),
+    purchase_price: Number(p.purchase_price || 0),
+    selected: true
+  }))
+  quickRestockRecordInTreasury.value = true
+  quickRestockModalOpen.value = true
+}
+
+async function handleQuickRestock(): Promise<void> {
+  const toRestock = quickRestockRows.value.filter((r) => r.selected && r.add_qty > 0)
+  if (toRestock.length === 0) {
+    swalError('لا توجد أصناف محددة', 'اختر صنفاً واحداً على الأقل بكمية أكبر من صفر')
+    return
+  }
+  try {
+    await appStore.withLoading(async () => {
+      for (const item of toRestock) {
+        await window.api.recordInventoryMovement({
+          part_id: item.part_id,
+          technician_id: null,
+          movement_type: 'in',
+          quantity: item.add_qty,
+          notes: 'توريد سريع للنواقص',
+          recordInTreasury: quickRestockRecordInTreasury.value
+        })
+      }
+      quickRestockModalOpen.value = false
+      await loadData()
+    }, 'جاري توريد النواقص وتحديث المخزن...')
+    swalSuccess(`تم توريد ${toRestock.length} صنف للمخزن بنجاح`)
+  } catch (err: unknown) {
+    swalError('تعذر توريد النواقص', err instanceof Error ? err.message : '')
+  }
+}
+
+function appendBrandToPart(brandName: string): void {
+  if (!brandName) return
+  const short = brandName.split('(')[0].trim()
+  const current = (partForm.value.brand || '').trim()
+  if (!current) {
+    partForm.value.brand = short
+  } else if (!current.toLowerCase().includes(short.toLowerCase())) {
+    partForm.value.brand = `${current}، ${short}`
+  }
+}
 
 async function loadData(): Promise<void> {
   const [pList, mList, tList] = await Promise.all([
@@ -232,17 +304,44 @@ onMounted(loadData)
       </div>
     </div>
 
-    <!-- Search Bar -->
-    <div v-if="activeTab === 'parts'" class="relative max-w-md text-xs">
-      <Search
-        class="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
-      />
-      <input
-        v-model="searchQuery"
-        type="text"
-        :placeholder="`بحث بكود ${t('part')}، الاسم، التصنيف، أو ${t('brand')}...`"
-        class="w-full pr-10 pl-4 py-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
-      />
+    <!-- Search Bar & Low Stock Actions -->
+    <div v-if="activeTab === 'parts'" class="flex flex-wrap items-center justify-between gap-3 text-xs">
+      <div class="relative flex-1 min-w-[240px] max-w-md">
+        <Search
+          class="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+        />
+        <input
+          v-model="searchQuery"
+          type="text"
+          :placeholder="`بحث بكود ${t('part')}، الاسم، التصنيف، أو ${t('brand')}...`"
+          class="w-full pr-10 pl-4 py-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
+        />
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          @click="showLowStockOnly = !showLowStockOnly"
+          :class="[
+            'px-3.5 py-2.5 rounded-xl font-bold border transition cursor-pointer flex items-center gap-1.5',
+            showLowStockOnly
+              ? 'bg-rose-600 text-white border-rose-600'
+              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-rose-600 dark:text-rose-400'
+          ]"
+        >
+          <span>النواقص فقط ({{ lowStockParts.length }})</span>
+        </button>
+
+        <button
+          v-if="lowStockParts.length > 0"
+          type="button"
+          @click="openQuickRestockModal"
+          class="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-xs cursor-pointer flex items-center gap-1.5"
+        >
+          <ArrowDownToLine class="w-4 h-4" />
+          توريد سريع للنواقص ({{ lowStockParts.length }})
+        </button>
+      </div>
     </div>
 
     <!-- TAB 1: Spare Parts Table -->
@@ -266,7 +365,7 @@ onMounted(loadData)
         </thead>
         <tbody class="divide-y divide-slate-200 dark:divide-slate-800">
           <tr
-            v-for="p in parts"
+            v-for="p in displayedParts"
             :key="p.id"
             class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition"
           >
@@ -402,7 +501,7 @@ onMounted(loadData)
     <!-- Add / Edit Part Modal -->
     <div
       v-if="partModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden text-xs"
@@ -503,12 +602,30 @@ onMounted(loadData)
 
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block font-bold mb-1">الماركة المتوافقة</label>
-              <input
-                v-model="partForm.brand"
-                type="text"
-                class="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"
-              />
+              <label class="block font-bold mb-1">الماركة / الموديلات المتوافقة</label>
+              <div class="flex gap-1.5">
+                <input
+                  v-model="partForm.brand"
+                  type="text"
+                  list="part-compatible-brands"
+                  placeholder="مثال: LG، Samsung، Toshiba"
+                  class="flex-1 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"
+                />
+                <select
+                  @change="
+                    appendBrandToPart(($event.target as HTMLSelectElement).value);
+                    ($event.target as HTMLSelectElement).value = ''
+                  "
+                  title="إضافة ماركة متوافقة"
+                  class="w-24 px-2 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-bold text-[11px]"
+                >
+                  <option value="">+ ماركة</option>
+                  <option v-for="b in appStore.brands" :key="b" :value="b">{{ b }}</option>
+                </select>
+              </div>
+              <datalist id="part-compatible-brands">
+                <option v-for="b in appStore.brands" :key="b" :value="b.split('(')[0].trim()" />
+              </datalist>
             </div>
             <div>
               <label class="block font-bold mb-1">مكان الرف بالمخزن</label>
@@ -582,7 +699,7 @@ onMounted(loadData)
     <!-- Stock Movement / Custody Modal -->
     <div
       v-if="moveModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden text-xs"
@@ -671,6 +788,89 @@ onMounted(loadData)
               class="px-5 py-2 rounded-xl bg-blue-600 text-white font-bold cursor-pointer"
             >
               تنفيذ الحركة
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Quick Restock Low-Stock Modal -->
+    <div
+      v-if="quickRestockModalOpen"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 overflow-y-auto"
+    >
+      <div
+        class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden text-xs my-auto"
+      >
+        <div
+          class="px-6 py-4 bg-emerald-50 dark:bg-emerald-950/40 border-b border-emerald-200 dark:border-emerald-800/60 flex items-center justify-between"
+        >
+          <h3 class="font-bold text-sm text-emerald-900 dark:text-emerald-200">
+            توريد سريع للنواقص ({{ quickRestockRows.length }} صنف)
+          </h3>
+          <button @click="quickRestockModalOpen = false" class="cursor-pointer">
+            <X class="w-4 h-4" />
+          </button>
+        </div>
+
+        <form @submit.prevent="handleQuickRestock" class="p-6 space-y-4">
+          <div class="max-h-[55vh] overflow-y-auto border border-slate-200 dark:border-slate-800 rounded-xl">
+            <table class="w-full text-right text-xs">
+              <thead class="bg-slate-100 dark:bg-slate-800 font-bold">
+                <tr>
+                  <th class="p-2.5 text-center">توريد</th>
+                  <th class="p-2.5">الصنف</th>
+                  <th class="p-2.5 text-center">الحالي / الحد</th>
+                  <th class="p-2.5 text-center">الكمية الموردة</th>
+                  <th v-if="appStore.canViewPurchasePrices" class="p-2.5 text-center">سعر الشراء</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                <tr v-for="row in quickRestockRows" :key="row.part_id">
+                  <td class="p-2.5 text-center">
+                    <input v-model="row.selected" type="checkbox" class="w-4 h-4 accent-emerald-600" />
+                  </td>
+                  <td class="p-2.5">
+                    <div class="font-bold">{{ row.name }}</div>
+                    <div class="text-[10px] font-mono text-slate-400">{{ row.code }}</div>
+                  </td>
+                  <td class="p-2.5 text-center font-bold text-rose-600">
+                    {{ row.current_qty }} / {{ row.min_qty }}
+                  </td>
+                  <td class="p-2.5 text-center">
+                    <input
+                      v-model.number="row.add_qty"
+                      type="number"
+                      min="1"
+                      class="w-20 px-2 py-1 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-center font-bold"
+                    />
+                  </td>
+                  <td v-if="appStore.canViewPurchasePrices" class="p-2.5 text-center font-mono">
+                    {{ row.purchase_price }} ج.م
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <label class="flex items-center gap-2 font-bold cursor-pointer">
+            <input v-model="quickRestockRecordInTreasury" type="checkbox" class="w-4 h-4 accent-emerald-600" />
+            <span>خصم إجمالي تكلفة الشراء تلقائياً من الخزينة كمصروف توريد</span>
+          </label>
+
+          <div class="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              @click="quickRestockModalOpen = false"
+              class="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 font-bold cursor-pointer"
+            >
+              إلغاء
+            </button>
+            <button
+              type="submit"
+              class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer"
+            >
+              تأكيد وتوريد للمخزن
             </button>
           </div>
         </form>

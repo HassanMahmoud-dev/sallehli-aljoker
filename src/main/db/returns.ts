@@ -26,14 +26,16 @@ function generateNextExchangeNumber(): string {
   return generateNextNumber(db, 'product_exchanges', 'exchange_number', `EXC-${year}-`, 4)
 }
 
-export function listInvoiceReturns(returnType?: 'sales_return' | 'purchase_return'): InvoiceReturn[] {
+export function listInvoiceReturns(returnType?: 'sales_return' | 'purchase_return', limit = 300): InvoiceReturn[] {
+  const safeLimit = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(2000, Math.floor(Number(limit))) : 300
   let sql = 'SELECT * FROM invoice_returns'
   const params: unknown[] = []
   if (returnType) {
     sql += ' WHERE return_type = ?'
     params.push(returnType)
   }
-  sql += ' ORDER BY id DESC'
+  sql += ' ORDER BY id DESC LIMIT ?'
+  params.push(safeLimit)
   const rows = db.prepare(sql).all(...params) as InvoiceReturn[]
   const getItemsStmt = db.prepare('SELECT * FROM invoice_return_items WHERE return_id = ?')
   for (const r of rows) {
@@ -442,10 +444,11 @@ export function createPurchaseReturn(
   })
 }
 
-export function listProductExchanges(): ProductExchange[] {
+export function listProductExchanges(limit = 300): ProductExchange[] {
+  const safeLimit = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(2000, Math.floor(Number(limit))) : 300
   const rows = db
-    .prepare('SELECT * FROM product_exchanges ORDER BY id DESC')
-    .all() as ProductExchange[]
+    .prepare('SELECT * FROM product_exchanges ORDER BY id DESC LIMIT ?')
+    .all(safeLimit) as ProductExchange[]
   return rows.map((r) => ({
     ...r,
     returned_value: roundMoney(r.returned_value),

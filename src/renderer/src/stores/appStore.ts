@@ -354,8 +354,9 @@ export const useAppStore = defineStore('app', () => {
     toggleTheme()
   }
 
-  // Listen to OS theme changes if system mode is active
-  if (typeof window !== 'undefined' && window.matchMedia) {
+  // Listen to OS theme changes if system mode is active (register once)
+  if (typeof window !== 'undefined' && window.matchMedia && !(window as any).__sallehliMediaBound) {
+    ;(window as any).__sallehliMediaBound = true
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
       if (themeMode.value === 'system') {
         applyTheme()
@@ -471,11 +472,13 @@ export const useAppStore = defineStore('app', () => {
       const data = await window.api.getSettings()
       settings.value = data
       activePrintFormat.value = data.default_print_format || 'a4'
-      await fetchVersion()
-      await fetchSystemStatus()
-      await loadBusiness()
-      await fetchLookups()
-      await fetchCustomFields()
+      await Promise.all([
+        fetchVersion(),
+        fetchSystemStatus(),
+        loadBusiness(),
+        fetchLookups(),
+        fetchCustomFields()
+      ])
     } catch (e) {
       console.error('Failed to load settings', e)
     }

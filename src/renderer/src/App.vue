@@ -107,6 +107,7 @@ const navItems = computed(() => {
       { name: 'dashboard', path: '/dashboard', label: 'لوحة التحكم اليومية', icon: LayoutDashboard, module: 'dashboard' },
       { name: 'sales', path: '/sales', label: t('salesPage'), icon: ShoppingCart, module: 'sales' },
       { name: 'tickets', path: '/tickets', label: t('ticketsPage'), icon: Wrench, module: 'tickets' },
+      { name: 'warranty-returns', path: '/warranty-returns', label: 'مرتجعات الضمان', icon: ShieldCheck, module: 'tickets' },
       { name: 'customers', path: '/customers', label: t('customersPage'), icon: Users, module: 'customers' },
       { name: 'followups', path: '/followups', label: t('followupsPage') || 'المتابعات والقوالب', icon: CalendarClock, module: 'followups' }
     )
@@ -338,7 +339,7 @@ onUnmounted(() => {
       <div
         v-if="mobileMenuOpen"
         @click="mobileMenuOpen = false"
-        class="no-print fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-xs lg:hidden"
+        class="no-print fixed inset-0 z-40 bg-slate-950/60 lg:hidden"
       ></div>
 
       <!-- Right Sidebar Navigation -->
@@ -868,7 +869,7 @@ onUnmounted(() => {
     <div
       v-if="appStore.imagePreviewOpen"
       @click.self="appStore.closeImagePreview"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-3xl w-full overflow-hidden"
@@ -898,7 +899,7 @@ onUnmounted(() => {
     <!-- Global Action Loading Overlay (Add / Save / Edit / Delete / Login) -->
     <div
       v-if="appStore.actionLoading"
-      class="no-print fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 backdrop-blur-xs"
+      class="no-print fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl px-7 py-5 flex items-center gap-4 min-w-[260px]"

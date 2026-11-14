@@ -3,10 +3,26 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
+  :root {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+  }
   html, body {
     font-family: 'Segoe UI', 'Cairo', 'Tajawal', Tahoma, Geneva, Verdana, sans-serif;
     direction: rtl;
     overflow-x: hidden;
+  }
+  select option,
+  select optgroup {
+    background-color: #ffffff;
+    color: #0f172a;
+  }
+  .dark select option,
+  .dark select optgroup {
+    background-color: #0f172a;
+    color: #f1f5f9;
   }
 }
 

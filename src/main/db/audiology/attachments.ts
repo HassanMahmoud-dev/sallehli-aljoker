@@ -63,8 +63,10 @@ function resolveAttachmentPath(storedName: string): string {
 export function listPatientAttachments(
   patientId: number,
   entityType?: string,
-  entityId?: number
+  entityId?: number,
+  limit = 200
 ): PatientAttachment[] {
+  const safeLimit = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(2000, Math.floor(Number(limit))) : 200
   const clauses = ['patient_id = ?']
   const params: unknown[] = [Number(patientId)]
 
@@ -76,12 +78,14 @@ export function listPatientAttachments(
     clauses.push('entity_id = ?')
     params.push(Number(entityId))
   }
+  params.push(safeLimit)
 
   return db
     .prepare(
       `SELECT * FROM patient_attachments
        WHERE ${clauses.join(' AND ')}
-       ORDER BY id DESC`
+       ORDER BY id DESC
+       LIMIT ?`
     )
     .all(...params) as PatientAttachment[]
 }

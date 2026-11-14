@@ -983,14 +983,6 @@ async function handleDeleteImplant(id: number): Promise<void> {
                   </button>
 
                   <button
-                    @click="sendWhatsAppReminder(item)"
-                    title="تذكير المريض عبر واتساب"
-                    class="p-1.5 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 cursor-pointer"
-                  >
-                    <MessageCircle class="w-3.5 h-3.5" />
-                  </button>
-
-                  <button
                     @click="handleDeleteFollowup(item.id)"
                     title="حذف"
                     class="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-rose-600 hover:bg-rose-50 cursor-pointer"
@@ -1163,15 +1155,6 @@ async function handleDeleteImplant(id: number): Promise<void> {
                   </button>
 
                   <button
-                    v-if="order.status === 'received'"
-                    @click="sendEarmoldReadyWhatsApp(order)"
-                    title="إشعار المريض بجاهزية القالب عبر واتساب"
-                    class="p-1.5 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 cursor-pointer"
-                  >
-                    <MessageCircle class="w-3.5 h-3.5" />
-                  </button>
-
-                  <button
                     v-if="order.status !== 'remake'"
                     @click="handleRemakeEarmold(order)"
                     title="إعادة تصنيع (Remake)"
@@ -1293,7 +1276,7 @@ async function handleDeleteImplant(id: number): Promise<void> {
     <!-- ======================================================== -->
     <div
       v-if="followupModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4"
     >
       <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-lg p-6 space-y-4 text-xs">
         <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -1397,7 +1380,7 @@ async function handleDeleteImplant(id: number): Promise<void> {
     <!-- ======================================================== -->
     <div
       v-if="completeFollowupModalOpen && selectedFollowup"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4"
     >
       <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-md p-6 space-y-4 text-xs">
         <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -1473,7 +1456,7 @@ async function handleDeleteImplant(id: number): Promise<void> {
     <!-- ======================================================== -->
     <div
       v-if="earmoldModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4"
     >
       <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-xl p-6 space-y-4 text-xs">
         <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -1702,7 +1685,7 @@ async function handleDeleteImplant(id: number): Promise<void> {
     <!-- ======================================================== -->
     <div
       v-if="earmoldStatusModalOpen && selectedEarmold"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4"
     >
       <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-md p-6 space-y-4 text-xs">
         <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -1783,7 +1766,7 @@ async function handleDeleteImplant(id: number): Promise<void> {
     <!-- ======================================================== -->
     <div
       v-if="implantModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4"
     >
       <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-xl p-6 space-y-4 text-xs">
         <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -1945,7 +1928,7 @@ async function handleDeleteImplant(id: number): Promise<void> {
     <!-- ======================================================== -->
     <div
       v-if="implantSessionModalOpen && selectedImplant"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4"
     >
       <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-lg p-6 space-y-4 text-xs">
         <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">

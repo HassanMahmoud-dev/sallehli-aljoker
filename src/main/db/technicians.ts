@@ -3,8 +3,9 @@ import { isDemoDataHidden } from './demo'
 import { getBusinessState } from './business'
 import type { Technician } from '../../shared/types'
 
-export function listTechnicians(): Technician[] {
+export function listTechnicians(limit = 200): Technician[] {
   const db = getDb()
+  const safeLimit = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(2000, Math.floor(Number(limit))) : 200
   const bType = getBusinessState().type
   const demoFilter = isDemoDataHidden()
     ? ' WHERE tech.is_demo = 0'
@@ -26,9 +27,10 @@ export function listTechnicians(): Technician[] {
           WHERE tt.technician_id = tech.id AND tt.transaction_type = 'tech_commission'), 0) as total_paid_commission
        FROM technicians tech
        ${demoFilter}
-       ORDER BY tech.id DESC`
+       ORDER BY tech.id DESC
+       LIMIT ?`
     )
-    .all() as Technician[]
+    .all(safeLimit) as Technician[]
 }
 
 export function saveTechnician(data: Partial<Technician>): Technician {

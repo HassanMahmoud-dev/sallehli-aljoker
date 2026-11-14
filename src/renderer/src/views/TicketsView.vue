@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { plain } from '@renderer/utils/plain'
+import { debounce } from '@renderer/utils/debounce'
 import { swalSuccess, swalError, swalWarning, swalConfirm } from '@renderer/utils/swal'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
@@ -126,6 +127,7 @@ const form = ref<{
   id?: number
   ticket_number?: string
   customer_id?: number
+  customer_code: string
   customer_name: string
   customer_phone: string
   customer_phone2: string
@@ -144,6 +146,7 @@ const form = ref<{
   scheduled_date: string
   inspection_fee: number
   labor_cost: number
+  workshop_percent: number
   discount: number
   paid_amount: number
   payment_method: MaintenanceTicket['payment_method']
@@ -170,6 +173,7 @@ const form = ref<{
   notes: string
   parts: TicketPartItem[]
 }>({
+  customer_code: '',
   customer_name: '',
   customer_phone: '',
   customer_phone2: '',
@@ -188,6 +192,7 @@ const form = ref<{
   scheduled_date: new Date().toISOString().slice(0, 10),
   inspection_fee: 150,
   labor_cost: 0,
+  workshop_percent: 0,
   discount: 0,
   paid_amount: 0,
   payment_method: 'cash',
@@ -301,11 +306,13 @@ function getUsedFormProductPieces(
 }
 
 function clampNonNegativeField(
-  field: 'inspection_fee' | 'labor_cost' | 'discount' | 'paid_amount' | 'external_cost'
+  field: 'inspection_fee' | 'labor_cost' | 'workshop_percent' | 'discount' | 'paid_amount' | 'external_cost'
 ): void {
   const val = Number(form.value[field])
   if (!Number.isFinite(val) || val < 0) {
     form.value[field] = 0
+  } else if (field === 'workshop_percent' && val > 100) {
+    form.value[field] = 100
   }
 }
 
@@ -383,21 +390,43 @@ function markFormLoanerReturnedNow(): void {
   form.value.loaner_returned_at = new Date().toISOString().slice(0, 19).replace('T', ' ')
 }
 
+const computedWorkshopAmount = computed(() =>
+  Math.round(
+    (Number(form.value.inspection_fee || 0) + computedPartsTotal.value) *
+      (Number(form.value.workshop_percent || 0) / 100) *
+      100
+  ) / 100
+)
+
+const computedExpensesTotal = computed(() =>
+  Math.round(
+    (Number(form.value.inspection_fee || 0) +
+      computedPartsTotal.value +
+      computedWorkshopAmount.value) *
+      100
+  ) / 100
+)
+
 const computedTotalAmount = computed(() =>
   Math.max(
     0,
-    Number(form.value.inspection_fee || 0) +
-      Number(form.value.labor_cost || 0) +
-      computedPartsTotal.value -
-      Number(form.value.discount || 0)
+    Math.round((computedExpensesTotal.value - Number(form.value.discount || 0)) * 100) / 100
   )
 )
 
+const computedFinalNet = computed(() =>
+  Math.round((Number(form.value.paid_amount || 0) - computedExpensesTotal.value) * 100) / 100
+)
+
 const computedRemainingAmount = computed(() =>
-  Math.max(0, computedTotalAmount.value - Number(form.value.paid_amount || 0))
+  Math.max(
+    0,
+    Math.round((computedTotalAmount.value - Number(form.value.paid_amount || 0)) * 100) / 100
+  )
 )
 
 async function loadData(): Promise<void> {
+  const canUseProducts = appStore.businessProfile.modules.includes('products')
   const [ticketRows, techRows, partRows, custRows, prodRows, serialRows] = await Promise.all([
     window.api.listTickets({
       search: searchQuery.value,
@@ -407,8 +436,8 @@ async function loadData(): Promise<void> {
     window.api.listTechnicians(),
     window.api.listSpareParts(),
     window.api.listCustomers(''),
-    window.api.listProducts({ activeOnly: true }),
-    window.api.listProductSerials({ status: 'in_stock' })
+    canUseProducts ? window.api.listProducts({ activeOnly: true }) : Promise.resolve([]),
+    canUseProducts ? window.api.listProductSerials({ status: 'in_stock' }) : Promise.resolve([])
   ])
   tickets.value = ticketRows
   technicians.value = techRows
@@ -438,6 +467,7 @@ const filteredCustomersForSelection = computed(() => {
     .filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
+        (c.customer_code && c.customer_code.toLowerCase().includes(q)) ||
         c.phone.toLowerCase().includes(q) ||
         (c.phone2 && c.phone2.toLowerCase().includes(q)) ||
         (c.area && c.area.toLowerCase().includes(q))
@@ -447,6 +477,7 @@ const filteredCustomersForSelection = computed(() => {
 
 async function selectCustomerFromSuggestion(c: Customer): Promise<void> {
   form.value.customer_id = c.id
+  form.value.customer_code = c.customer_code || ''
   form.value.customer_name = c.name
   form.value.customer_phone = c.phone
   form.value.customer_phone2 = c.phone2 || ''
@@ -465,8 +496,22 @@ function hideCustomerSuggestionsDelayed(): void {
   }, 180)
 }
 
-watch([searchQuery, statusFilter, serviceTypeFilter], () => {
+const debouncedLoadTickets = debounce(() => {
   loadData()
+}, 250)
+
+watch(searchQuery, () => {
+  debouncedLoadTickets()
+})
+
+watch([statusFilter, serviceTypeFilter], () => {
+  loadData()
+})
+
+watch(selectedPartId, (val) => {
+  if (val) {
+    addPartToTicket()
+  }
 })
 
 async function handlePhoneLookup(): Promise<void> {
@@ -482,6 +527,7 @@ async function handlePhoneLookup(): Promise<void> {
   if (res.customer) {
     if (!form.value.id) {
       form.value.customer_id = res.customer.id
+      form.value.customer_code = res.customer.customer_code || ''
       form.value.customer_name = res.customer.name
       form.value.customer_phone2 = res.customer.phone2 || ''
       form.value.customer_area = res.customer.area || ''
@@ -535,6 +581,37 @@ function selectExistingAppliance(app: CustomerAppliance): void {
   }
 }
 
+const sortedSparePartOptions = computed(() => {
+  const ticketBrand = (form.value.brand || '').trim().toLowerCase()
+  const ticketBrandShort = ticketBrand.split('(')[0].trim()
+  const ticketAppliance = (form.value.appliance_type || '').trim().toLowerCase()
+
+  const isMatch = (p: SparePart): boolean => {
+    const pb = (p.brand || '').toLowerCase()
+    const pc = (p.category || '').toLowerCase()
+    const brandMatch =
+      Boolean(ticketBrandShort) &&
+      (pb.includes(ticketBrandShort) || (ticketBrand && pb.includes(ticketBrand)))
+    const catMatch = Boolean(ticketAppliance) && pc.includes(ticketAppliance.split(' ')[0])
+    return brandMatch || catMatch
+  }
+
+  return [...spareParts.value]
+    .sort((a, b) => {
+      const am = isMatch(a) ? 0 : 1
+      const bm = isMatch(b) ? 0 : 1
+      return am - bm
+    })
+    .map((p) => {
+      const compatible = isMatch(p)
+      return {
+        value: p.id,
+        label: `${compatible ? '★ متوافق | ' : ''}[${p.code}] ${p.name} — سعر البيع: ${p.selling_price} ج.م (المتاح: ${p.quantity})`,
+        disabled: p.quantity <= 0
+      }
+    })
+})
+
 function addPartToTicket(): void {
   if (!selectedPartId.value) return
   const part = spareParts.value.find((p) => p.id === selectedPartId.value)
@@ -543,6 +620,7 @@ function addPartToTicket(): void {
   const qty = Number(selectedPartQty.value)
   if (!Number.isFinite(qty) || qty <= 0) {
     swalError('كمية غير صالحة', 'يجب أن تكون الكمية المضافة أكبر من صفر')
+    selectedPartId.value = null
     return
   }
 
@@ -554,6 +632,7 @@ function addPartToTicket(): void {
       'الكمية تتجاوز المخزون المتاح',
       `المتاح حالياً من (${part.name}) لهذه التذكرة هو ${remaining} فقط`
     )
+    selectedPartId.value = null
     return
   }
 
@@ -747,6 +826,7 @@ function openCreateModal(): void {
   serialOrInvoiceQuery.value = ''
   showCustomerSuggestions.value = false
   form.value = {
+    customer_code: '',
     customer_name: '',
     customer_phone: '',
     customer_phone2: '',
@@ -765,6 +845,7 @@ function openCreateModal(): void {
     scheduled_date: new Date().toISOString().slice(0, 10),
     inspection_fee: appStore.settings.default_inspection_fee || 150,
     labor_cost: 0,
+    workshop_percent: 0,
     discount: 0,
     paid_amount: 0,
     payment_method: 'cash',
@@ -807,6 +888,7 @@ function openEditModal(ticket: MaintenanceTicket): void {
     id: ticket.id,
     ticket_number: ticket.ticket_number,
     customer_id: ticket.customer_id,
+    customer_code: ticket.customer_code || '',
     customer_name: ticket.customer_name,
     customer_phone: ticket.customer_phone,
     customer_phone2: ticket.customer_phone2 || '',
@@ -825,6 +907,7 @@ function openEditModal(ticket: MaintenanceTicket): void {
     scheduled_date: ticket.scheduled_date,
     inspection_fee: ticket.inspection_fee,
     labor_cost: ticket.labor_cost,
+    workshop_percent: ticket.workshop_percent ?? 0,
     discount: ticket.discount,
     paid_amount: ticket.paid_amount,
     payment_method: ticket.payment_method,
@@ -1234,14 +1317,6 @@ onMounted(async () => {
                   </button>
                   <button
                     type="button"
-                    @click="appStore.sendWhatsAppToCustomer(ticket)"
-                    class="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 transition cursor-pointer"
-                    title="إرسال واتساب للعميل"
-                  >
-                    <MessageCircle class="w-4 h-4" />
-                  </button>
-                  <button
-                    type="button"
                     @click="openEditModal(ticket)"
                     class="p-1.5 rounded-lg bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-700 dark:bg-slate-800 dark:text-slate-300 transition cursor-pointer"
                     title="تعديل الطلب"
@@ -1274,7 +1349,7 @@ onMounted(async () => {
     <!-- ======================================================= -->
     <div
       v-if="modalOpen"
-      class="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/75 backdrop-blur-xs p-4 overflow-y-auto"
+      class="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/75 p-4 overflow-y-auto"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[93vh] flex flex-col overflow-hidden"
@@ -1437,6 +1512,12 @@ onMounted(async () => {
                 >
                   <div>
                     <div class="font-black text-slate-900 dark:text-white">
+                      <span
+                        v-if="cust.customer_code"
+                        class="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 ml-1.5"
+                      >
+                        {{ cust.customer_code }}
+                      </span>
                       {{ cust.name }}
                       <span
                         v-if="cust.area"
@@ -1461,7 +1542,16 @@ onMounted(async () => {
               </div>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+              <div>
+                <label class="block font-bold mb-1">كود العميل</label>
+                <input
+                  v-model="form.customer_code"
+                  type="text"
+                  placeholder="مثال: C-101"
+                  class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono font-bold"
+                />
+              </div>
               <div>
                 <label class="block font-bold mb-1">رقم الموبايل الأساسي *</label>
                 <input
@@ -1818,13 +1908,7 @@ onMounted(async () => {
                 <SearchableSelect
                   v-model="selectedPartId"
                   placeholder="-- اختر صنفاً لإضافته --"
-                  :options="
-                    spareParts.map((p) => ({
-                      value: p.id,
-                      label: `[${p.code}] ${p.name} — سعر البيع: ${p.selling_price} ج.م (المتاح: ${p.quantity})`,
-                      disabled: p.quantity <= 0
-                    }))
-                  "
+                  :options="sortedSparePartOptions"
                 />
               </div>
 
@@ -2180,15 +2264,24 @@ onMounted(async () => {
                 />
               </div>
               <div>
-                <label class="block font-bold mb-1">المصنعية والإصلاح</label>
-                <input
-                  v-model.number="form.labor_cost"
-                  @input="clampNonNegativeField('labor_cost')"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
-                />
+                <label class="block font-bold mb-1">نسبة الورشة (%)</label>
+                <div class="relative">
+                  <input
+                    v-model.number="form.workshop_percent"
+                    @input="clampNonNegativeField('workshop_percent')"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    class="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold"
+                  />
+                  <span
+                    v-if="computedWorkshopAmount > 0"
+                    class="block text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 font-bold"
+                  >
+                    = {{ computedWorkshopAmount }} ج.م
+                  </span>
+                </div>
               </div>
               <div>
                 <label class="block font-bold mb-1">إجمالي {{ t('parts') }}</label>
@@ -2212,7 +2305,7 @@ onMounted(async () => {
               </div>
               <div>
                 <label class="block font-bold mb-1 text-emerald-700 dark:text-emerald-400">
-                  المبلغ المدفوع (المحصل)
+                  المبلغ المدفوع
                 </label>
                 <input
                   v-model.number="form.paid_amount"
@@ -2252,23 +2345,32 @@ onMounted(async () => {
               </div>
 
               <div
-                class="md:col-span-2 flex items-center justify-around p-3 rounded-xl bg-white dark:bg-slate-900 border border-blue-200 dark:border-slate-700"
+                class="md:col-span-2 grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 rounded-xl bg-white dark:bg-slate-900 border border-blue-200 dark:border-slate-700"
               >
                 <div class="text-center">
-                  <span class="text-slate-500 block">الإجمالي النهائي</span>
-                  <span class="text-lg font-black text-blue-600 dark:text-blue-400">
-                    {{ computedTotalAmount }} ج.م
+                  <span class="text-slate-500 block">المصاريف</span>
+                  <span class="text-base font-black text-amber-600 dark:text-amber-400">
+                    {{ computedExpensesTotal }} ج.م
                   </span>
                 </div>
                 <div class="text-center">
                   <span class="text-slate-500 block">المدفوع</span>
-                  <span class="text-lg font-black text-emerald-600">
+                  <span class="text-base font-black text-emerald-600">
                     {{ form.paid_amount }} ج.م
                   </span>
                 </div>
                 <div class="text-center">
+                  <span class="text-slate-500 block">النهائي</span>
+                  <span
+                    class="text-base font-black"
+                    :class="computedFinalNet >= 0 ? 'text-blue-600 dark:text-blue-400' : 'text-rose-600'"
+                  >
+                    {{ computedFinalNet }} ج.م
+                  </span>
+                </div>
+                <div class="text-center">
                   <span class="text-slate-500 block">المتبقي على العميل</span>
-                  <span class="text-lg font-black text-rose-600">
+                  <span class="text-base font-black text-rose-600">
                     {{ computedRemainingAmount }} ج.م
                   </span>
                 </div>
@@ -2309,7 +2411,7 @@ onMounted(async () => {
     <!-- Audiogram Chart Preview Modal for Ticket (Phase 4E) -->
     <div
       v-if="previewAudiogramOpen && hearingSummary?.latestTest"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4"
     >
       <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-2xl p-6 space-y-4 text-xs">
         <div class="flex items-center justify-between border-b pb-3">

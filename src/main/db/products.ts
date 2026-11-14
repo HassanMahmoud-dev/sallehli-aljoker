@@ -26,6 +26,7 @@ export function listProducts(filters?: {
   search?: string
   type?: string
   activeOnly?: boolean
+  limit?: number
 }): Product[] {
   const q = `%${(filters?.search || '').trim()}%`
   let sql = `
@@ -62,7 +63,10 @@ export function listProducts(filters?: {
     sql += ` AND (p.is_demo = 0 OR p.business_type = '${bType}' OR p.business_type IS NULL OR p.business_type = '')`
   }
 
-  sql += ' ORDER BY p.id DESC'
+  const limitNum = Number(filters?.limit)
+  const safeLimit = Number.isFinite(limitNum) && limitNum > 0 ? Math.min(2000, Math.floor(limitNum)) : 500
+  sql += ' ORDER BY p.id DESC LIMIT ?'
+  params.push(safeLimit)
   const rawRows = db.prepare(sql).all(...params) as Record<string, unknown>[]
   const products = rawRows.map(normalizeProductRow)
 

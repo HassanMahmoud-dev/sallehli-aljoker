@@ -347,6 +347,8 @@ export interface IElectronAPI {
     status?: string
     service_type?: string
     technician_id?: number | null
+    warranty_returns_only?: boolean
+    active_warranty_only?: boolean
     limit?: number
   }) => Promise<MaintenanceTicket[]>
   saveTicket: (

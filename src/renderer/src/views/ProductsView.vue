@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { plain } from '@renderer/utils/plain'
+import { debounce } from '@renderer/utils/debounce'
 import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { useAppStore } from '@renderer/stores/appStore'
 import { compressImageFile } from '@renderer/utils/imageHelper'
@@ -273,7 +274,15 @@ async function loadData(): Promise<void> {
   allSerials.value = sList
 }
 
-watch([searchQuery, serialStatusFilter], () => {
+const debouncedLoadProducts = debounce(() => {
+  loadData()
+}, 250)
+
+watch(searchQuery, () => {
+  debouncedLoadProducts()
+})
+
+watch(serialStatusFilter, () => {
   loadData()
 })
 
@@ -1165,7 +1174,7 @@ onMounted(loadData)
     <!-- MODAL 1: ADD / EDIT PRODUCT -->
     <div
       v-if="productModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 overflow-y-auto"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 overflow-y-auto"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden"
@@ -1642,7 +1651,7 @@ onMounted(loadData)
     <!-- MODAL 2: MANAGE PRODUCT SERIALS -->
     <div
       v-if="serialsModalOpen && selectedProductForSerials"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 overflow-y-auto"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 overflow-y-auto"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden"
@@ -1819,7 +1828,7 @@ onMounted(loadData)
     <!-- MODAL 3: STOCK ADJUSTMENT (PACKS / PIECES) -->
     <div
       v-if="stockModalOpen && selectedProductForStock"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
     >
       <div
         class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"

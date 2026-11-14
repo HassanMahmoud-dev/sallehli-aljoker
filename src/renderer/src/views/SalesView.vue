@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { plain } from '@renderer/utils/plain'
+import { debounce } from '@renderer/utils/debounce'
 import { swalSuccess, swalError, swalConfirm } from '@renderer/utils/swal'
 import { useAppStore } from '@renderer/stores/appStore'
 import { PAYMENT_METHODS } from '@renderer/constants/appliances'
@@ -361,6 +362,7 @@ const detailedForm = ref<{
   discount: number
   paid_amount: number
   payment_method: string
+  expected_delivery_date: string
   notes: string
   recordInTreasury: boolean
   items: Array<
@@ -379,6 +381,7 @@ const detailedForm = ref<{
   discount: 0,
   paid_amount: 0,
   payment_method: 'cash',
+  expected_delivery_date: '',
   notes: '',
   recordInTreasury: true,
   items: []
@@ -699,6 +702,7 @@ async function handleSaveDetailedInvoice(shouldPrint = true): Promise<void> {
           discount: Number(detailedForm.value.discount || 0),
           paid_amount: Number(detailedForm.value.paid_amount || 0),
           payment_method: detailedForm.value.payment_method,
+          expected_delivery_date: detailedForm.value.expected_delivery_date || null,
           notes: detailedForm.value.notes,
           recordInTreasury: detailedForm.value.recordInTreasury,
           items: detailedForm.value.items.map((it) => ({
@@ -739,6 +743,7 @@ async function handleSaveDetailedInvoice(shouldPrint = true): Promise<void> {
         discount: 0,
         paid_amount: 0,
         payment_method: 'cash',
+        expected_delivery_date: '',
         notes: '',
         recordInTreasury: true,
         items: []
@@ -1205,7 +1210,15 @@ async function loadAll(): Promise<void> {
   exchanges.value = exs
 }
 
-watch([searchQuery, filterInvoiceType, onlyWithRemaining], () => {
+const debouncedLoadSales = debounce(() => {
+  loadAll()
+}, 250)
+
+watch(searchQuery, () => {
+  debouncedLoadSales()
+})
+
+watch([filterInvoiceType, onlyWithRemaining], () => {
   loadAll()
 })
 
@@ -1874,6 +1887,15 @@ onMounted(async () => {
           </div>
 
           <div>
+            <label class="block font-bold mb-1">تاريخ التسليم المتوقع (اختياري للتنبيه قبلها بيومين)</label>
+            <input
+              v-model="detailedForm.expected_delivery_date"
+              type="date"
+              class="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-mono"
+            />
+          </div>
+
+          <div>
             <label class="block font-bold mb-1">ملاحظات الفاتورة وشروط الأقساط</label>
             <textarea
               v-model="detailedForm.notes"
@@ -2157,7 +2179,7 @@ onMounted(async () => {
     <!-- ======================================================= -->
     <div
       v-if="installmentModalOpen && invoiceToCollect"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
     >
       <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
         <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
@@ -2234,7 +2256,7 @@ onMounted(async () => {
     <!-- ======================================================= -->
     <div
       v-if="salesReturnModalOpen && invoiceToReturn"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
     >
       <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
         <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
@@ -2405,7 +2427,7 @@ onMounted(async () => {
     <!-- ======================================================= -->
     <div
       v-if="exchangeModalOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4 overflow-y-auto"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 overflow-y-auto"
     >
       <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden">
         <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">

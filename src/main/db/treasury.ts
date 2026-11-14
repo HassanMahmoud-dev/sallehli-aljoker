@@ -566,43 +566,67 @@ export function getFinancialReport(dateFrom?: string, dateTo?: string): Financia
           AND ${demoMtAliasCond}), 0) as total_earned_commission,
         COALESCE((SELECT SUM(tt.amount) FROM treasury_transactions tt
           WHERE tt.technician_id = tech.id AND tt.transaction_type = 'tech_commission'
-          AND ${demoTtAliasCond}), 0) as total_paid_commission
+          AND ${demoTtAliasCond}), 0) as total_paid_commission,
+        COALESCE((SELECT COUNT(*) FROM maintenance_tickets mt
+          WHERE mt.technician_id = tech.id AND (mt.priority = 'warranty_return' OR mt.is_under_previous_warranty = 1)
+          AND mt.status != 'cancelled'
+          AND ${demoMtAliasCond}
+          AND date(mt.created_at) BETWEEN ? AND ?), 0) as warranty_returns_count,
+        COALESCE((SELECT SUM(mt.total_amount - COALESCE(mt.parts_cost_total, 0) - COALESCE(mt.commission_amount, 0)) FROM maintenance_tickets mt
+          WHERE mt.technician_id = tech.id AND mt.status IN ('repaired', 'delivered')
+          AND ${demoMtAliasCond}
+          AND date(mt.created_at) BETWEEN ? AND ?), 0) as period_net_profit
        FROM technicians tech
        WHERE ${demoTechCond}
        ORDER BY tech.id ASC`
     )
-    .all(from, to, from, to, from, to, from, to) as Array<
-    Omit<TechnicianStatementItem, 'remaining_balance'>
+    .all(from, to, from, to, from, to, from, to, from, to, from, to) as Array<
+    Omit<TechnicianStatementItem, 'remaining_balance'> & {
+      warranty_returns_count?: number
+      period_net_profit?: number
+    }
   >
 
-  const statementsWithBalance: TechnicianStatementItem[] = technicianStatements.map((s) => ({
-    ...s,
-    remaining_balance: Math.max(
-      0,
-      Math.round((s.total_earned_commission || 0) - (s.total_paid_commission || 0))
-    )
-  }))
+  const statementsWithBalance: TechnicianStatementItem[] = technicianStatements.map((s) => {
+    const completed = Number(s.completed_tickets_count || 0)
+    const returnsCount = Number(s.warranty_returns_count || 0)
+    const qualityScore = completed > 0 ? Math.max(0, Math.round(100 - (returnsCount / completed) * 100)) : 100
+    return {
+      ...s,
+      warranty_returns_count: returnsCount,
+      period_net_profit: Math.round(Number(s.period_net_profit || 0)),
+      quality_score: qualityScore,
+      remaining_balance: Math.max(
+        0,
+        Math.round((s.total_earned_commission || 0) - (s.total_paid_commission || 0))
+      )
+    } as TechnicianStatementItem
+  })
 
   // 5. Top Appliances & Brands
   const topAppliances = db
     .prepare(
-      `SELECT appliance_type, COUNT(*) as count, COALESCE(SUM(total_amount), 0) as revenue
+      `SELECT appliance_type, COUNT(*) as count,
+              COALESCE(SUM(total_amount), 0) as revenue,
+              COALESCE(SUM(total_amount - COALESCE(parts_cost_total, 0) - COALESCE(commission_amount, 0)), 0) as profit
        FROM maintenance_tickets
        WHERE ${demoMtCond} AND date(created_at) BETWEEN ? AND ?
        GROUP BY appliance_type
        ORDER BY count DESC LIMIT 10`
     )
-    .all(from, to) as Array<{ appliance_type: string; count: number; revenue: number }>
+    .all(from, to) as Array<{ appliance_type: string; count: number; revenue: number; profit: number }>
 
   const topBrands = db
     .prepare(
-      `SELECT brand, COUNT(*) as count, COALESCE(SUM(total_amount), 0) as revenue
+      `SELECT brand, COUNT(*) as count,
+              COALESCE(SUM(total_amount), 0) as revenue,
+              COALESCE(SUM(total_amount - COALESCE(parts_cost_total, 0) - COALESCE(commission_amount, 0)), 0) as profit
        FROM maintenance_tickets
        WHERE ${demoMtCond} AND date(created_at) BETWEEN ? AND ?
        GROUP BY brand
        ORDER BY count DESC LIMIT 10`
     )
-    .all(from, to) as Array<{ brand: string; count: number; revenue: number }>
+    .all(from, to) as Array<{ brand: string; count: number; revenue: number; profit: number }>
 
   const transactions = db
     .prepare(

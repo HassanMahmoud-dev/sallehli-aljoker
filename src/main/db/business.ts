@@ -12,7 +12,10 @@ import { seedDefaults } from './schema/seeds'
 import {
   signBusinessType,
   signBusinessTypeForMachine,
-  verifyPassword
+  verifyPassword,
+  wasHmacKeyJustCreated,
+  verifyLegacyBusinessSignatures,
+  safeHexEqual
 } from './crypto'
 import type { BusinessType, BusinessState } from '../../shared/types'
 import {
@@ -131,18 +134,32 @@ export function getBusinessState(): BusinessState {
   const expectedSig = signBusinessType(rawType)
   const profile = getBusinessProfile(businessType)
 
+  let sigValid = Boolean(isValidType && sigRow && safeHexEqual(sigRow.value, expectedSig))
   let machineBound = true
-  if (isValidType && sigRow && sigRow.value === expectedSig) {
-    const msig = readSetting('business_type_msig')
+  const msig = readSetting('business_type_msig')
+  const legacyMigrated = readSetting('legacy_sig_migrated') === '1'
+
+  if (!sigValid && !legacyMigrated && isValidType && sigRow && wasHmacKeyJustCreated()) {
+    if (verifyLegacyBusinessSignatures(rawType, sigRow.value, msig)) {
+      writeSetting('business_type_sig', expectedSig)
+      writeSetting('business_type_msig', signBusinessTypeForMachine(rawType))
+      writeSetting('legacy_sig_migrated', '1')
+      sigValid = true
+      machineBound = true
+    }
+  } else if (sigValid) {
+    if (!legacyMigrated) {
+      writeSetting('legacy_sig_migrated', '1')
+    }
     if (msig) {
-      machineBound = msig === signBusinessTypeForMachine(rawType)
+      machineBound = safeHexEqual(msig, signBusinessTypeForMachine(rawType))
     } else {
       // Database created before machine binding (v1.2.2 and older): bind it to this device now.
       writeSetting('business_type_msig', signBusinessTypeForMachine(rawType))
     }
   }
 
-  if (!isValidType || !sigRow || sigRow.value !== expectedSig || !machineBound) {
+  if (!isValidType || !sigValid || !machineBound) {
     return {
       type: businessType,
       locked: true,

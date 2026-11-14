@@ -1,18 +1,21 @@
 import { getDb, runTransaction } from '../connection'
 import { isDemoDataHidden } from '../demo'
+import { clampLimit } from '../utils'
 import type { SparePart, InventoryMovement } from '../../../shared/types'
 
-export function listElectSpareParts(search = ''): SparePart[] {
+export function listElectSpareParts(search = '', limit = 500): SparePart[] {
   const db = getDb()
   const q = `%${search.trim()}%`
+  const safeLimit = clampLimit(limit, 500)
   const demoFilter = isDemoDataHidden() ? ' AND is_demo = 0' : ''
   return db
     .prepare(
       `SELECT * FROM elect_spare_parts
        WHERE (name LIKE ? OR code LIKE ? OR category LIKE ? OR brand LIKE ?)${demoFilter}
-       ORDER BY id DESC`
+       ORDER BY id DESC
+       LIMIT ?`
     )
-    .all(q, q, q, q) as SparePart[]
+    .all(q, q, q, q, safeLimit) as SparePart[]
 }
 
 export function saveElectSparePart(data: Partial<SparePart>): SparePart {

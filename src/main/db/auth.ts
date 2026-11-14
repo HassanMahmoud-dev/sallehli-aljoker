@@ -231,14 +231,15 @@ export function logoutUser(token?: string | null): void {
   removeSessionFromMemory(token)
 }
 
-export function listUsers(): User[] {
+export function listUsers(limit = 200): User[] {
   const db = getDb()
+  const safeLimit = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(2000, Math.floor(Number(limit))) : 200
   return db
     .prepare(
       `SELECT id, username, full_name, phone, role, business_type, is_active, subscription_start, subscription_end, notes, created_at
-       FROM users ORDER BY id ASC`
+       FROM users ORDER BY id ASC LIMIT ?`
     )
-    .all() as User[]
+    .all(safeLimit) as User[]
 }
 
 export function saveUser(

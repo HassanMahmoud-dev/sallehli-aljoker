@@ -323,7 +323,7 @@ onMounted(async () => {
     <!-- Add / Edit Custom Field Modal -->
     <div
       v-if="modalOpen"
-      class="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 text-xs"
+      class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 text-xs"
     >
       <div class="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 dark:border-slate-700 space-y-4">
         <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">

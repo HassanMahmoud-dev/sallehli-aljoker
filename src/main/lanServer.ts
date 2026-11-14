@@ -335,6 +335,29 @@ function readJsonBody(req: http.IncomingMessage): Promise<any> {
   })
 }
 
+function sanitizeProxyHeaders(
+  headers: http.IncomingHttpHeaders,
+  targetHost: string
+): Record<string, string | string[] | undefined> {
+  const blocked = new Set([
+    'connection',
+    'keep-alive',
+    'proxy-connection',
+    'transfer-encoding',
+    'upgrade',
+    'cookie',
+    'authorization'
+  ])
+  const out: Record<string, string | string[] | undefined> = {}
+  for (const [k, v] of Object.entries(headers)) {
+    if (!blocked.has(k.toLowerCase())) {
+      out[k] = v
+    }
+  }
+  out.host = targetHost
+  return out
+}
+
 function handleDevProxy(req: http.IncomingMessage, res: http.ServerResponse, devBaseUrl: string): void {
   try {
     const target = new URL(req.url || '/', devBaseUrl)
@@ -342,7 +365,7 @@ function handleDevProxy(req: http.IncomingMessage, res: http.ServerResponse, dev
       target,
       {
         method: req.method,
-        headers: { ...req.headers, host: target.host }
+        headers: sanitizeProxyHeaders(req.headers, target.host)
       },
       (proxyRes) => {
         res.writeHead(proxyRes.statusCode || 200, proxyRes.headers)
@@ -482,8 +505,14 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       }
 
       const clientIp = getClientIp(req)
+      const loginUsername =
+        channel === 'auth:login' && typeof args[0] === 'string'
+          ? `user:${args[0].trim().toLowerCase()}`
+          : ''
       if (channel === 'auth:login') {
-        const rateStatus = checkLoginRateLimit(clientIp)
+        const ipRateStatus = checkLoginRateLimit(clientIp)
+        const userRateStatus = loginUsername ? checkLoginRateLimit(loginUsername) : { allowed: true }
+        const rateStatus = !ipRateStatus.allowed ? ipRateStatus : userRateStatus
         if (!rateStatus.allowed) {
           res.setHeader('Retry-After', String(rateStatus.retryAfterSec || 60))
           res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8' })
@@ -502,6 +531,9 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       if (channel === 'auth:login') {
         const succeeded = Boolean(result && typeof result === 'object' && result.success === true)
         recordLoginAttempt(clientIp, succeeded)
+        if (loginUsername) {
+          recordLoginAttempt(loginUsername, succeeded)
+        }
       }
 
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })

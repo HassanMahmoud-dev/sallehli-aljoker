@@ -6,8 +6,9 @@ import { getBusinessState } from './business'
 import type { Supplier, SupplierPayment, SupplierStatement, SupplierStatementEntry, PurchaseInvoice, PurchaseItem } from '../../shared/types'
 import type { SessionInfo } from '../session'
 
-export function listSuppliers(search = ''): Supplier[] {
+export function listSuppliers(search = '', limit = 500): Supplier[] {
   const q = `%${search.trim()}%`
+  const safeLimit = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(2000, Math.floor(Number(limit))) : 500
   const hasPurchaseInvoices = Boolean(
     db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'purchase_invoices'")
@@ -32,9 +33,10 @@ export function listSuppliers(search = ''): Supplier[] {
         ${invoicesSubqueries}
        FROM suppliers s
        WHERE (s.name LIKE ? OR s.company_name LIKE ? OR s.phone LIKE ? OR s.phone2 LIKE ? OR s.address LIKE ?)${demoFilter}
-       ORDER BY s.id DESC`
+       ORDER BY s.id DESC
+       LIMIT ?`
     )
-    .all(q, q, q, q, q) as Supplier[]
+    .all(q, q, q, q, q, safeLimit) as Supplier[]
 }
 
 export function saveSupplier(data: Partial<Supplier>): Supplier {
@@ -486,6 +488,7 @@ export function listPurchaseInvoices(filters?: {
   search?: string
   purchase_type?: string
   supplier_id?: number | null
+  limit?: number
 }): PurchaseInvoice[] {
   const q = `%${(filters?.search || '').trim()}%`
   let sql = `
@@ -517,7 +520,10 @@ export function listPurchaseInvoices(filters?: {
     sql += ' AND pi.is_demo = 0'
   }
 
-  sql += ' ORDER BY pi.id DESC'
+  const limitNum = Number(filters?.limit)
+  const safeLimit = Number.isFinite(limitNum) && limitNum > 0 ? Math.min(2000, Math.floor(limitNum)) : 300
+  sql += ' ORDER BY pi.id DESC LIMIT ?'
+  params.push(safeLimit)
   const rawRows = db.prepare(sql).all(...params) as Record<string, unknown>[]
   const invoices = rawRows.map(normalizePurchaseInvoiceRow)
 

@@ -46,7 +46,7 @@ async function handleConfirmSetup(): Promise<void> {
 <template>
   <div
     v-if="appStore.isAuthenticated && appStore.needsBusinessSetup && appStore.isSuperAdmin"
-    class="no-print fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-4 overflow-y-auto"
+    class="no-print fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/80 p-4 overflow-y-auto"
   >
     <div
       class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl max-w-3xl w-full p-6 md:p-8 space-y-6"

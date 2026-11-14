@@ -1,5 +1,5 @@
 import { getDb, runTransaction } from './connection'
-import { parseJsonObject, parseJsonArray, stringifyExtraData } from './utils'
+import { parseJsonObject, parseJsonArray, stringifyExtraData, clampLimit } from './utils'
 import type { Customer, CustomerAppliance, MaintenanceTicket } from '../../shared/types'
 import { normalizeTicketRow } from './tickets'
 import { isDemoDataHidden } from './demo'
@@ -22,9 +22,10 @@ export function normalizeApplianceRow(row: Record<string, unknown>): CustomerApp
   }
 }
 
-export function listCustomers(search = ''): Customer[] {
+export function listCustomers(search = '', limit = 500): Customer[] {
   const db = getDb()
   const q = `%${search.trim()}%`
+  const safeLimit = clampLimit(limit, 500)
   const bType = getBusinessState().type
   const demoFilter = isDemoDataHidden()
     ? ' AND c.is_demo = 0'
@@ -35,14 +36,15 @@ export function listCustomers(search = ''): Customer[] {
         (SELECT COUNT(*) FROM maintenance_tickets t WHERE t.customer_id = c.id) as tickets_count,
         (SELECT COUNT(*) FROM hearing_tests ht WHERE ht.patient_id = c.id) as hearing_tests_count
        FROM customers c
-       WHERE (c.name LIKE ? OR c.phone LIKE ? OR c.phone2 LIKE ? OR c.area LIKE ? OR c.extra_data LIKE ?
+       WHERE (c.name LIKE ? OR c.customer_code LIKE ? OR c.phone LIKE ? OR c.phone2 LIKE ? OR c.area LIKE ? OR c.extra_data LIKE ?
           OR EXISTS (
             SELECT 1 FROM customer_appliances ca
             WHERE ca.customer_id = c.id AND (ca.serial_number LIKE ? OR ca.extra_data LIKE ?)
           ))${demoFilter}
-       ORDER BY c.id DESC`
+       ORDER BY c.id DESC
+       LIMIT ?`
     )
-    .all(q, q, q, q, q, q, q) as Record<string, unknown>[]
+    .all(q, q, q, q, q, q, q, q, safeLimit) as Record<string, unknown>[]
   return rows.map(normalizeCustomerRow)
 }
 
@@ -86,12 +88,13 @@ export function saveCustomer(data: Partial<Customer>): Customer {
   if (data.id) {
     db.prepare(
       `UPDATE customers
-       SET name = ?, phone = ?, phone2 = ?, area = ?, address = ?, notes = ?,
+       SET customer_code = ?, name = ?, phone = ?, phone2 = ?, area = ?, address = ?, notes = ?,
            birth_date = ?, gender = ?, occupation = ?, referring_doctor = ?,
            medical_complaint = ?, medical_history = ?, allergies = ?, doctor_notes = ?,
            extra_data = ?
        WHERE id = ?`
     ).run(
+      data.customer_code?.trim() || '',
       data.name?.trim(),
       data.phone?.trim(),
       data.phone2?.trim() || '',
@@ -118,12 +121,13 @@ export function saveCustomer(data: Partial<Customer>): Customer {
     const info = db
       .prepare(
         `INSERT INTO customers (
-          name, phone, phone2, area, address, notes,
+          customer_code, name, phone, phone2, area, address, notes,
           birth_date, gender, occupation, referring_doctor,
           medical_complaint, medical_history, allergies, doctor_notes, extra_data
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
+        data.customer_code?.trim() || '',
         data.name?.trim(),
         data.phone?.trim(),
         data.phone2?.trim() || '',

@@ -12,6 +12,7 @@ import {
   Home,
   Building2,
   CheckCircle2,
+  ShieldAlert,
   AlertTriangle,
   Wallet,
   TrendingUp,
@@ -131,7 +132,7 @@ onMounted(loadStats)
     </div>
 
     <!-- KPI Cards Grid -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
       <div
         class="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between"
       >
@@ -207,6 +208,44 @@ onMounted(loadStats)
           class="w-12 h-12 rounded-2xl bg-teal-100 dark:bg-teal-950/60 text-teal-600 dark:text-teal-400 flex items-center justify-center"
         >
           <TrendingUp class="w-6 h-6" />
+        </div>
+      </div>
+
+      <div
+        class="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between"
+      >
+        <div>
+          <p class="text-xs font-bold text-slate-500 dark:text-slate-400">حساب المرتجعات</p>
+          <p class="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">
+            {{ stats.monthReturnsAmount ?? 0 }} <span class="text-xs">ج.م</span>
+          </p>
+          <p class="text-[11px] text-slate-500 font-semibold mt-1">
+            عدد المرتجعات هذا الشهر: {{ stats.monthReturnsCount ?? 0 }}
+          </p>
+        </div>
+        <div
+          class="w-12 h-12 rounded-2xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0"
+        >
+          <ShieldAlert class="w-6 h-6" />
+        </div>
+      </div>
+
+      <div
+        class="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between"
+      >
+        <div>
+          <p class="text-xs font-bold text-slate-500 dark:text-slate-400">تسليمات اليوم</p>
+          <p class="text-2xl font-black text-indigo-600 dark:text-indigo-400 mt-1">
+            {{ stats.todayDeliveriesCount ?? 0 }}
+          </p>
+          <p class="text-[11px] text-slate-500 font-semibold mt-1">
+            بقيمة: {{ stats.todayDeliveriesTotal ?? 0 }} ج.م
+          </p>
+        </div>
+        <div
+          class="w-12 h-12 rounded-2xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0"
+        >
+          <CheckCircle2 class="w-6 h-6" />
         </div>
       </div>
     </div>
@@ -297,6 +336,67 @@ onMounted(loadStats)
           class="w-10 h-10 rounded-xl bg-sky-100 dark:bg-sky-950/60 text-sky-600 flex items-center justify-center"
         >
           <Headphones class="w-5 h-5" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Upcoming Deliveries & Due Alerts (Next 48 Hours + Overdue) -->
+    <div
+      v-if="stats.upcomingDeliveries && stats.upcomingDeliveries.length > 0"
+      class="p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-300 dark:border-amber-800/80 shadow-xs space-y-3"
+    >
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h3 class="text-sm font-black text-amber-900 dark:text-amber-200 flex items-center gap-2">
+          <Clock class="w-5 h-5 text-amber-600" />
+          تنبيهات التسليمات والمواعيد القريبة (خلال 48 ساعة / متأخر) —
+          {{ stats.upcomingDeliveries.length }} طلب
+        </h3>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        <div
+          v-for="item in stats.upcomingDeliveries"
+          :key="item.key"
+          class="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800/60 flex items-center justify-between gap-3 text-xs"
+        >
+          <div class="space-y-0.5 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-bold text-[10px]">
+                {{ item.kindLabel }}
+              </span>
+              <span class="font-mono text-[11px] text-slate-500">{{ item.dueDate }}</span>
+            </div>
+            <div class="font-black text-slate-900 dark:text-white truncate">
+              {{ item.customerName }}
+              <span v-if="item.customerPhone" class="font-mono font-normal text-slate-500">
+                ({{ item.customerPhone }})
+              </span>
+            </div>
+            <div class="text-slate-600 dark:text-slate-300 truncate">{{ item.title }}</div>
+          </div>
+
+          <span
+            :class="[
+              'px-2.5 py-1 rounded-full font-black text-[11px] shrink-0',
+              item.daysLeft < 0
+                ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/70 dark:text-rose-300'
+                : item.daysLeft === 0
+                  ? 'bg-red-600 text-white'
+                  : item.daysLeft === 1
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-blue-100 text-blue-700 dark:bg-blue-950/70 dark:text-blue-300'
+            ]"
+          >
+            {{
+              item.daysLeft < 0
+                ? `متأخر ${Math.abs(item.daysLeft)} يوم`
+                : item.daysLeft === 0
+                  ? 'مستحق اليوم'
+                  : item.daysLeft === 1
+                    ? 'غداً (باقي يوم)'
+                    : `باقي ${item.daysLeft} يوم`
+            }}
+          </span>
         </div>
       </div>
     </div>
@@ -450,14 +550,6 @@ onMounted(loadStats)
                       title="طباعة فاتورة وشهادة ضمان (A4 / 80mm)"
                     >
                       <Printer class="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      @click="appStore.sendWhatsAppToCustomer(ticket)"
-                      class="p-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 transition cursor-pointer"
-                      title="إرسال تفاصيل الطلب والضمان واتساب"
-                    >
-                      <MessageCircle class="w-4 h-4" />
                     </button>
                   </div>
                 </td>
@@ -640,14 +732,6 @@ onMounted(loadStats)
                   <span class="font-mono">{{ item.due_date }}</span>
                 </div>
               </div>
-              <button
-                type="button"
-                @click="sendWhatsAppReminder(item)"
-                class="p-1.5 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 cursor-pointer"
-                title="تذكير المريض عبر واتساب"
-              >
-                <MessageCircle class="w-3.5 h-3.5" />
-              </button>
             </div>
           </div>
         </div>

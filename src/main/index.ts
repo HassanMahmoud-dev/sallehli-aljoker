@@ -1,4 +1,16 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage, screen, Tray, Menu } from 'electron'
+import {
+  app,
+  shell,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  nativeImage,
+  screen,
+  Tray,
+  Menu,
+  Notification
+} from 'electron'
+import { getUpcomingDeliveries } from './db/dashboard'
 import { join, resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { existsSync, readFileSync } from 'fs'
@@ -177,11 +189,61 @@ function showMainWindow(): void {
   updateTrayMenu()
 }
 
+const notifiedDeliveryKeys = new Set<string>()
+
+function checkAndNotifyUpcomingDeliveries(): void {
+  try {
+    if (!Notification.isSupported()) return
+    const isInBackground =
+      !mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible() || mainWindow.isMinimized()
+    if (!isInBackground) return
+
+    const alerts = getUpcomingDeliveries(2)
+    if (alerts.length === 0) return
+
+    const todayPrefix = new Date().toISOString().slice(0, 10)
+    const fresh = alerts.filter((a) => !notifiedDeliveryKeys.has(`${todayPrefix}:${a.key}`))
+    if (fresh.length === 0) return
+
+    for (const a of fresh) {
+      notifiedDeliveryKeys.add(`${todayPrefix}:${a.key}`)
+    }
+
+    const first = fresh[0]
+    const whenText =
+      first.daysLeft < 0
+        ? `متأخر ${Math.abs(first.daysLeft)} يوم`
+        : first.daysLeft === 0
+          ? 'موعد التسليم اليوم'
+          : first.daysLeft === 1
+            ? 'موعد التسليم غداً'
+            : `باقي ${first.daysLeft} يوم على التسليم`
+
+    const body =
+      fresh.length === 1
+        ? `${first.kindLabel}: ${first.customerName} — ${first.title} (${whenText})`
+        : `لديك ${fresh.length} طلبات/مواعيد تسليم قريبة، أقربها: ${first.customerName} (${whenText})`
+
+    const notif = new Notification({
+      title: 'تنبيه تسليم قريب — صلحلي',
+      body,
+      silent: false
+    })
+    notif.on('click', () => {
+      showMainWindow()
+    })
+    notif.show()
+  } catch {
+    // Ignore notification errors
+  }
+}
+
 function hideMainWindowToTray(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.hide()
   }
   updateTrayMenu()
+  setTimeout(() => checkAndNotifyUpcomingDeliveries(), 5000)
 }
 
 function updateTrayMenu(): void {
@@ -851,6 +913,10 @@ if (gotSingleInstanceLock) {
         mainWindow.webContents.send('update:available', result)
       }
     })
+
+    // Check upcoming deliveries every 30 minutes (and shortly after background start)
+    setTimeout(() => checkAndNotifyUpcomingDeliveries(), 15000)
+    setInterval(() => checkAndNotifyUpcomingDeliveries(), 30 * 60 * 1000)
 
     app.on('activate', function () {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
